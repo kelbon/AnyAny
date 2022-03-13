@@ -1,8 +1,20 @@
 cmake_minimum_required(VERSION 3.21)
 project(anyany)
 
+include(CTest)
 #add_library(anyany STATIC ${CMAKE_CURRENT_SOURCE_DIR}/anyany.ixx ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
-add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/anyany.ixx ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+if(BUILD_TESTING)
+	set(ANYANY_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anyany.cpp)
+endif()
+add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp ${ANYANY_TEST})
 
+target_include_directories(anyany PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
+if(BUILD_TESTING)
+	source_group(Tests FILES ${ANYANY_TEST})
+	source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
+	add_subdirectory(tests)
+endif()
 set_property(TARGET anyany PROPERTY CMAKE_CXX_STANDARD_REQUIRED ON)
 set_property(TARGET anyany PROPERTY CXX_STANDARD 20)
