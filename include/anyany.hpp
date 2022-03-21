@@ -278,7 +278,7 @@ struct any_base {
     return value_ptr != &data;
   }
   // invariant of any_base - it is always in one of those states
-  enum any_state {
+  enum struct any_state {
     empty,  // has_value() == false, memory_allocated == false
     small,  // has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
     big,    // has_value() == true, memory_allocated == true, size remembered
@@ -288,12 +288,12 @@ struct any_base {
   any_state state() const noexcept {
     if (!has_value()) {
       assert(!memory_allocated());
-      return empty;
+      return any_state::empty;
     }
     if (!memory_allocated())
-      return small;
+      return any_state::small;
     else
-      return big;
+      return any_state::big;
   }
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -402,10 +402,10 @@ struct any_base {
   any_base(const any_base& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     switch (other.state()) {
-      case empty: {
+      case any_state::empty: {
         return;
       }
-      case small: {
+      case any_state::small: {
         if constexpr (has_method<noexcept_copy>) {
           other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
         } else {
@@ -415,7 +415,7 @@ struct any_base {
         }
         break;
       }
-      case big: {
+      case any_state::big: {
         // no way to replace value into &data regardless of sizeof, because it can break
         // invariant "noexcept move" of small state
         allocate_guard guard(*this, other.allocated_size());
@@ -546,10 +546,10 @@ struct any_base {
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return true;
     if constexpr (has_method<spaceship>)
-      return vtable_invoke<spaceship>(static_cast<void*>(other.value_ptr)) ==
+      return vtable_invoke<spaceship>(static_cast<const void*>(other.value_ptr)) ==
              std::partial_ordering::equivalent;
     else
-      return vtable_invoke<equal_to>(static_cast<void*>(other.value_ptr));
+      return vtable_invoke<equal_to>(static_cast<const void*>(other.value_ptr));
   }
 
   std::partial_ordering operator<=>(const any_base& other) const requires(has_method<spaceship>) {
@@ -557,7 +557,7 @@ struct any_base {
       return std::partial_ordering::unordered;
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return std::partial_ordering::equivalent;
-    return vtable_invoke<spaceship>(static_cast<void*>(other.value_ptr));
+    return vtable_invoke<spaceship>(static_cast<const void*>(other.value_ptr));
   }
 
  private :
@@ -567,16 +567,16 @@ struct any_base {
   void move_value_from(any_base&& other) noexcept {
     // clang-format on
     switch (other.state()) {
-      case empty: {
+      case any_state::empty: {
         return;
       }
-      case small: {
+      case any_state::small: {
         // move is noexcept (invariant of small)
         other.vtable_invoke<move>(static_cast<void*>(value_ptr));
         vtable_ptr = other.vtable_ptr;
         return;
       }
-      case big: {
+      case any_state::big: {
         assert(other.allocated_size() >= SooS);  // invariant of big
         value_ptr = std::exchange(other.value_ptr, &other.data);
         remember_size(other.allocated_size());
