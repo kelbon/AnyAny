@@ -5,7 +5,7 @@
 #include <cassert>      // assert
 #include <memory>       // construct_at / destroy_at
 #include <stdexcept>    // runtime_error
-#include <compare>
+#include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
 
@@ -21,6 +21,13 @@
 
 // TTA == template template argument (just for better reading)
 #define TTA template <typename> typename
+
+namespace aa {
+
+template <typename...>
+struct type_list {};
+
+}  // namespace aa
 
 namespace noexport {
 
@@ -87,9 +94,6 @@ consteval bool is_const_method() noexcept {
   return true;  // passing by value is a const method!
 }
 
-template <typename...>
-struct type_list {};
-
 template <typename>
 struct any_method_traits;
 
@@ -101,7 +105,7 @@ struct any_method_traits<R (*)(Self, Args...)> {
   static constexpr bool is_const = is_const_method<Self>();
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
   using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
-  using args = type_list<Args...>;
+  using args = aa::type_list<Args...>;
 };
 // noexcept version
 template <typename R, typename Self, typename... Args>
@@ -111,7 +115,7 @@ struct any_method_traits<R (*)(Self, Args...) noexcept> {
   static constexpr bool is_const = is_const_method<Self>();
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
   using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
-  using args = type_list<Args...>;
+  using args = aa::type_list<Args...>;
 };
 
 }  // namespace noexport
@@ -143,10 +147,10 @@ using args_list = typename method_traits<Method>::args;
 template <TTA Method>
 concept const_method = method_traits<Method>::is_const;
 
-template<typename T, TTA Method, typename = args_list<Method>>
+template <typename T, TTA Method, typename = args_list<Method>>
 struct invoker_for;
 
-template<typename T, TTA Method, typename... Args>
+template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
   static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
@@ -171,7 +175,7 @@ struct invoker_for<T, Method, type_list<Args...>> {
   }
 };
 
-// concept of any value inherited from any_base<Args...>
+// concept of any value inherited from basic_any<Args...>
 template <typename T>
 concept any_x = requires {
   typename std::remove_cvref_t<T>::base_any_type;
@@ -222,7 +226,7 @@ struct equal_to {
 
 template <typename T>
 struct spaceship {
-  // See any_base::operator<=> to understand why it is partical ordering always
+  // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
   static std::partial_ordering do_invoke(const T* first, const void* second) {
     return *first <=> *reinterpret_cast<const T*>(second);
@@ -260,13 +264,13 @@ struct vtable {
 template <typename T, TTA... Methods>
 constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}};
 
-// CRTP - inheritor of any_base
+// CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
 template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-struct any_base {
+struct basic_any {
  private:
   // mutable for vtable_invoke in const methods
   alignas(std::max_align_t) mutable std::array<std::byte, SooS> data;
@@ -277,7 +281,7 @@ struct any_base {
   bool memory_allocated() const noexcept {
     return value_ptr != &data;
   }
-  // invariant of any_base - it is always in one of those states
+  // invariant of basic_any - it is always in one of those states
   enum struct any_state {
     empty,  // has_value() == false, memory_allocated == false
     small,  // has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
@@ -295,11 +299,11 @@ struct any_base {
     else
       return any_state::big;
   }
+
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
   static inline constexpr bool any_is_small_for =
       alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
-
 
  protected:
   template <TTA Method, typename... Args>
@@ -313,13 +317,13 @@ struct any_base {
   // + destroy value if was has_value() + forget size and deallocate if was big
   struct [[nodiscard]] allocate_guard {
    private:
-    any_base& any;
+    basic_any& any;
     size_t count;
     void* old_value_ptr;
     const vtable<Methods...>* any_vtable_ptr;
 
    public:
-    allocate_guard(any_base& any, size_t count)
+    allocate_guard(basic_any& any, size_t count)
         : any(any),
           count(count),
           old_value_ptr(std::exchange(any.value_ptr, alloc_traits::allocate(any.alloc, count))),
@@ -370,12 +374,12 @@ struct any_base {
   // for any_cast / unified function call
   friend struct caster;
 
-  template<TTA, typename>
+  template <TTA, typename>
   friend struct invoke_fn;
 
  public:
-  template <TTA M>
-  static inline constexpr bool has_method = vtable<Methods...>::template has_method<M>;
+  template <TTA Method>
+  static inline constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
   static inline constexpr bool has_copy = has_method<copy> || has_method<noexcept_copy>;
 
   static_assert(
@@ -387,19 +391,19 @@ struct any_base {
   static_assert((has_method<copy> + has_method<noexcept_copy>) != 2,
                 "Any requires exactly zero or one copy method");
 
-  using base_any_type = any_base;
+  using base_any_type = basic_any;
 
-  constexpr any_base() = default;
-  any_base(Alloc alloc) noexcept : alloc(std::move(alloc)) {
+  constexpr basic_any() = default;
+  basic_any(Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
 
-  ~any_base() {
+  ~basic_any() {
     destroy_value();
   }
 
-  // any_base copy/move stuff
+  // basic_any copy/move stuff
 
-  any_base(const any_base& other) requires(has_copy)
+  basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     switch (other.state()) {
       case any_state::empty: {
@@ -432,11 +436,11 @@ struct any_base {
     return alloc;
   }
 
-  any_base(any_base&& other) noexcept requires(has_method<move>) : alloc(std::move(other.alloc)) {
+  basic_any(basic_any&& other) noexcept requires(has_method<move>) : alloc(std::move(other.alloc)) {
     move_value_from(std::move(other));
   }
   // TODO C++23 - deducing this here
-  CRTP& operator=(any_base&& other) noexcept requires(has_method<move>) {
+  CRTP& operator=(basic_any&& other) noexcept requires(has_method<move>) {
     // nocheck about this == &other
     // because after move assign other by C++ standard in unspecified(valid) state
     reset();
@@ -449,8 +453,8 @@ struct any_base {
     return static_cast<CRTP&>(*this);
   }
 
-  CRTP& operator=(const any_base& other) requires(has_copy&& has_method<move>) {
-    any_base value{other};
+  CRTP& operator=(const basic_any& other) requires(has_copy&& has_method<move>) {
+    basic_any value{other};
     if constexpr (!alloc_traits::is_always_equal::value &&
                   alloc_traits::propagate_on_container_copy_assignment::value) {
       if (alloc != other.alloc) {
@@ -481,12 +485,12 @@ struct any_base {
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
   template <typename T, typename... Args>
-  any_base(std::in_place_type_t<T>, Args&&... args) noexcept(
+  basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args>
-  any_base(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
+  basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
@@ -494,12 +498,12 @@ struct any_base {
   // clang-format off
   template <typename T>
   requires(!any_x<T>)
-  any_base(T&& value) noexcept(
+  basic_any(T&& value) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
-      : any_base(std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
+      : basic_any(std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
   template <typename T>
-  any_base(std::allocator_arg_t, Alloc alloc, T&& value) noexcept(
+  basic_any(std::allocator_arg_t, Alloc alloc, T&& value) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : alloc(std::move(alloc)) {
     emplace_in_empty<std::decay_t<T>>(std::forward<T>(value));
@@ -508,7 +512,7 @@ struct any_base {
   template <typename T> requires (!any_x<T>)
   CRTP& operator=(T&& value) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>) {
-    *this = any_base{std::forward<T>(value)};
+    *this = basic_any{std::forward<T>(value)};
     return static_cast<CRTP&>(*this);
   }
   // clang-format on
@@ -539,7 +543,7 @@ struct any_base {
   // * it will cause compilation time, obj file increasing
   // * may cause problems with CRTP type(implicit incorrect overload resolution)
 
-  [[nodiscard]] bool operator==(const any_base& other) const
+  [[nodiscard]] bool operator==(const basic_any& other) const
       requires(has_method<equal_to> || has_method<spaceship>) {
     if (vtable_ptr != other.vtable_ptr)
       return false;
@@ -552,7 +556,7 @@ struct any_base {
       return vtable_invoke<equal_to>(static_cast<const void*>(other.value_ptr));
   }
 
-  std::partial_ordering operator<=>(const any_base& other) const requires(has_method<spaceship>) {
+  std::partial_ordering operator<=>(const basic_any& other) const requires(has_method<spaceship>) {
     if (vtable_ptr != other.vtable_ptr)
       return std::partial_ordering::unordered;
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
@@ -564,7 +568,7 @@ struct any_base {
 
      // precodition - has_value() == false
      // clang-format off
-  void move_value_from(any_base&& other) noexcept {
+  void move_value_from(basic_any&& other) noexcept {
     // clang-format on
     switch (other.state()) {
       case any_state::empty: {
@@ -630,11 +634,11 @@ struct bad_any_cast : std::exception {
   }
 };
 
-// friend of any_base
+// friend of basic_any
 struct caster {
   // clang-format off
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods >
-  static const T* any_cast_impl(const any_base<CRTP, Alloc, SooS, Methods...>* any) noexcept {
+  static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
     // T already remove_cv
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, Methods...>)
@@ -643,7 +647,7 @@ struct caster {
   }
   // clang-format off
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-  static T* any_cast_impl(any_base<CRTP, Alloc, SooS, Methods...>* any) noexcept {
+  static T* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, Methods...>)
       return nullptr;
@@ -690,12 +694,12 @@ template <typename T, any_x U>
 // TEMPLATE VARIABLE (FUNCTION OBJECT) invoke <Method> (any)
 
 // hack for compilation time / obj size reduce + accept exactly user args
-// (for example i can write invoke<Foo>({}, {}) because compiler knows what types in must be
+// (for example i can write invoke<Foo>(Any, {}, {1, 2, 3}) because compiler knows what types in must be
 
-template<TTA Method, typename = args_list<Method>>
+template <TTA Method, typename = args_list<Method>>
 struct invoke_fn;
 
-template<TTA Method, typename... Args>
+template <TTA Method, typename... Args>
 struct invoke_fn<Method, type_list<Args...>> {
   template <any_x U>
   result_t<Method> operator()(U&& any, Args... args) const {
@@ -714,22 +718,23 @@ struct invoke_fn<Method, type_list<Args...>> {
   }
 };
 
-template<typename T>
+template <typename T>
 struct invoke_fn<destroy, T> {
   static_assert(always_false<T>, "Invoking destructor of contained value in any by hands is a bad idea");
 };
 
-template<TTA Method>
+template <TTA Method>
 constexpr invoke_fn<Method> invoke = {};
 
 // TEMPLATE any - default any for inheritance from (creating your any with default allocator and SooS)
 
 template <typename CRTP, TTA... Methods>
-struct any : any_base<CRTP, std::allocator<std::byte>, (sizeof(void*) - 2) * CHAR_BIT, destroy, Methods...> {
-  using any::any_base::any_base;
+struct any : basic_any<CRTP, std::allocator<std::byte>, (sizeof(void*) - 2) * CHAR_BIT, destroy, Methods...> {
+  using any::basic_any::basic_any;
 };
 
-// used to cover CRTP, if you cant add methods, but can use free function invoke or invoke method
+// used to cover CRTP, if you do not want to add member-methods(and want to use unified function call with
+// invoke)
 template <template <typename, TTA...> typename Base, TTA... Methods>
 struct strong_alias : Base<strong_alias<Base, Methods...>, Methods...> {
  private:
