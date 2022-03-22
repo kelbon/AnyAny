@@ -30,11 +30,11 @@ struct Say {
   }
 };
 // Every time do_invoke invoked by library self is a reference to type T with .say() method. 
-// Self can be const T& / T& / const T* / T* or just T - in this case executor will be provided by copy -
+// Self can be const T& / T& / const T* / T* or just T - in this case self will be provided by copy -
 // (if it is copy constructible of course) (its like C++23 deducing this if you know)
 // (Self also can be cv void* but... even in this case, under it always lies an object of type T)
 
-// Create a type which can contain any other type with method .execute !
+// Create a type which can contain any other type with method .say !
 using any_animal = aa::any_with<Say>;
 
 // Let's use it!
@@ -61,13 +61,13 @@ It is modular and flexible:
 You can add any number of methods like
 `using any_my = any_with<Say, Draw, Float, aa::copy, aa::move>;`
 
-For _flexibility_ see any_base!
+For _flexibility_ see basic_any!
 
 Wait, copy... Move? Yes, by default any is only have a destructor, so you can create move only any or ... copy only etc
 
 Note: result type of do_invoke and Args must be same for all types T (as for virtual functions)
 
-* [`any_base`](#any_base)
+* [`basic_any`](#basic_any)
 * [`any`](#any)
 * [`any_with<Methods...>`](#any_with)
 * [`any_cast<T>`](#any_cast)
@@ -88,16 +88,16 @@ Note: result type of do_invoke and Args must be same for all types T (as for vir
 It is a template which accepts a any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
 Example : see first example on top!
 
-### `any_base`
+### `basic_any`
 interface:
 ```C++
-// CRTP - inheritor of any_base, popular pattern
+// CRTP - inheritor of basic_any, popular pattern
 // Alloc - yes, any can allocate memory. It must be allocator for char/std::byte/unsigned char (other is meaningless)
 // SooS - Small Object Optimization Size(like SSO in strings). You can increase it to less allocate or decrease it, for example,
 // if you know, that sizeof of all types which will be stored not more then X bytes
-// Methods... - same as for any_base and all of library
+// Methods... - see first example
 template <typename CRTP, typename Alloc, size_t SooS, template<typename> typename... Methods>
-struct any_base {
+struct basic_any {
 
 // constructors, move, copy assign, dctor
 // move and move assign is noexcept always
@@ -129,7 +129,25 @@ _Note : operator spaceship for any always returns partical ordering (if enabled)
 Also aa::noexcept_copy module exist, which also can increase perfomance, but breaks compilation if you trying insert a throw copyable type in your any.
 
 ### `any`
-It is just an any_base with default alloc (std::allocator<std::byte>) and default SooS (sizeof (any) == Machine word by default)
+It is just an basic_any with default alloc (std::allocator<std::byte>) and default SooS (sizeof (any) == Machine word by default)
+Usually used to inherit from(when you want use any with internal method calls like common type),
+
+Example:
+
+```C++
+struct any_executor : any<any_executor, Execute, aa::copy> {
+  // use all constructors and move/copy assign operators of base class
+  using any_executor::any::any;
+
+  void execute(std::function<void()> foo) {
+    if(has_value()) // Note! any can be empty!
+      vtable_invoke<Execute>(std::move(foo)); // vtable_invoke - any's protected method
+  }
+};
+// line 140 just a short-cut for
+// using base_t = any<any_executor, Execute, aa::copy>
+// using base_t::base_t;
+```
 
 ### `any_cast`
 There are two versions, for pointer (noexcept) and throwing:
@@ -174,11 +192,11 @@ Example:
 
 ### `method_traits`
 Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
-any_base also have compile time information, static member variables bool has_method<Method> and bool has_copy
+basic_any also have compile time information, static member variables bool has_method<Method> and bool has_copy
   
 ## Methods
   Methods are modules of any, user defined methods - is a runtime _concept_ on type which can be emplaced in any and enables support for invoke<Method>.
-  But there are library provided methods, which are enables any_base things, such as type() or spaceship operator
+  But there are library provided methods, which are enables basic_any things, such as type() or spaceship operator
 
 ### `destroy`
   `any` have it by default. Cannot be invoked explicitly
@@ -193,7 +211,7 @@ enables copy )) Incompatible with `noexcept_copy`
   enables move AND copy assignment operator (if you have `copy` or `noexcept_copy`). If inserted types have noexcept move constructor any will be more effective.
   
 ### `rtti`
-  enables `.type()` method in any_base, forces to store additional info about type
+  enables `.type()` method in basic_any, forces to store additional info about type
 
 ### `equal_to`
   Incompatible with `spaceship`(spaceship already contains it). Enables operator== with other any.
@@ -203,13 +221,13 @@ enables copy )) Incompatible with `noexcept_copy`
 
 ### `any_x`
 ```C++
-// concept of any value inherited from any_base<Args...>
+// concept of any value inherited from basic_any<...>
 template <typename T>
 concept any_x = requires {
   typename std::remove_cvref_t<T>::base_any_type;
 };
 ```
-  base_any_type - is a inner type alias in any_base, usefull for inheriting (using base_t::base_t), convering etc
+  base_any_type - is a inner type alias in basic_any, usefull for inheriting (using base_t::base_t), convering etc
   
 ### Background and design
 
@@ -218,15 +236,15 @@ For example you want to create a Machine class which engine can be changed on ru
 Without this library it is a very annoying task
 ```C++
 class IEngine {
-virtual void Go() = 0;
-virtual ~IEngine() = default;
+  virtual void Go() = 0;
+  virtual ~IEngine() = default;
 };
 
 class Machine {
-IEngine* m_engine;
-// How to copy it? Move? Move/copy assign, destroy?
-// unique_ptr is not a solution, it is not a copy constructible, needs a constructors and some hand memory management
-// shared_ptr also do not work, all machines will use same engine, again useless allocations 
+  IEngine* m_engine;
+  // How to copy it? Move? Move/copy assign, destroy?
+  // unique_ptr is not a solution, it is not a copy constructible, needs a constructors and some hand memory management
+  // shared_ptr also do not work, all machines will use same engine, again useless allocations 
 }
 ```
 And of course i dont need a **pointer** to polymoprhic object here, i need an engine, a **polymorphic value**.
@@ -235,11 +253,11 @@ it is obvious that the approach with virtual functions does not express our inte
 
 As you can see, there are many problems. Whats a solution?
 
-// IN IDEAL WORLD IN MUST BE 
+In ideal world it must be something like: 
 ```C++
 
 struct Machine {
-any_engine m_engime;
+  any_engine m_engime;
 };
 
 ```
