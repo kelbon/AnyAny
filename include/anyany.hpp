@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include <array>
 #include <tuple>        // tuple for vtable
 #include <cassert>      // assert
 #include <memory>       // construct_at / destroy_at
