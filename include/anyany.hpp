@@ -157,15 +157,9 @@ struct invoker_for<T, Method, type_list<Args...>> {
     using self_sample = self_sample_t<Method>;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
-      using real_self = std::conditional_t<const_method<Method>, const T&, T&>;
-      // it is SO non obviosly how pointer converts to reference in reinterpret_cast
-      return Method<T>::do_invoke(*reinterpret_cast<std::remove_reference_t<real_self>*>(self),
-                                  static_cast<Args&&>(args)...);
-    } else if constexpr (std::is_rvalue_reference_v<self_sample>) {
-      using real_self = std::conditional_t<const_method<Method>, const T&&, T&&>;
-
-      return Method<T>::do_invoke(*reinterpret_cast<std::remove_reference_t<real_self>*>(self),
-                                  static_cast<Args&&>(args)...);
+      return Method<T>::do_invoke(
+          *reinterpret_cast<std::conditional_t<const_method<Method>, const T, T>*>(self),
+          static_cast<Args&&>(args)...);
     } else if constexpr (std::is_pointer_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
       return Method<T>::do_invoke(reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
@@ -173,7 +167,8 @@ struct invoker_for<T, Method, type_list<Args...>> {
     } else if constexpr (std::is_copy_constructible_v<T>) {
       return Method<T>::do_invoke(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
     } else {
-      static_assert(always_false<T>, "You pass self by value and it is not a copy constructible");
+      static_assert(always_false<T>,
+                    "You pass self by value and it is not a copy constructible... or by rvalue reference");
     }
   }
 };
