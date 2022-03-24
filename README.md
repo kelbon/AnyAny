@@ -25,7 +25,7 @@ For example, i want to create a type to store any other type with .say() method:
 // Let's write a Method - description for a library what type must have to be stored in our type and how to invoke it
 template<typename T>
 struct Say {
-  static void do_invoke(T& self, std::ostream& out) {
+  static void do_invoke(const T& self, std::ostream& out) {
     self.say(out);
   }
 };
@@ -39,12 +39,12 @@ using any_animal = aa::any_with<Say>;
 
 // Let's use it!
 struct Cat {
-  void say(std::ostream& out) {
+  void say(std::ostream& out) const {
    out << "Meow\n";
   }
 };
 struct Dog {
-  void say(std::ostream& out) {
+  void say(std::ostream& out) const {
    out << "Woof!\n";
   }
 };
@@ -93,9 +93,11 @@ interface:
 ```C++
 // CRTP - inheritor of basic_any, popular pattern
 // Alloc - yes, any can allocate memory. It must be allocator for char/std::byte/unsigned char (other is meaningless)
-// SooS - Small Object Optimization Size(like SSO in strings). You can increase it to less allocate or decrease it, for example,
+// SooS - Small Object Optimization Size(like SSO in strings).
+// You can increase it to less allocate or decrease it, for example,
 // if you know, that sizeof of all types which will be stored not more then X bytes
 // Methods... - see first example
+
 template <typename CRTP, typename Alloc, size_t SooS, template<typename> typename... Methods>
 struct basic_any {
 
@@ -104,9 +106,12 @@ struct basic_any {
 
 bool has_value() const noexcept; // true if not empty
 
-// emplaces value in any, if exception thrown - any is empty(use operator = for strong exception guarantee)
-std::decay_t<T>& emplace<T>(Args...); // returns reference to emplaced value
-// also version of emplace with initializer list
+// emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
+
+template<typename T, typename... Args>
+std::decay_t& emplace<T>(Args&&...); // returns reference to emplaced value
+
+// there are also version of emplace with initializer list
 // and emplace-ctor with std::in_place_type tag. You know if you know...
 
 void reset() noexcept; // after this method has_value() == false 
@@ -122,15 +127,18 @@ std::partical_ordering operator<=>(...) const;
 
 };
 ```
+
 **All constructor any copy/move assignment operators have strong exception guarantee**
+
 _Note : operator spaceship for any always returns partical ordering (if enabled), this means that two anyes can be unordered_
 
 **Important** it is important if your type has noexcept move constructor, it really can increase perfomance(like in std::vector case, if you know).
 Also aa::noexcept_copy module exist, which also can increase perfomance, but breaks compilation if you trying insert a throw copyable type in your any.
 
 ### `any`
-It is just an basic_any with default alloc (std::allocator<std::byte>) and default SooS (sizeof (any) == Machine word by default)
-Usually used to inherit from(when you want use any with internal method calls like common type),
+It is just an basic_any with default alloc (std::allocator<std::byte>) and default SooS such that sizeof (any) == Machine Word Size (64 / 32 bytes) for perfomance.
+
+Usually used to inherit from, when you want to invoke methods like in common type with .MethodName(Args...)
 
 Example:
 
@@ -141,10 +149,16 @@ struct any_executor : any<any_executor, Execute, aa::copy> {
 
   void execute(std::function<void()> foo) {
     if(has_value()) // Note! any can be empty!
-      vtable_invoke<Execute>(std::move(foo)); // vtable_invoke - any's protected method
+      vtable_invoke<Execute>(std::move(foo)); // vtable_invoke - basic_any's protected method
   }
 };
-// line 140 just a short-cut for
+
+int main () {
+  any_executor a = SomeExecutor{};
+  a.execute([] {}); 
+}
+
+// line 148 just a short-cut for
 // using base_t = any<any_executor, Execute, aa::copy>
 // using base_t::base_t;
 ```
@@ -157,11 +171,12 @@ template<typename T, any_x Any> // concept aa::any_x here
 T* any_cast(Any*) noexcept;
 /* also version for const T* */
 ```
-Returns `nullptr` not T contained in Any
+Returns `nullptr` if Any is empty or dynamic type in Any is not T
 
 ```C++
 template<typename T, any_x Any>
 std::decay_t<T> any_cast(Any&&); // thrown aa::bad_any_cast if T is not contained in any
+
 /* also versions for & && const & etc versions of Any */
 ```
 
@@ -172,9 +187,9 @@ using namespace aa;
 using any_comparable = any_with<any_compare, copy, spaceship, move>;
 
 void Foo() {
-  any_comparable a = 5;
-  a.emplace<std::vector<int>>({ 1, 2, 3, 4});
-  any_cast<std::vector<int>>(&v3)->back() = 0;
+  any_comparable value = 5;
+  value.emplace<std::vector<int>>({ 1, 2, 3, 4});
+  any_cast<std::vector<int>>(&value)->back() = 0;
 }
 ```
 ### `invoke`
