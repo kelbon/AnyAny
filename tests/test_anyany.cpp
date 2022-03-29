@@ -358,7 +358,41 @@ size_t TestJust(){
   invoke<Draw>(d0, std::cout, {});
   return 0;
 }
+template <class T>
+struct Drawa {
+  static void do_invoke(const T& self) {
+    self.Draw();
+  }
+};
+template <class T>
+struct Area {
+  static double do_invoke(const T& self) {
+    return self.Area();
+  }
+};
 
+using any_drawablea = aa::any_with<Drawa, Area, aa::noexcept_copy, aa::move>;
+
+void DoSomethingWithDrawable(const any_drawablea& p) {
+  printf("The drawable is: ");
+  aa::invoke_unsafe<Drawa>(p);
+  printf(", area = %f\n", aa::invoke_unsafe<Area>(p));
+}
+
+struct Exa {
+  const char* s = "hello world";
+  int value = 10;
+  void Draw() const {
+    std::cout << value << s;
+  }
+  double Area() const {
+    return 4.;
+  }
+};
+void DoCopyWithDrawable(const any_drawablea& p) {
+  auto pp1 = p;
+  invoke_unsafe<Drawa>(p);
+}
 int main() {
   srand(time(0));
   return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust();

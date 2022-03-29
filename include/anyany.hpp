@@ -443,9 +443,15 @@ struct basic_any {
       case any_state::big: {
         // no way to replace value into &data regardless of sizeof, because it can break
         // invariant "noexcept move" of small state
-        allocate_guard guard(*this, other.allocated_size());
-        other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-        guard.release();
+        if constexpr (has_method<noexcept_copy>) {
+          value_ptr = alloc_traits::allocate(alloc, other.allocated_size());
+          remember_size(other.allocated_size());
+          other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
+        } else {
+          allocate_guard guard(*this, other.allocated_size());
+          other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
+          guard.release();
+        }
         break;
       }
     }
