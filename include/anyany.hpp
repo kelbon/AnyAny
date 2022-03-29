@@ -323,7 +323,7 @@ struct basic_any {
 
  protected:
   template <TTA Method, typename... Args>
-  decltype(auto) vtable_invoke(Args&&... args) const {
+  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
     assert(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
@@ -392,6 +392,8 @@ struct basic_any {
 
   template <TTA, typename>
   friend struct invoke_fn;
+  template <TTA, typename>
+  friend struct invoke_unsafe_fn;
 
  public:
   template <TTA Method>
@@ -711,6 +713,34 @@ template <typename T, any_x U>
 
 // hack for compilation time / obj size reduce + accept exactly user args
 // (for example i can write invoke<Foo>(Any, {}, {1, 2, 3}) because compiler knows what types in must be
+
+template <TTA Method, typename = args_list<Method>>
+struct invoke_unsafe_fn;
+
+template <TTA Method, typename... Args>
+struct invoke_unsafe_fn<Method, type_list<Args...>> {
+  template <any_x U>
+  AA_PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+    assert(any.has_value());
+    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+  }
+  // clang-format off
+  template <any_x U>
+  AA_PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+    // clang-format on
+    static_assert(const_method<Method>);
+    assert(any.has_value());
+    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+  }
+};
+
+template <typename T>
+struct invoke_unsafe_fn<destroy, T> {
+  static_assert(always_false<T>, "Invoking destructor of contained value in any by hands is a bad idea");
+};
+// for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
+template <TTA Method>
+constexpr invoke_unsafe_fn<Method> invoke_unsafe = {};
 
 template <TTA Method, typename = args_list<Method>>
 struct invoke_fn;

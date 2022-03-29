@@ -359,7 +359,6 @@ size_t TestJust(){
   return 0;
 }
 
-
 int main() {
   srand(time(0));
   return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust();
