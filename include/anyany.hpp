@@ -1,7 +1,8 @@
-
+﻿
 #pragma once
 
 #include <array>
+#include <new>          // hardware_constructive_interference_size on gcc
 #include <utility>      // std::exchange
 #include <tuple>        // tuple for vtable
 #include <cassert>      // assert
@@ -36,6 +37,16 @@
 #else
 #define AA_PLEASE_INLINE __forceinline
 #define AA_AXIOM(cond) __assume((cond))
+#endif
+
+// C++ features is not supported in clang ...
+#ifdef __cpp_lib_hardware_interference_size
+using std::hardware_constructive_interference_size;
+using std::hardware_destructive_interference_size;
+#else
+// 64 bytes on x86-64 │ L1_CACHE_BYTES │ L1_CACHE_SHIFT │ __cacheline_aligned │ ...
+constexpr std::size_t hardware_constructive_interference_size = 64;
+constexpr std::size_t hardware_destructive_interference_size = 64;
 #endif
 
 // TTA == template template argument (just for better reading)
@@ -288,15 +299,11 @@ constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}}
 template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
 struct basic_any {
  private:
-  // mutable for vtable_invoke in const methods
-  alignas(std::max_align_t) mutable std::array<std::byte, SooS> data;
-  void* value_ptr = &data;
   const vtable<Methods...>* vtable_ptr = nullptr;
+  void* value_ptr = &data;
+  alignas(std::max_align_t) std::array<std::byte, SooS> data;
   [[no_unique_address]] Alloc alloc;
 
-  bool memory_allocated() const noexcept {
-    return value_ptr != &data;
-  }
   // invariant of basic_any - it is always in one of those states
   enum struct any_state {
     empty,  // has_value() == false, memory_allocated == false
@@ -305,16 +312,6 @@ struct basic_any {
             // and allocated_size() >= SooS
   };
 
-  AA_PLEASE_INLINE any_state state() const noexcept {
-    if (!has_value()) {
-      assert(!memory_allocated());
-      return any_state::empty;
-    }
-    if (!memory_allocated())
-      return any_state::small;
-    else
-      return any_state::big;
-  }
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -323,11 +320,17 @@ struct basic_any {
 
  protected:
   template <TTA Method, typename... Args>
-  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
+  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
     assert(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
-
+  // clang-format off
+  template <TTA Method, typename... Args> requires const_method<Method>
+  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
+    assert(vtable_ptr != nullptr);
+    return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
+  }
+  // clang-format on
  private:
   // used for exception-safe allocating and remembering size of allocated
   // + destroy value if was has_value() + forget size and deallocate if was big
@@ -620,8 +623,21 @@ struct basic_any {
   AA_PLEASE_INLINE size_t allocated_size() const noexcept {
     // assume lifetime of size_t was started
     // two rows for copy elision here
-    size_t result = *reinterpret_cast<size_t*>(&data);
+    size_t result = *reinterpret_cast<const size_t*>(&data);
     return result;
+  }
+  AA_PLEASE_INLINE bool memory_allocated() const noexcept {
+    return value_ptr != &data;
+  }
+  AA_PLEASE_INLINE any_state state() const noexcept {
+    if (!has_value()) {
+      assert(!memory_allocated());
+      return any_state::empty;
+    }
+    if (!memory_allocated())
+      return any_state::small;
+    else
+      return any_state::big;
   }
   void destroy_value() noexcept {
     if (has_value()) {
@@ -790,8 +806,10 @@ constexpr invoke_fn<Method> invoke = {};
 
 // TEMPLATE any - default any for inheritance from (creating your any with default allocator and SooS)
 
+// default any size is a one cache line in currect CPU
 template <typename CRTP, TTA... Methods>
-struct any : basic_any<CRTP, std::allocator<std::byte>, (sizeof(void*) - 2) * CHAR_BIT, destroy, Methods...> {
+struct any : basic_any<CRTP, std::allocator<std::byte>,
+                       hardware_constructive_interference_size - 3 * sizeof(void*), destroy, Methods...> {
   using any::basic_any::basic_any;
 };
 
