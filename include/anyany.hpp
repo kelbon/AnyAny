@@ -26,6 +26,7 @@
 #ifdef __clang__
 #define AA_PLEASE_INLINE __attribute__((always_inline))
 #define AA_AXIOM(cond) __builtin_assume((cond))
+#define AA_UNREACHABLE() __builtin_unreachable()
 #else
 #define AA_PLEASE_INLINE __attribute__((always_inline))
 #define AA_AXIOM(cond)         \
@@ -33,10 +34,12 @@
     if (!(cond))               \
       __builtin_unreachable(); \
   } while (0)
+#define AA_UNREACHABLE() __builtin_unreachable()
 #endif
 #else
 #define AA_PLEASE_INLINE __forceinline
 #define AA_AXIOM(cond) __assume((cond))
+#define AA_UNREACHABLE() __assume(false)
 #endif
 
 // C++ features is not supported in clang ...
@@ -438,7 +441,8 @@ struct basic_any {
           other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
           guard.release();
         }
-        break;
+        vtable_ptr = other.vtable_ptr;
+        return;
       }
       case any_state::big: {
         // no way to replace value into &data regardless of sizeof, because it can break
@@ -452,10 +456,11 @@ struct basic_any {
           other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
           guard.release();
         }
-        break;
+        vtable_ptr = other.vtable_ptr;
+        return;
       }
     }
-    vtable_ptr = other.vtable_ptr;
+    AA_UNREACHABLE();
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
@@ -616,7 +621,7 @@ struct basic_any {
         return;
       }
     }
-    assert(false);  // TODO C++23 std::unreachable
+    AA_UNREACHABLE();  // TODO C++23 std::unreachable
   }
 
   AA_PLEASE_INLINE void remember_size(size_t size) noexcept {
