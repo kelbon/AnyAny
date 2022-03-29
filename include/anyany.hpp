@@ -21,10 +21,21 @@
 #define FORMAT(...) std::format(__VA_ARGS__)
 #endif
 
-#ifdef _MSC_VER
-#define AA_PLEASE_INLINE __forceinline
+#ifndef _MSC_VER
+#ifdef __clang__
+#define AA_PLEASE_INLINE __attribute__((always_inline))
+#define AA_AXIOM(cond) __builtin_assume((cond))
 #else
 #define AA_PLEASE_INLINE __attribute__((always_inline))
+#define AA_AXIOM(cond)         \
+  do {                         \
+    if (!(cond))               \
+      __builtin_unreachable(); \
+  } while (0)
+#endif
+#else
+#define AA_PLEASE_INLINE __forceinline
+#define AA_AXIOM(cond) __assume((cond))
 #endif
 
 // TTA == template template argument (just for better reading)
@@ -710,7 +721,15 @@ struct invoke_fn<Method, type_list<Args...>> {
   AA_PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value())
       throw empty_any_method_call{};
-    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+    if constexpr (std::is_void_v<result_t<Method>>) {
+      any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+      AA_AXIOM(any.has_value());
+    } else {
+      result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+      // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
+      AA_AXIOM(any.has_value());
+      return result;
+    }
   }
   // clang-format off
   template <any_x U>
@@ -719,7 +738,15 @@ struct invoke_fn<Method, type_list<Args...>> {
     static_assert(const_method<Method>);
     if (!any.has_value())
       throw empty_any_method_call{};
-    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+    if constexpr (std::is_void_v<result_t<Method>>) {
+      any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+      AA_AXIOM(any.has_value());
+    } else {
+      // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
+      result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
+      AA_AXIOM(any.has_value());
+      return result;
+    }
   }
 };
 
