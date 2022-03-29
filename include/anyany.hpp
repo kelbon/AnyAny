@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <utility>      // std::exchange
 #include <tuple>        // tuple for vtable
 #include <cassert>      // assert
 #include <memory>       // construct_at / destroy_at
@@ -18,6 +19,12 @@
 #else
 #include <format>       // message for bad_any_cast
 #define FORMAT(...) std::format(__VA_ARGS__)
+#endif
+
+#ifdef _MSC_VER
+#define AA_PLEASE_INLINE __forceinline
+#else
+#define AA_PLEASE_INLINE __attribute__((always_inline))
 #endif
 
 // TTA == template template argument (just for better reading)
@@ -153,7 +160,7 @@ struct invoker_for;
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  static AA_PLEASE_INLINE auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
@@ -183,19 +190,19 @@ concept any_x = requires {
 
 template <std::destructible T>
 struct destroy {
-  static void do_invoke(const T* self) noexcept {
+  static AA_PLEASE_INLINE void do_invoke(const T* self) noexcept {
     std::destroy_at(self);
   }
 };
 template <typename T>
 struct move {
-  static void do_invoke(T* src, void* dest) {
+  static AA_PLEASE_INLINE void do_invoke(T* src, void* dest) {
     std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
   }
 };
 template <typename T>
 struct copy {
-  static void do_invoke(const T* src, void* dest) {
+  static AA_PLEASE_INLINE void do_invoke(const T* src, void* dest) {
     std::construct_at(reinterpret_cast<T*>(dest), *src);
   }
 };
@@ -203,13 +210,13 @@ template <typename T>
 struct noexcept_copy {
   static_assert(std::is_nothrow_copy_constructible_v<T>);
 
-  static void do_invoke(const T* src, void* dest) noexcept {
+  static AA_PLEASE_INLINE void do_invoke(const T* src, void* dest) noexcept {
     std::construct_at(reinterpret_cast<T*>(dest), *src);
   }
 };
 template <typename T>
 struct RTTI {
-  static const std::type_info& do_invoke() noexcept {
+  static AA_PLEASE_INLINE const std::type_info& do_invoke() noexcept {
     return typeid(T);
   }
 };
@@ -217,7 +224,7 @@ struct RTTI {
 // since C++20 operator== it is a != too
 template <typename T>
 struct equal_to {
-  static bool do_invoke(const T* first, const void* second) {
+  static AA_PLEASE_INLINE bool do_invoke(const T* first, const void* second) {
     return *first == *reinterpret_cast<const T*>(second);
   }
 };
@@ -226,7 +233,7 @@ template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static std::partial_ordering do_invoke(const T* first, const void* second) {
+  static AA_PLEASE_INLINE std::partial_ordering do_invoke(const T* first, const void* second) {
     return *first <=> *reinterpret_cast<const T*>(second);
   }
 };
@@ -253,7 +260,7 @@ struct vtable {
   // clang-format off
   template <TTA Method, typename... Args>
   requires(has_method<Method>)
-  constexpr decltype(auto) invoke(Args&&... args) const {
+  constexpr AA_PLEASE_INLINE decltype(auto) invoke(Args&&... args) const {
     // clang-format on
     return std::get<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
@@ -287,7 +294,7 @@ struct basic_any {
             // and allocated_size() >= SooS
   };
 
-  any_state state() const noexcept {
+  AA_PLEASE_INLINE any_state state() const noexcept {
     if (!has_value()) {
       assert(!memory_allocated());
       return any_state::empty;
@@ -468,14 +475,14 @@ struct basic_any {
 
   // postconditions : has_value() == true, *this is empty if exception thrown
   template <typename T, typename... Args>
-  std::decay_t<T>& emplace(Args&&... args) noexcept(
+  AA_PLEASE_INLINE std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     reset();
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
   template <typename T, typename U, typename... Args>
-  std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
+  AA_PLEASE_INLINE std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) {
     reset();
@@ -483,12 +490,12 @@ struct basic_any {
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
   template <typename T, typename... Args>
-  basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
+  AA_PLEASE_INLINE basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args>
-  basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
+  AA_PLEASE_INLINE basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
@@ -523,7 +530,7 @@ struct basic_any {
 
   // observe
 
-  [[nodiscard]] bool has_value() const noexcept {
+  [[nodiscard]] AA_PLEASE_INLINE bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
   [[nodiscard]] const std::type_info& type() const noexcept requires(has_method<RTTI>) {
@@ -590,14 +597,14 @@ struct basic_any {
     assert(false);  // TODO C++23 std::unreachable
   }
 
-  void remember_size(size_t size) noexcept {
+  AA_PLEASE_INLINE void remember_size(size_t size) noexcept {
     std::construct_at(reinterpret_cast<size_t*>(&data), size);
   }
   // end of lifetime for remembered size of allocated value
-  void forget_size() noexcept {
+  AA_PLEASE_INLINE void forget_size() noexcept {
     std::destroy_at(reinterpret_cast<size_t*>(&data));
   }
-  size_t allocated_size() const noexcept {
+  AA_PLEASE_INLINE size_t allocated_size() const noexcept {
     // assume lifetime of size_t was started
     // two rows for copy elision here
     size_t result = *reinterpret_cast<size_t*>(&data);
@@ -654,14 +661,14 @@ struct caster {
 };
 
 template <typename T, any_x U>
-[[nodiscard]] T* any_cast(U* ptr) noexcept {
+[[nodiscard]] AA_PLEASE_INLINE T* any_cast(U* ptr) noexcept {
   // references ill-formed already (because of T*)
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
   return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
 }
 template <typename T, any_x U>
-[[nodiscard]] const T* any_cast(const U* ptr) noexcept {
+[[nodiscard]] AA_PLEASE_INLINE const T* any_cast(const U* ptr) noexcept {
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
   return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
@@ -700,14 +707,14 @@ struct invoke_fn;
 template <TTA Method, typename... Args>
 struct invoke_fn<Method, type_list<Args...>> {
   template <any_x U>
-  result_t<Method> operator()(U&& any, Args... args) const {
+  AA_PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value())
       throw empty_any_method_call{};
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
   // clang-format off
   template <any_x U>
-  result_t<Method> operator()(const U& any, Args... args) const {
+  AA_PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     if (!any.has_value())
