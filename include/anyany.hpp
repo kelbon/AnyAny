@@ -427,32 +427,22 @@ struct basic_any {
 
   basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
-      // TODO - check можно переписать без other.state(), встроив лично проверки из state сюда
     if (!other.has_value())
       return;
-    if (!other.memory_allocated()) [[likely]] {
-      if constexpr (has_method<noexcept_copy>) {
-        other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
-      } else {
-        allocate_guard guard(*this, SooS);
-        other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-        guard.release();
-      }
-      vtable_ptr = other.vtable_ptr;
-    } else {
-      // no way to replace value into &data regardless of sizeof, because it can break
-      // invariant "noexcept move" of small state
-      if constexpr (has_method<noexcept_copy>) {
+    if constexpr (has_method<copy>) {
+      allocate_guard guard(*this, !other.memory_allocated() ? SooS : other.allocated_size());
+      other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
+      guard.release();
+    } else { // has_method<noexcept_copy> == true
+      if (other.memory_allocated()) {
+        // no way to relocate value into &data regardless of sizeof, because it can break
+        // invariant "noexcept move" of small state
         value_ptr = alloc_traits::allocate(alloc, other.allocated_size());
         remember_size(other.allocated_size());
-        other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
-      } else {
-        allocate_guard guard(*this, other.allocated_size());
-        other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-        guard.release();
       }
-      vtable_ptr = other.vtable_ptr;
+      other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
     }
+    vtable_ptr = other.vtable_ptr;
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
