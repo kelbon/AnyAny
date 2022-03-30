@@ -444,7 +444,7 @@ struct basic_any {
  public:
   template <TTA Method>
   static inline constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-  static inline constexpr bool has_copy = has_method<typename copy_with<Alloc, SooS>::method>;
+  static inline constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
@@ -475,7 +475,7 @@ struct basic_any {
     // TODO - проверку что аллок в копировании и тут совпадает... Или вообще брать его оттуда
     if (other.has_value()) {
       if constexpr (std::is_empty_v<Alloc>)
-        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::method>(static_cast<void*>(value_ptr));
+        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
       else
         value_ptr =
             other.vtable_invoke<copy_with<Alloc, SooS>::method>(static_cast<void*>(value_ptr), &alloc);
