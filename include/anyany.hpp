@@ -307,13 +307,11 @@ struct basic_any {
   alignas(std::max_align_t) std::array<std::byte, SooS> data;
   [[no_unique_address]] Alloc alloc;
 
-  // invariant of basic_any - it is always in one of those states
-  enum struct any_state {
-    empty,  // has_value() == false, memory_allocated == false
-    small,  // has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
-    big,    // has_value() == true, memory_allocated == true, size remembered
-            // and allocated_size() >= SooS
-  };
+  // invariant of basic_any - it is always in one of those states:
+  // empty - has_value() == false, memory_allocated == false
+  // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
+  // big   - as_value() == true, memory_allocated == true, size remembered
+  // and allocated_size() >= SooS
 
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
@@ -429,38 +427,32 @@ struct basic_any {
 
   basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
-    switch (other.state()) {
-      case any_state::empty: {
-        return;
+      // TODO - check можно переписать без other.state(), встроив лично проверки из state сюда
+    if (!other.has_value())
+      return;
+    if (!other.memory_allocated()) [[likely]] {
+      if constexpr (has_method<noexcept_copy>) {
+        other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
+      } else {
+        allocate_guard guard(*this, SooS);
+        other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
+        guard.release();
       }
-      case any_state::small: {
-        if constexpr (has_method<noexcept_copy>) {
-          other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
-        } else {
-          allocate_guard guard(*this, SooS);
-          other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-          guard.release();
-        }
-        vtable_ptr = other.vtable_ptr;
-        return;
+      vtable_ptr = other.vtable_ptr;
+    } else {
+      // no way to replace value into &data regardless of sizeof, because it can break
+      // invariant "noexcept move" of small state
+      if constexpr (has_method<noexcept_copy>) {
+        value_ptr = alloc_traits::allocate(alloc, other.allocated_size());
+        remember_size(other.allocated_size());
+        other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
+      } else {
+        allocate_guard guard(*this, other.allocated_size());
+        other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
+        guard.release();
       }
-      case any_state::big: {
-        // no way to replace value into &data regardless of sizeof, because it can break
-        // invariant "noexcept move" of small state
-        if constexpr (has_method<noexcept_copy>) {
-          value_ptr = alloc_traits::allocate(alloc, other.allocated_size());
-          remember_size(other.allocated_size());
-          other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
-        } else {
-          allocate_guard guard(*this, other.allocated_size());
-          other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-          guard.release();
-        }
-        vtable_ptr = other.vtable_ptr;
-        return;
-      }
+      vtable_ptr = other.vtable_ptr;
     }
-    AA_UNREACHABLE();
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
@@ -602,26 +594,20 @@ struct basic_any {
      // clang-format off
   void move_value_from(basic_any&& other) noexcept {
     // clang-format on
-    switch (other.state()) {
-      case any_state::empty: {
-        return;
-      }
-      case any_state::small: {
-        // move is noexcept (invariant of small)
-        other.vtable_invoke<move>(static_cast<void*>(value_ptr));
-        vtable_ptr = other.vtable_ptr;
-        return;
-      }
-      case any_state::big: {
-        assert(other.allocated_size() >= SooS);  // invariant of big
-        value_ptr = std::exchange(other.value_ptr, &other.data);
-        remember_size(other.allocated_size());
-        other.forget_size();
-        vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
-        return;
-      }
+    if (!other.has_value())
+      return;
+    if (!other.memory_allocated()) {
+      // move is noexcept (invariant of small)
+      other.vtable_invoke<move>(static_cast<void*>(value_ptr));
+      vtable_ptr = other.vtable_ptr;
     }
-    AA_UNREACHABLE();  // TODO C++23 std::unreachable
+    else {
+      assert(other.allocated_size() >= SooS);  // invariant of big
+      value_ptr = std::exchange(other.value_ptr, &other.data);
+      remember_size(other.allocated_size());
+      other.forget_size();
+      vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
+    }
   }
 
   AA_PLEASE_INLINE void remember_size(size_t size) noexcept {
@@ -640,16 +626,7 @@ struct basic_any {
   AA_PLEASE_INLINE bool memory_allocated() const noexcept {
     return value_ptr != &data;
   }
-  AA_PLEASE_INLINE any_state state() const noexcept {
-    if (!has_value()) {
-      assert(!memory_allocated());
-      return any_state::empty;
-    }
-    if (!memory_allocated())
-      return any_state::small;
-    else
-      return any_state::big;
-  }
+
   void destroy_value() noexcept {
     if (has_value()) {
       vtable_invoke<destroy>();
