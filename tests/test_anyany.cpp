@@ -371,7 +371,7 @@ struct Area {
   }
 };
 
-using any_drawablea = aa::any_with<Drawa, Area, aa::noexcept_copy, aa::move>;
+using any_drawablea = aa::any_with<Drawa, Area, aa::copy, aa::move>;
 
 void DoSomethingWithDrawable(const any_drawablea& p) {
   printf("The drawable is: ");
@@ -393,11 +393,8 @@ void DoCopyWithDrawable(const any_drawablea& p) {
   auto pp1 = p;
   invoke_unsafe<Drawa>(p);
 }
-// TODO - улучшить копирование. [[likely]] на small в switch,
-// TODO возможно какие то хаки в плане удал€ть значение при муве( чтобы потом не пришлось ещЄ раз идти по
-// vtable и вызывать деструктор) ну и ещЄ подобные штуки...
-// TODO - достать из аллокейт гварда код и заинлайнить вручную. ћб заменить на макрос?..»ли написать функцию [[noreturn]] обрабатывающую catch
-// TODO - тест с полиморфным аллокатором
+// TODO - forbid also explicit call to copy or move
+// TODO - update readme
 int main() {
   srand(time(0));
   return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust();

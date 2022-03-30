@@ -11,7 +11,6 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
-
 // TODO remove it when clang will support format(PLEASE)
 #ifndef _MSC_VER
 #define FORMAT(...) "empty string"
@@ -21,25 +20,25 @@
 #include <format>       // message for bad_any_cast
 #define FORMAT(...) std::format(__VA_ARGS__)
 #endif
-
+// No prefix because it will be C++20 module when it will be possible on all compilers
 #ifndef _MSC_VER
 #ifdef __clang__
-#define AA_PLEASE_INLINE __attribute__((always_inline))
-#define AA_AXIOM(cond) __builtin_assume((cond))
-#define AA_UNREACHABLE() __builtin_unreachable()
+#define PLEASE_INLINE __attribute__((always_inline))
+#define AXIOM(cond) __builtin_assume((cond))
+#define UNREACHABLE() __builtin_unreachable()
 #else
-#define AA_PLEASE_INLINE __attribute__((always_inline))
-#define AA_AXIOM(cond)         \
+#define PLEASE_INLINE __attribute__((always_inline))
+#define AXIOM(cond)         \
   do {                         \
     if (!(cond))               \
       __builtin_unreachable(); \
   } while (0)
-#define AA_UNREACHABLE() __builtin_unreachable()
+#define UNREACHABLE() __builtin_unreachable()
 #endif
 #else
-#define AA_PLEASE_INLINE __forceinline
-#define AA_AXIOM(cond) __assume((cond))
-#define AA_UNREACHABLE() __assume(false)
+#define PLEASE_INLINE __forceinline
+#define AXIOM(cond) __assume((cond))
+#define UNREACHABLE() __assume(false)
 #endif
 
 // C++ features is not supported in clang ...
@@ -185,7 +184,7 @@ struct invoker_for;
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static AA_PLEASE_INLINE auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  static PLEASE_INLINE auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
@@ -215,33 +214,107 @@ concept any_x = requires {
 
 template <std::destructible T>
 struct destroy {
-  static AA_PLEASE_INLINE void do_invoke(const T* self) noexcept {
+  static PLEASE_INLINE void do_invoke(const T* self) noexcept {
     std::destroy_at(self);
   }
 };
-template <typename T>
-struct move {
-  static AA_PLEASE_INLINE void do_invoke(T* src, void* dest) {
-    std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
-  }
-};
-template <typename T>
-struct copy {
-  static AA_PLEASE_INLINE void do_invoke(const T* src, void* dest) {
-    std::construct_at(reinterpret_cast<T*>(dest), *src);
-  }
-};
-template <typename T>
-struct noexcept_copy {
-  static_assert(std::is_nothrow_copy_constructible_v<T>);
 
-  static AA_PLEASE_INLINE void do_invoke(const T* src, void* dest) noexcept {
-    std::construct_at(reinterpret_cast<T*>(dest), *src);
+template <std::destructible T>
+struct move {
+  // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
+  // constructible. Actially relocates
+  static PLEASE_INLINE void do_invoke(T* src, void* dest) {
+    if constexpr (std::is_nothrow_move_constructible_v<T>) {
+      std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
+      std::destroy_at(src);
+    } else {
+      UNREACHABLE();
+    }
   }
 };
+
+// Alloc without state
+template<typename Alloc, size_t SooS>
+struct copy_with {
+  // copy logic here, because here we know type, is_nothrow_* and sizeof
+
+  // Must return pointer to created copy,
+  // if memory allocated then dest != returned value,
+  // but under dest pointer size_t value (allocated bytes count)
+  // Any is always empty (memory in dest is not allocated) when copy called
+  template <typename T>
+  struct method {
+    static PLEASE_INLINE void* do_invoke(const T* src, void* dest) {
+      if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
+        std::construct_at(reinterpret_cast<T*>(dest), *src);
+        return dest;
+      } else {
+        // for guarantee that if memory allocated, then size >= SooS (this guarantee used in
+        // move_value_from)
+        using alloc_traits = std::allocator_traits<Alloc>;
+        constexpr typename alloc_traits::size_type alloc_sz = std::max(SooS, sizeof(T));
+        // no fancy pointers supported
+        void* ptr = Alloc{}.allocate(alloc_sz);
+        if constexpr (std::is_nothrow_copy_constructible_v<T>) {
+          std::construct_at(reinterpret_cast<T*>(ptr), *src);
+        } else {
+          try {
+            std::construct_at(reinterpret_cast<T*>(ptr), *src);
+          } catch (...) {
+            Alloc{}.deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
+            throw;
+          }
+        } // remember allocated size in &data (because any is empty before copy call)
+        std::construct_at(reinterpret_cast<size_t*>(dest), size_t{alloc_sz});
+        return ptr;
+      }
+    }
+  };
+};
+
+// Alloc with state
+// clang-format off
+template <typename Alloc, size_t SooS>
+requires(!std::is_empty_v<Alloc>)
+struct copy_with<Alloc, SooS> {
+  // clang-format on
+  template <typename T>
+  struct method {
+    static PLEASE_INLINE void do_invoke(const T* src, void* dest, Alloc* alloc) {
+      if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
+        std::construct_at(reinterpret_cast<T*>(dest), *src);
+        return dest;
+      } else {
+        // for guarantee that if memory allocated, then size >= SooS (this guarantee used in
+        // move_value_from)
+        constexpr typename std::allocator_traits<Alloc>::size_type alloc_sz = std::max(SooS, sizeof(T));
+        // no fancy pointers supported
+        void* ptr = alloc->allocate(alloc_sz);
+        if constexpr (std::is_nothrow_copy_constructible_v<T>) {
+          std::construct_at(reinterpret_cast<T*>(ptr), *src);
+        } else {
+          try {
+            std::construct_at(reinterpret_cast<T*>(ptr), *src);
+          } catch (...) {
+            alloc->deallocate(ptr, alloc_sz);
+            throw;
+          }
+        }  // remember allocated size in &data (because any is empty before copy call)
+        std::construct_at(reinterpret_cast<size_t*>(dest), size_t{alloc_sz});
+        return ptr;
+      }
+    }
+  };
+};
+
+constexpr inline auto default_any_soos = hardware_constructive_interference_size - 3 * sizeof(void*);
+
+template<typename T>
+using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
+
 template <typename T>
 struct RTTI {
-  static AA_PLEASE_INLINE const std::type_info& do_invoke() noexcept {
+  static PLEASE_INLINE const std::type_info& do_invoke() noexcept {
     return typeid(T);
   }
 };
@@ -249,7 +322,7 @@ struct RTTI {
 // since C++20 operator== it is a != too
 template <typename T>
 struct equal_to {
-  static AA_PLEASE_INLINE bool do_invoke(const T* first, const void* second) {
+  static PLEASE_INLINE bool do_invoke(const T* first, const void* second) {
     return *first == *reinterpret_cast<const T*>(second);
   }
 };
@@ -258,7 +331,7 @@ template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static AA_PLEASE_INLINE std::partial_ordering do_invoke(const T* first, const void* second) {
+  static PLEASE_INLINE std::partial_ordering do_invoke(const T* first, const void* second) {
     return *first <=> *reinterpret_cast<const T*>(second);
   }
 };
@@ -285,7 +358,7 @@ struct vtable {
   // clang-format off
   template <TTA Method, typename... Args>
   requires(has_method<Method>)
-  constexpr AA_PLEASE_INLINE decltype(auto) invoke(Args&&... args) const {
+  constexpr PLEASE_INLINE decltype(auto) invoke(Args&&... args) const {
     // clang-format on
     return std::get<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
@@ -310,9 +383,7 @@ struct basic_any {
   // invariant of basic_any - it is always in one of those states:
   // empty - has_value() == false, memory_allocated == false
   // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
-  // big   - as_value() == true, memory_allocated == true, size remembered
-  // and allocated_size() >= SooS
-
+  // big   - has_value() == true, memory_allocated == true, allocated more memory then SooS
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -321,69 +392,40 @@ struct basic_any {
 
  protected:
   template <TTA Method, typename... Args>
-  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
+  PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
     assert(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format off
   template <TTA Method, typename... Args> requires const_method<Method>
-  AA_PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
+  PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
     assert(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format on
  private:
-  // used for exception-safe allocating and remembering size of allocated
-  // + destroy value if was has_value() + forget size and deallocate if was big
-  struct [[nodiscard]] allocate_guard {
-   private:
-    basic_any& any;
-    size_t count;
-    void* old_value_ptr;
-    const vtable<Methods...>* any_vtable_ptr;
-
-   public:
-    allocate_guard(basic_any& any, size_t count)
-        : any(any),
-          count(count),
-          old_value_ptr(std::exchange(any.value_ptr, alloc_traits::allocate(any.alloc, count))),
-          any_vtable_ptr(any.vtable_ptr) {
-      assert(count >= SooS);
-    }
-    // after successfull constructing or smth like (when no exception can happen already)
-    void release() noexcept {
-      if (any_vtable_ptr != nullptr) {  // has value
-        any_vtable_ptr->template invoke<destroy>(old_value_ptr);
-        if (old_value_ptr != &any.data) {  // was allocated
-          alloc_traits::deallocate(any.alloc, reinterpret_cast<alloc_pointer_type>(old_value_ptr),
-                                   alloc_size_type{any.allocated_size()});
-          any.forget_size();
-        }
-      }
-      any.remember_size(count);
-      old_value_ptr = nullptr;
-    }
-    ~allocate_guard() {
-      if (old_value_ptr == nullptr) [[likely]]  // release was called
-        return;
-      assert(std::current_exception() != nullptr);
-      alloc_traits::deallocate(any.alloc, reinterpret_cast<alloc_pointer_type>(any.value_ptr),
-                               alloc_size_type{count});
-      any.value_ptr = old_value_ptr;
-    }
-  };
 
   template <typename T, typename... Args>
-  void emplace_in_empty(Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<T, Args&&...>&& any_is_small_for<T>) {
+  void emplace_in_empty(Args&&... args) {
     if constexpr (any_is_small_for<T>) {
       std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
     } else {
       // invariant of big - allocated_size >= SooS
-      constexpr size_t allocate_size = std::max(sizeof(T), SooS);
-      allocate_guard guard{*this, allocate_size};
-      std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
-      guard.release();
+      constexpr size_t allocation_size = std::max(sizeof(T), SooS);
+      void* old_value_ptr = std::exchange(value_ptr, alloc.allocate(allocation_size));
+      if constexpr (std::is_nothrow_constructible_v<T, Args&&...>) {
+        std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
+      }
+      else {
+        try {
+          std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
+        } catch (...) {
+          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), allocation_size);
+          value_ptr = old_value_ptr;
+          throw;
+        }
+      }
+      remember_size(allocation_size);
     }
     vtable_ptr = &vtable_for<T, Methods...>;
   }
@@ -402,7 +444,7 @@ struct basic_any {
  public:
   template <TTA Method>
   static inline constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-  static inline constexpr bool has_copy = has_method<copy> || has_method<noexcept_copy>;
+  static inline constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::method>;
 
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
@@ -410,8 +452,6 @@ struct basic_any {
   static_assert(SooS >= sizeof(size_t));  // for storing sizeof of big element after allocation
   static_assert(is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires destructor!");
-  static_assert((has_method<copy> + has_method<noexcept_copy>) != 2,
-                "Any requires exactly zero or one copy method");
 
   using base_any_type = basic_any;
 
@@ -420,27 +460,25 @@ struct basic_any {
   }
 
   ~basic_any() {
-    destroy_value();
+    if (has_value())
+      destroy_value();
+    // TODO - check в ассемблере убирается ли приравнение value_ptr = &data в destroy_value(и инлайнится ли)
+    // если нет то вручную сюда заинлайнить destroy_value и убрать этот метод вообще
   }
 
   // basic_any copy/move stuff
 
   basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
-    if (!other.has_value())
-      return;
-    if constexpr (has_method<copy>) {
-      allocate_guard guard(*this, !other.memory_allocated() ? SooS : other.allocated_size());
-      other.vtable_invoke<copy>(static_cast<void*>(value_ptr));
-      guard.release();
-    } else { // has_method<noexcept_copy> == true
-      if (other.memory_allocated()) {
-        // no way to relocate value into &data regardless of sizeof, because it can break
-        // invariant "noexcept move" of small state
-        value_ptr = alloc_traits::allocate(alloc, other.allocated_size());
-        remember_size(other.allocated_size());
-      }
-      other.vtable_invoke<noexcept_copy>(static_cast<void*>(value_ptr));
+    // TODO - проверить что убирается всё про аллокатор
+    // TODO - проверить что нет лишней инициализации vtable_ptr нулём(и value_ptr тоже)
+    // TODO - проверку что аллок в копировании и тут совпадает... Или вообще брать его оттуда
+    if (other.has_value()) {
+      if constexpr (std::is_empty_v<Alloc>)
+        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::method>(static_cast<void*>(value_ptr));
+      else
+        value_ptr =
+            other.vtable_invoke<copy_with<Alloc, SooS>::method>(static_cast<void*>(value_ptr), &alloc);
     }
     vtable_ptr = other.vtable_ptr;
   }
@@ -449,7 +487,7 @@ struct basic_any {
     static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
     return alloc;
   }
-
+  // postcondition: other do not contain a value after move
   basic_any(basic_any&& other) noexcept requires(has_method<move>) : alloc(std::move(other.alloc)) {
     move_value_from(std::move(other));
   }
@@ -484,14 +522,14 @@ struct basic_any {
 
   // postconditions : has_value() == true, *this is empty if exception thrown
   template <typename T, typename... Args>
-  AA_PLEASE_INLINE std::decay_t<T>& emplace(Args&&... args) noexcept(
+  std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     reset();
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
   template <typename T, typename U, typename... Args>
-  AA_PLEASE_INLINE std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
+  std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) {
     reset();
@@ -499,12 +537,12 @@ struct basic_any {
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
   template <typename T, typename... Args>
-  AA_PLEASE_INLINE basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
+  basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args>
-  AA_PLEASE_INLINE basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
+  basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
@@ -533,13 +571,15 @@ struct basic_any {
 
   // postconditions : has_value() == false
   void reset() noexcept {
+    if (!has_value())
+      return;
     destroy_value();
     vtable_ptr = nullptr;
   }
 
   // observe
 
-  [[nodiscard]] AA_PLEASE_INLINE bool has_value() const noexcept {
+  [[nodiscard]] PLEASE_INLINE bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
   [[nodiscard]] const std::type_info& type() const noexcept requires(has_method<RTTI>) {
@@ -581,51 +621,39 @@ struct basic_any {
  private :
 
      // precodition - has_value() == false
-     // clang-format off
-  void move_value_from(basic_any&& other) noexcept {
-    // clang-format on
+  void move_value_from(basic_any&& other) {
     if (!other.has_value())
       return;
-    if (!other.memory_allocated()) {
-      // move is noexcept (invariant of small)
+    // `move` is noexcept (invariant of small state)
+    // `move` also 'relocate' i.e. calls dctor of value(for remove vtable_invoke<destroy> call in future)
+    if (!other.memory_allocated())
       other.vtable_invoke<move>(static_cast<void*>(value_ptr));
-      vtable_ptr = other.vtable_ptr;
-    }
     else {
-      assert(other.allocated_size() >= SooS);  // invariant of big
-      value_ptr = std::exchange(other.value_ptr, &other.data);
       remember_size(other.allocated_size());
-      other.forget_size();
-      vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
+      value_ptr = std::exchange(other.value_ptr, &other.data);
     }
+    vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
-  AA_PLEASE_INLINE void remember_size(size_t size) noexcept {
+  PLEASE_INLINE bool memory_allocated() const {
+    return value_ptr != &data;
+  }
+  PLEASE_INLINE void remember_size(size_t size) {
+      // size remembered also in copy method
     std::construct_at(reinterpret_cast<size_t*>(&data), size);
   }
-  // end of lifetime for remembered size of allocated value
-  AA_PLEASE_INLINE void forget_size() noexcept {
-    std::destroy_at(reinterpret_cast<size_t*>(&data));
-  }
-  AA_PLEASE_INLINE size_t allocated_size() const noexcept {
-    // assume lifetime of size_t was started
-    // two rows for copy elision here
+  PLEASE_INLINE size_t allocated_size() const {
+    assert(memory_allocated());
     size_t result = *reinterpret_cast<const size_t*>(&data);
     return result;
   }
-  AA_PLEASE_INLINE bool memory_allocated() const noexcept {
-    return value_ptr != &data;
-  }
-
-  void destroy_value() noexcept {
-    if (has_value()) {
-      vtable_invoke<destroy>();
-      if (memory_allocated()) {
-        alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr),
-                                 alloc_size_type{allocated_size()});
-        forget_size();
-        value_ptr = &data;
-      }
+  void destroy_value() {
+    vtable_invoke<destroy>();
+    if (memory_allocated()) {
+      // TODO C++23, remove allocated_size() and remember_size() and use allocate_atleast() here SooS because
+      // it will be no undefined behavior (bcs invariant of big state - allocated >= SooS)
+      alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
+      value_ptr = &data;
     }
   }
 };
@@ -668,14 +696,14 @@ struct caster {
 };
 
 template <typename T, any_x U>
-[[nodiscard]] AA_PLEASE_INLINE T* any_cast(U* ptr) noexcept {
+[[nodiscard]] PLEASE_INLINE T* any_cast(U* ptr) noexcept {
   // references ill-formed already (because of T*)
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
   return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
 }
 template <typename T, any_x U>
-[[nodiscard]] AA_PLEASE_INLINE const T* any_cast(const U* ptr) noexcept {
+[[nodiscard]] PLEASE_INLINE const T* any_cast(const U* ptr) noexcept {
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
   return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
@@ -714,13 +742,13 @@ struct invoke_unsafe_fn;
 template <TTA Method, typename... Args>
 struct invoke_unsafe_fn<Method, type_list<Args...>> {
   template <any_x U>
-  AA_PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     assert(any.has_value());
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
   // clang-format off
   template <any_x U>
-  AA_PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     assert(any.has_value());
@@ -742,33 +770,33 @@ struct invoke_fn;
 template <TTA Method, typename... Args>
 struct invoke_fn<Method, type_list<Args...>> {
   template <any_x U>
-  AA_PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value())
       throw empty_any_method_call{};
     if constexpr (std::is_void_v<result_t<Method>>) {
       any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AA_AXIOM(any.has_value());
+      AXIOM(any.has_value());
     } else {
       result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
       // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
-      AA_AXIOM(any.has_value());
+      AXIOM(any.has_value());
       return result;
     }
   }
   // clang-format off
   template <any_x U>
-  AA_PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     if (!any.has_value())
       throw empty_any_method_call{};
     if constexpr (std::is_void_v<result_t<Method>>) {
       any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AA_AXIOM(any.has_value());
+      AXIOM(any.has_value());
     } else {
       // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
       result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AA_AXIOM(any.has_value());
+      AXIOM(any.has_value());
       return result;
     }
   }
@@ -783,11 +811,9 @@ template <TTA Method>
 constexpr invoke_fn<Method> invoke = {};
 
 // TEMPLATE any - default any for inheritance from (creating your any with default allocator and SooS)
-
-// default any size is a one cache line in currect CPU
+                                                  // default any size is a one cache line in currect CPU
 template <typename CRTP, TTA... Methods>
-struct any : basic_any<CRTP, std::allocator<std::byte>,
-                       hardware_constructive_interference_size - 3 * sizeof(void*), destroy, Methods...> {
+struct any : basic_any<CRTP, std::allocator<std::byte>, default_any_soos, destroy, Methods...> {
   using any::basic_any::basic_any;
 };
 
