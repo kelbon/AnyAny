@@ -280,7 +280,7 @@ struct copy_with<Alloc, SooS> {
   // clang-format on
   template <typename T>
   struct method {
-    static PLEASE_INLINE void do_invoke(const T* src, void* dest, Alloc* alloc) {
+    static PLEASE_INLINE void* do_invoke(const T* src, void* dest, Alloc* alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
