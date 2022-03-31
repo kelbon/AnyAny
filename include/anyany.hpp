@@ -249,9 +249,8 @@ struct copy_with {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
       } else {
-        // for guarantee that if memory allocated, then size >= SooS (this guarantee used in
-        // move_value_from)
         using alloc_traits = std::allocator_traits<Alloc>;
+        // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
         constexpr typename alloc_traits::size_type alloc_sz = std::max(SooS, sizeof(T));
         // no fancy pointers supported
         void* ptr = Alloc{}.allocate(alloc_sz);
@@ -264,8 +263,7 @@ struct copy_with {
             Alloc{}.deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
             throw;
           }
-        } // remember allocated size in &data (because any is empty before copy call)
-        std::construct_at(reinterpret_cast<size_t*>(dest), size_t{alloc_sz});
+        }
         return ptr;
       }
     }
@@ -285,8 +283,7 @@ struct copy_with<Alloc, SooS> {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
       } else {
-        // for guarantee that if memory allocated, then size >= SooS (this guarantee used in
-        // move_value_from)
+        // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
         constexpr typename std::allocator_traits<Alloc>::size_type alloc_sz = std::max(SooS, sizeof(T));
         // no fancy pointers supported
         void* ptr = alloc->allocate(alloc_sz);
@@ -299,8 +296,7 @@ struct copy_with<Alloc, SooS> {
             alloc->deallocate(ptr, alloc_sz);
             throw;
           }
-        }  // remember allocated size in &data (because any is empty before copy call)
-        std::construct_at(reinterpret_cast<size_t*>(dest), size_t{alloc_sz});
+        }
         return ptr;
       }
     }
@@ -347,6 +343,7 @@ struct empty_any_method_call : std::exception {
 template <TTA... Methods>
 struct vtable {
   std::tuple<type_erased_signature_t<Methods>...> table;
+  size_t allocated_size; // always std::max(SooS, sizeof(T)), needed for basic_any
 
   struct methods_must_be_unique : Methods<int>... {};
 
@@ -364,8 +361,8 @@ struct vtable {
   }
 };
 
-template <typename T, TTA... Methods>
-constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}};
+template <typename T, size_t SooS, TTA... Methods>
+constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}, std::max(sizeof(T), SooS)};
 
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
@@ -383,7 +380,8 @@ struct basic_any {
   // invariant of basic_any - it is always in one of those states:
   // empty - has_value() == false, memory_allocated == false
   // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
-  // big   - has_value() == true, memory_allocated == true, allocated more memory then SooS
+  // big   - has_value() == true, memory_allocated == true,
+  // count allocated bytes ALWAYS == std::max(SooS, sizeof(T)) (need to avoid UB in deallocate)
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -425,9 +423,8 @@ struct basic_any {
           throw;
         }
       }
-      remember_size(allocation_size);
     }
-    vtable_ptr = &vtable_for<T, Methods...>;
+    vtable_ptr = &vtable_for<T, SooS, Methods...>;
   }
 
   using alloc_traits = std::allocator_traits<Alloc>;
@@ -628,30 +625,21 @@ struct basic_any {
     // `move` also 'relocate' i.e. calls dctor of value(for remove vtable_invoke<destroy> call in future)
     if (!other.memory_allocated())
       other.vtable_invoke<move>(static_cast<void*>(value_ptr));
-    else {
-      remember_size(other.allocated_size());
+    else
       value_ptr = std::exchange(other.value_ptr, &other.data);
-    }
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
   PLEASE_INLINE bool memory_allocated() const {
     return value_ptr != &data;
   }
-  PLEASE_INLINE void remember_size(size_t size) {
-      // size remembered also in copy method
-    std::construct_at(reinterpret_cast<size_t*>(&data), size);
-  }
   PLEASE_INLINE size_t allocated_size() const {
-    assert(memory_allocated());
-    size_t result = *reinterpret_cast<const size_t*>(&data);
-    return result;
+    assert(has_value() && memory_allocated());
+    return vtable_ptr->allocated_size; // always std::max(SooS, sizeof(T))
   }
   void destroy_value() {
     vtable_invoke<destroy>();
     if (memory_allocated()) {
-      // TODO C++23, remove allocated_size() and remember_size() and use allocate_atleast() here SooS because
-      // it will be no undefined behavior (bcs invariant of big state - allocated >= SooS)
       alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
       value_ptr = &data;
     }
@@ -681,7 +669,7 @@ struct caster {
   static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
     // T already remove_cv
-    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, Methods...>)
+    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
     return reinterpret_cast<const T*>(any->value_ptr);
   }
@@ -689,7 +677,7 @@ struct caster {
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static T* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
-    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, Methods...>)
+    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
     return reinterpret_cast<T*>(any->value_ptr);
   }
