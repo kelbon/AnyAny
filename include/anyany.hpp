@@ -392,12 +392,14 @@ struct basic_any {
   template <TTA Method, typename... Args>
   PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
     assert(vtable_ptr != nullptr);
+    AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format off
   template <TTA Method, typename... Args> requires const_method<Method>
   PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
     assert(vtable_ptr != nullptr);
+    AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format on
@@ -732,6 +734,7 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   template <any_x U>
   PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     assert(any.has_value());
+    AXIOM(any.vtable_ptr != nullptr);
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
   // clang-format off
@@ -740,6 +743,7 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
     // clang-format on
     static_assert(const_method<Method>);
     assert(any.has_value());
+    AXIOM(any.vtable_ptr != nullptr);
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
 };
