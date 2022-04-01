@@ -8,6 +8,7 @@
 #include <random>
 #include <stop_token>
 #include <list>
+#include <memory_resource> // TODO - что то придумать с клангом
 
 #include "anyany.hpp"
 
@@ -37,26 +38,16 @@ struct Y {
   auto operator<=>(const Y&) const noexcept = default;
 };
 
-void Test0() {
-  static_assert(std::is_same_v<steal_qualifiers_from_t<int, double>, double> &&
-                std::is_same_v<steal_qualifiers_from_t<const int, float>, const float> &&
-                std::is_same_v<steal_qualifiers_from_t<const volatile int, char>, const volatile char> &&
-                std::is_same_v<steal_qualifiers_from_t<const int&, char>, const char&> &&
-                std::is_same_v<steal_qualifiers_from_t<int*&&, std::nullptr_t>, std::nullptr_t&&> &&
-                std::is_same_v<steal_qualifiers_from_t<bool volatile&, int>, volatile int&> &&
-                std::is_same_v<steal_qualifiers_from_t<int, const float>, float> &&
-                std::is_same_v<steal_qualifiers_from_t<const int&&, double>, double const&&> &&
-                std::is_same_v<steal_qualifiers_from_t<void const, float>, const float> &&
-                std::is_same_v<steal_qualifiers_from_t<int&&, void>, void>);
-}
-
  // any movable
-struct any_movable : any<any_movable, move> {
-  using any_movable::any::any;
+template<typename Alloc = std::allocator<std::byte>>
+struct any_movable : basic_any<any_movable<Alloc>, Alloc, aa::default_any_soos, destroy, move> {
+  using any_movable::basic_any::basic_any;
 };
+// TODO - придумать что то чтобы нельзя было забыть про copy_with, хотя бы внятный статик ассерт что нужно поправить
 // any copyable
-struct any_copyable : any<any_copyable, copy, move, equal_to> {
-  using any_copyable::any::any;
+template<typename Alloc = std::allocator<char>>
+struct any_copyable : basic_any<any_copyable<Alloc>, Alloc, aa::default_any_soos, destroy, copy_with<Alloc, aa::default_any_soos>::template method, move, equal_to> {
+  using any_copyable::basic_any::basic_any;
 };
 
 int leaked_resource_count = 0;
@@ -99,9 +90,9 @@ struct destroy_me_throw : destroy_me<Sz> {
 struct nomove_any : any<nomove_any> {
   using nomove_any::any::any;
 };
-#define error_if(Cond) error_count += static_cast<size_t>((Cond));
+#define error_if(Cond) error_count += static_cast<bool>((Cond));
 size_t TestConstructors() {
-  any_copyable ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
+  any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
   ilist.emplace<std::vector<int>>({1, 2, 3});
   // problems with emplaceing std::array(aggregate construct) because of construct_at
   constexpr auto Xy = [] {
@@ -115,7 +106,7 @@ size_t TestConstructors() {
   std::mt19937 generator{std::random_device{}()};
   // MOVE ONLY
   {
-    std::vector<any_movable> vec;
+    std::vector<any_movable<>> vec;
     vec.emplace_back(5);
     vec.emplace_back(std::make_unique<int>());
     vec.emplace_back("hello world");
@@ -136,11 +127,11 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me<120>>);
     vec.emplace_back(std::make_unique<destroy_me<120>>());
     std::ranges::shuffle(vec, generator);
-    std::vector<any_movable> storage;
+    std::vector<any_movable<>> storage;
     std::ranges::move(vec, std::back_inserter(storage));
   }
   {
-    std::vector<any_movable> vec;
+    std::vector<any_movable<>> vec;
     vec.emplace_back(5);
     vec.emplace_back(std::make_unique<int>());
     vec.emplace_back("hello world");
@@ -161,13 +152,13 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
     vec.emplace_back(std::make_unique<destroy_me_throw<120>>());
     std::ranges::shuffle(vec, generator);
-    std::vector<any_movable> storage;
+    std::vector<any_movable<>> storage;
     std::ranges::move(vec, std::back_inserter(storage));
   }
   // COPY + MOVE
   error_if(leaked_resource_count != 0);  // changed by destroy_me objects
   {
-    std::vector<any_copyable> vec;
+    std::vector<any_copyable<>> vec;
     vec.emplace_back(5);
     vec.emplace_back("hello world");
     vec.emplace_back(std::vector<int>(10, 1));
@@ -186,7 +177,7 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me<110>>);
     vec.emplace_back(std::in_place_type<destroy_me<120>>);
     std::ranges::shuffle(vec, generator);
-    std::vector<any_copyable> storage;
+    std::vector<any_copyable<>> storage;
     std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
     storage[0].emplace<destroy_me<10>>();
     storage[1].emplace<destroy_me<20>>();
@@ -205,7 +196,7 @@ size_t TestConstructors() {
   }
   error_if(leaked_resource_count != 0);
   {
-    std::vector<any_copyable> vec;
+    std::vector<any_copyable<>> vec;
     vec.emplace_back(5);
     vec.emplace_back("hello world");
     vec.emplace_back(std::vector<int>(10, 1));
@@ -224,7 +215,47 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me_throw<110>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
     std::ranges::shuffle(vec, generator);
-    std::vector<any_copyable> storage;
+    std::vector<any_copyable<>> storage;
+    std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
+    storage[0].emplace<destroy_me_throw<10>>();
+    storage[1].emplace<destroy_me_throw<20>>();
+    storage[2].emplace<destroy_me_throw<30>>();
+    storage[3].emplace<destroy_me_throw<40>>();
+    storage[4].emplace<destroy_me_throw<50>>();
+    storage[5].emplace<destroy_me_throw<60>>();
+    storage[6].emplace<destroy_me_throw<70>>();
+    vec[0].emplace<destroy_me_throw<10>>();
+    vec[1].emplace<destroy_me_throw<20>>();
+    vec[2].emplace<destroy_me_throw<30>>();
+    vec[3].emplace<destroy_me_throw<40>>();
+    vec[4].emplace<destroy_me_throw<50>>();
+    vec[5].emplace<destroy_me_throw<60>>();
+    vec[6].emplace<destroy_me_throw<70>>();
+  }
+  error_if(leaked_resource_count != 0);
+  {
+    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> vec(
+        std::pmr::new_delete_resource());
+    vec.emplace_back(5);
+    vec.emplace_back("hello world");
+    vec.emplace_back(std::vector<int>(10, 1));
+    vec.emplace_back(std::array<std::byte, 4>{});
+    vec.emplace_back(std::in_place_type<destroy_me_throw<1>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<10>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<20>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<30>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<40>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<50>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<60>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<70>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<80>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<90>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<100>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<110>>);
+    vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
+    std::ranges::shuffle(vec, generator);
+    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> storage(
+        std::pmr::new_delete_resource());
     std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
     storage[0].emplace<destroy_me_throw<10>>();
     storage[1].emplace<destroy_me_throw<20>>();
@@ -358,44 +389,25 @@ size_t TestJust(){
   invoke<Draw>(d0, std::cout, {});
   return 0;
 }
-template <class T>
-struct Drawa {
-  static void do_invoke(const T& self) {
-    self.Draw();
-  }
-};
-template <class T>
-struct Area {
-  static double do_invoke(const T& self) {
-    return self.Area();
-  }
-};
 
-using any_drawablea = aa::any_with<Drawa, Area, aa::copy, aa::move>;
-
-void DoSomethingWithDrawable(const any_drawablea& p) {
-  printf("The drawable is: ");
-  aa::invoke_unsafe<Drawa>(p);
-  printf(", area = %f\n", aa::invoke_unsafe<Area>(p));
+size_t TestCasts() {
+  size_t error_count = 0;
+  any_copyable<> cp;
+  error_if(aa::any_cast<int>(&cp) != nullptr);
+  cp = 5;
+  error_if(aa::any_cast<int>(cp) != 5);
+  const volatile int i = 5;
+  cp = i;
+  error_if(aa::any_cast<const int>(cp) != 5);
+  std::vector<int> vec(10, 3);
+  cp = vec;
+  error_if(aa::any_cast<std::vector<int>>(cp) != vec);
+  error_if(aa::any_cast<std::vector<int>>(std::move(cp)) != vec);
+  error_if(aa::any_cast<std::vector<int>>(cp) != std::vector<int>{});
+  return error_count;
 }
 
-struct Exa {
-  const char* s = "hello world";
-  int value = 10;
-  void Draw() const {
-    std::cout << value << s;
-  }
-  double Area() const {
-    return 4.;
-  }
-};
-void DoCopyWithDrawable(const any_drawablea& p) {
-  auto pp1 = p;
-  invoke_unsafe<Drawa>(p);
-}
-// TODO - forbid also explicit call to copy or move
-// TODO - update readme
 int main() {
   srand(time(0));
-  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust();
+  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust() + TestCasts();
 }

@@ -11,15 +11,7 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
-// TODO remove it when clang will support format(PLEASE)
-#ifndef _MSC_VER
-#define FORMAT(...) "empty string"
-#elif defined(__clang__)
-#define FORMAT(...) "empty string"
-#else
-#include <format>       // message for bad_any_cast
-#define FORMAT(...) std::format(__VA_ARGS__)
-#endif
+
 // No prefix because it will be C++20 module when it will be possible on all compilers
 #ifndef _MSC_VER
 #ifdef __clang__
@@ -62,33 +54,6 @@ struct type_list {};
 }  // namespace aa
 
 namespace noexport {
-
-template <typename, typename U>
-struct steal_qualifiers_from {
-  using type = U;
-};
-template <typename T, typename U>
-struct steal_qualifiers_from<T&, U> {
-  using type = std::add_lvalue_reference_t<typename steal_qualifiers_from<T, U>::type>;
-};
-template <typename T, typename U>
-struct steal_qualifiers_from<T&&, U> {
-  using type = std::add_rvalue_reference_t<typename steal_qualifiers_from<T, U>::type>;
-};
-template <typename T, typename U>
-struct steal_qualifiers_from<const T, U> {
-  using type = const typename steal_qualifiers_from<T, U>::type;
-};
-template <typename T, typename U>
-struct steal_qualifiers_from<volatile T, U> {
-  using type = volatile typename steal_qualifiers_from<T, U>::type;
-};
-template <typename T, typename U>
-struct steal_qualifiers_from<const volatile T, U> {
-  using type = const volatile typename steal_qualifiers_from<T, U>::type;
-};
-template <typename From, typename To>
-using steal_qualifiers_from_t = typename steal_qualifiers_from<From, std::remove_cvref_t<To>>::type;
 
 inline constexpr size_t npos = size_t(-1);
 
@@ -148,6 +113,14 @@ struct any_method_traits<R (*)(Self, Args...) noexcept> {
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
   using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
   using args = aa::type_list<Args...>;
+};
+
+template <typename Method, typename Alloc, size_t SooS>
+static consteval bool check_copy() {
+  if constexpr ((requires { typename Method::allocator_type; }))
+    return std::is_same_v<typename Method::allocator_type, Alloc> && SooS == Method::SooS_value;
+  else
+    return true;
 };
 
 }  // namespace noexport
@@ -234,7 +207,7 @@ struct move {
 };
 
 // Alloc without state
-template<typename Alloc, size_t SooS>
+template <typename Alloc, size_t SooS>
 struct copy_with {
   // copy logic here, because here we know type, is_nothrow_* and sizeof
 
@@ -244,6 +217,9 @@ struct copy_with {
   // Any is always empty (memory in dest is not allocated) when copy called
   template <typename T>
   struct method {
+    using allocator_type = Alloc;
+    static constexpr size_t SooS_value = SooS;
+
     static PLEASE_INLINE void* do_invoke(const T* src, void* dest) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
@@ -278,13 +254,17 @@ struct copy_with<Alloc, SooS> {
   // clang-format on
   template <typename T>
   struct method {
+    using allocator_type = Alloc;
+    static constexpr size_t SooS_value = SooS;
+
     static PLEASE_INLINE void* do_invoke(const T* src, void* dest, Alloc* alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
       } else {
+        using alloc_traits = std::allocator_traits<Alloc>;
         // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
-        constexpr typename std::allocator_traits<Alloc>::size_type alloc_sz = std::max(SooS, sizeof(T));
+        constexpr typename alloc_traits::size_type alloc_sz = std::max(SooS, sizeof(T));
         // no fancy pointers supported
         void* ptr = alloc->allocate(alloc_sz);
         if constexpr (std::is_nothrow_copy_constructible_v<T>) {
@@ -293,7 +273,7 @@ struct copy_with<Alloc, SooS> {
           try {
             std::construct_at(reinterpret_cast<T*>(ptr), *src);
           } catch (...) {
-            alloc->deallocate(ptr, alloc_sz);
+            alloc->deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
             throw;
           }
         }
@@ -305,7 +285,7 @@ struct copy_with<Alloc, SooS> {
 
 constexpr inline auto default_any_soos = hardware_constructive_interference_size - 3 * sizeof(void*);
 
-template<typename T>
+template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
 
 template <typename T>
@@ -343,7 +323,7 @@ struct empty_any_method_call : std::exception {
 template <TTA... Methods>
 struct vtable {
   std::tuple<type_erased_signature_t<Methods>...> table;
-  size_t allocated_size; // always std::max(SooS, sizeof(T)), needed for basic_any
+  size_t allocated_size;  // always std::max(SooS, sizeof(T)), needed for basic_any
 
   struct methods_must_be_unique : Methods<int>... {};
 
@@ -364,7 +344,7 @@ struct vtable {
 template <typename T, size_t SooS, TTA... Methods>
 constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}, std::max(sizeof(T), SooS)};
 
-// CRTP - inheritor of basic_any
+    // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
@@ -391,14 +371,12 @@ struct basic_any {
  protected:
   template <TTA Method, typename... Args>
   PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
-    assert(vtable_ptr != nullptr);
     AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format off
   template <TTA Method, typename... Args> requires const_method<Method>
   PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
-    assert(vtable_ptr != nullptr);
     AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
   }
@@ -442,9 +420,12 @@ struct basic_any {
 
  public:
   template <TTA Method>
-  static inline constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-  static inline constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
+  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
+  static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
+  static_assert((check_copy<Methods<int>, Alloc, SooS>() && ...),
+                "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
+                "use aa::copy_with<Alloc, SooS>::tempalte method!");
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
       "Spaceship already contains most effective way to equality compare, if class have operator ==");
@@ -477,7 +458,7 @@ struct basic_any {
         value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
       else
         value_ptr =
-            other.vtable_invoke<copy_with<Alloc, SooS>::method>(static_cast<void*>(value_ptr), &alloc);
+            other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr), &alloc);
     }
     vtable_ptr = other.vtable_ptr;
   }
@@ -700,24 +681,27 @@ template <typename T, any_x U>
 }
 
 template <typename T, any_x U>
+[[nodiscard]] std::remove_cv_t<T> any_cast(U& any) {
+  T* ptr = any_cast<T>(std::addressof(any));
+  if (!ptr)
+    throw std::bad_cast{};
+  std::remove_cv_t<T> result{*ptr};
+  return result;
+}
+template <typename T, any_x U>
 [[nodiscard]] std::remove_cv_t<T> any_cast(U&& any) {
-  static_assert(!(std::is_array_v<T> || std::is_function_v<T>), "Incorrect call, it will be always nullptr");
-
-  T* ptr = caster::any_cast_impl<std::remove_cv_t<T>>(std::addressof(any));
-  if (!ptr) {  // MSVC parsing bug template after any. breaks compilation
-    constexpr bool msvc_bug_workaround = std::remove_reference_t<U>::template has_method<RTTI>;
-    if constexpr (msvc_bug_workaround)  // must be "any.has_method<RTTI>"!
-    {
-      std::string message =
-          FORMAT("Bad any_cast : requested type : {}, real type : {}", typeid(T).name(), any.type().name());
-      throw bad_any_cast{std::move(message)};
-    } else {
-      std::string message =
-          FORMAT("Bad any_cast : requested type : {}, real type unknown(RTTI disabled)", typeid(T).name());
-      throw bad_any_cast{std::move(message)};
-    }
-  }  // move if U&& rvalue
-  std::remove_cv_t<T> result{static_cast<steal_qualifiers_from_t<U&&, T>>(*ptr)};
+  T* ptr = any_cast<T>(std::addressof(any));
+  if (!ptr)
+    throw std::bad_cast{};
+  std::remove_cv_t<T> result{std::move(*ptr)};
+  return result;
+}
+template <typename T, any_x U>
+[[nodiscard]] std::remove_cv_t<T> any_cast(const U& any) {
+  T* ptr = any_cast<T>(std::addressof(any));
+  if (!ptr)
+    throw std::bad_cast{};
+  std::remove_cv_t<T> result{*ptr};
   return result;
 }
 
@@ -733,7 +717,6 @@ template <TTA Method, typename... Args>
 struct invoke_unsafe_fn<Method, type_list<Args...>> {
   template <any_x U>
   PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
-    assert(any.has_value());
     AXIOM(any.vtable_ptr != nullptr);
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
@@ -742,7 +725,6 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
-    assert(any.has_value());
     AXIOM(any.vtable_ptr != nullptr);
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
@@ -767,11 +749,11 @@ struct invoke_fn<Method, type_list<Args...>> {
       throw empty_any_method_call{};
     if constexpr (std::is_void_v<result_t<Method>>) {
       any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.has_value());
+      AXIOM(any.vtable_ptr != nullptr);
     } else {
       result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
       // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
-      AXIOM(any.has_value());
+      AXIOM(any.vtable_ptr != nullptr);
       return result;
     }
   }
@@ -784,11 +766,11 @@ struct invoke_fn<Method, type_list<Args...>> {
       throw empty_any_method_call{};
     if constexpr (std::is_void_v<result_t<Method>>) {
       any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.has_value());
+      AXIOM(any.vtable_ptr != nullptr);
     } else {
       // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
       result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.has_value());
+      AXIOM(any.vtable_ptr != nullptr);
       return result;
     }
   }
