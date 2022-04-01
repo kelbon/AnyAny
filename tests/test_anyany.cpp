@@ -43,7 +43,7 @@ template<typename Alloc = std::allocator<std::byte>>
 struct any_movable : basic_any<any_movable<Alloc>, Alloc, aa::default_any_soos, destroy, move> {
   using any_movable::basic_any::basic_any;
 };
-// TODO - придумать что то чтобы нельзя было забыть про copy_with, хотя бы внятный статик ассерт что нужно поправить
+
 // any copyable
 template<typename Alloc = std::allocator<char>>
 struct any_copyable : basic_any<any_copyable<Alloc>, Alloc, aa::default_any_soos, destroy, copy_with<Alloc, aa::default_any_soos>::template method, move, equal_to> {
