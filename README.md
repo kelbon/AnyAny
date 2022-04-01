@@ -72,13 +72,13 @@ Note: result type of do_invoke and Args must be same for all types T (as for vir
 * [`any_with<Methods...>`](#any_with)
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
+* [`invoke_unsafe<Method>`](#invoke_unsafe)
 * [`method_traits<Method>`](#method_traits)
 
 ### Methods
 
 * [`destroy`](#destroy)
 * [`copy`](#copy)
-* [`noexcept_copy`](#noexcept_copy)
 * [`move`](#move)
 * [`RTTI`](#rtti)
 * [`equal_to`](#equal_to)
@@ -133,7 +133,6 @@ std::partical_ordering operator<=>(...) const;
 _Note : operator spaceship for any always returns partical ordering (if enabled), this means that two anyes can be unordered_
 
 **Important** it is important if your type has noexcept move constructor, it really can increase perfomance(like in std::vector case, if you know).
-Also aa::noexcept_copy module exist, which also can increase perfomance, but breaks compilation if you trying insert a throw copyable type in your any.
 
 ### `any`
 It is just an basic_any with default alloc (std::allocator<std::byte>) and default SooS such that sizeof (any) == Machine Word Size (64 / 32 bytes) for perfomance.
@@ -205,6 +204,9 @@ Example:
 
 ```
 
+### `invoke_unsafe`
+Same as `invoke`, but more effective and if any has no value -> undefined behavior
+
 ### `method_traits`
 Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
 basic_any also have compile time information, static member variables bool has_method<Method> and bool has_copy
@@ -217,13 +219,10 @@ basic_any also have compile time information, static member variables bool has_m
   `any` have it by default. Cannot be invoked explicitly
   
 ### `copy`
-enables copy )) Incompatible with `noexcept_copy`
-
-### `noexcept_copy`
-  enables copy, any is more effective with it. Breaks compilation if you trying to insert throw copyable type. Incompatible with `copy`
+enables copy = )
 
 ### `move`
-  enables move AND copy assignment operator (if you have `copy` or `noexcept_copy`). If inserted types have noexcept move constructor any will be more effective.
+  enables move AND copy assignment operator (if you have copy). If inserted types have noexcept move constructor any will be more effective.
   
 ### `rtti`
   enables `.type()` method in basic_any, forces to store additional info about type
@@ -283,12 +282,12 @@ This is why this library was created, it providies an instruments to create such
   template<typename T>
   struct Go {
     static int do_invoke(T self, int value) {
-     self.speedup(value);
+     self.go(value);
      return value * 4;
     }
   }
   
-  using any_engine = aa::any_with<Go, copy, move>;
+  using any_engine = aa::any_with<Go, aa::copy, aa::move>;
   // All ready to use!
   ```
 
