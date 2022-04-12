@@ -7,7 +7,7 @@ https://github.com/kelbon/AnyAny/actions/workflows/clang.yml)
 [![GCC](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml/badge.svg?branch=main)](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
-(MSVC works too)
+(MSVC works too) _(Note : in Visual Studio 19 v142 toolset have parser bug in C++20 code, if you want to use msvc use v143 toolset (Visual Studio 2022) )_
 
 This is a library for dynamic polymorphism through type erasure with better code readability and reusage, performance, far less boilerplate then with usual way (virtual functions).
 
@@ -39,11 +39,15 @@ using any_animal = aa::any_with<Say>;
 
 // Let's use it!
 struct Cat {
+  int field;
+  
   void say(std::ostream& out) const {
    out << "Meow\n";
   }
 };
 struct Dog {
+  std::string field;
+  
   void say(std::ostream& out) const {
    out << "Woof!\n";
   }
@@ -123,14 +127,14 @@ const std::type_info& type() const noexcept;
 bool operator==( ... ) const;
 
 // DISABLED BY DEFAULT to enable this operator add Method aa::spaceship
-std::partical_ordering operator<=>(...) const; 
+std::partial_ordering operator<=>(...) const; 
 
 };
 ```
 
 **All constructor any copy/move assignment operators have strong exception guarantee**
 
-_Note : operator spaceship for any always returns partical ordering (if enabled), this means that two anyes can be unordered_
+_Note : operator spaceship for any always returns partial ordering (if enabled), this means that two anyes can be unordered_
 
 **Important** it is important if your type has noexcept move constructor, it really can increase perfomance(like in std::vector case, if you know).
 
@@ -181,14 +185,12 @@ std::decay_t<T> any_cast(Any&&); // thrown aa::bad_any_cast if T is not containe
 
 Example:
 ```C++
-using namespace aa;
-
-using any_comparable = any_with<any_compare, copy, spaceship, move>;
+using any_comparable = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 
 void Foo() {
   any_comparable value = 5;
-  value.emplace<std::vector<int>>({ 1, 2, 3, 4});
-  any_cast<std::vector<int>>(&value)->back() = 0;
+  value.emplace<std::vector<int>>({ 1, 2, 3, 4}); // constructed in-place
+  aa::any_cast<std::vector<int>>(&value)->back() = 0; // any_cast returns pointer to vector<int>(or nullptr if any do not containts vector<int>)
 }
 ```
 ### `invoke`
