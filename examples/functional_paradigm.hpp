@@ -82,7 +82,7 @@ void foo(int x, float y, double z) {
 }
 void example1() {
   example::function<void(int, float, double)> f0 = foo;
-  f0({5, 5, 10});
+  f0({5, 5.f, 10.});
   f0(5, 5, 10);
   f0(5)(5, 10);
   f0(5)(5)(10);
