@@ -385,7 +385,6 @@ using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 int main() {
   example1();
   example2();
-  any_hashable h;
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);
