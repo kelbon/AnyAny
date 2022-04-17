@@ -12,6 +12,11 @@
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
 
+// TODO remove when it will be C++20 module
+#undef AXIOM
+#undef PLEASE_INLINE
+#undef UNREACHABLE
+
 // No prefix because it will be C++20 module when it will be possible on all compilers
 #ifndef _MSC_VER
 #ifdef __clang__
@@ -51,15 +56,15 @@ namespace aa {
 template <typename...>
 struct type_list {};
 
+inline constexpr size_t npos = size_t(-1);
+
 }  // namespace aa
 
 namespace noexport {
 
-inline constexpr size_t npos = size_t(-1);
-
 template <size_t I, typename... Args>
 struct number_of_impl {
-  static constexpr size_t value = npos;  // no such element in pack
+  static constexpr size_t value = aa::npos;  // no such element in pack
 };
 template <size_t I, typename T, typename... Args>
 struct number_of_impl<I, T, T, Args...> {
@@ -117,19 +122,18 @@ struct any_method_traits<R (*)(Self, Args...) noexcept> {
 
 template <typename Method, typename Alloc, size_t SooS>
 static consteval bool check_copy() {
-  if constexpr ((requires { typename Method::allocator_type; }))
+  if constexpr (requires { typename Method::allocator_type; })
     return std::is_same_v<typename Method::allocator_type, Alloc> && SooS == Method::SooS_value;
   else
     return true;
-};
+}
 
 }  // namespace noexport
-using namespace noexport;
 
 namespace aa {
 
 template <TTA Method>
-using method_traits = any_method_traits<decltype(&Method<int>::do_invoke)>;
+using method_traits = noexport::any_method_traits<decltype(&Method<int>::do_invoke)>;
 
 template <TTA Method>
 using result_t = typename method_traits<Method>::result_type;
@@ -171,7 +175,7 @@ struct invoker_for<T, Method, type_list<Args...>> {
     } else if constexpr (std::is_copy_constructible_v<T>) {
       return Method<T>::do_invoke(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
     } else {
-      static_assert(always_false<T>,
+      static_assert(noexport::always_false<T>,
                     "You pass self by value and it is not a copy constructible... or by rvalue reference");
     }
   }
@@ -288,6 +292,13 @@ constexpr inline auto default_any_soos = hardware_constructive_interference_size
 template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
 
+template<typename T>
+struct hash {
+  static size_t do_invoke(const T& self) {
+    return std::hash<T>{}(self);
+  }
+};
+
 template <typename T>
 struct RTTI {
   static PLEASE_INLINE const std::type_info& do_invoke() noexcept {
@@ -328,7 +339,7 @@ struct vtable {
   struct methods_must_be_unique : Methods<int>... {};
 
   template <TTA Method>
-  static inline constexpr size_t number_of_method = number_of_first<Method<int>, Methods<int>...>;
+  static inline constexpr size_t number_of_method = noexport::number_of_first<Method<int>, Methods<int>...>;
 
   template <TTA Method>
   static inline constexpr bool has_method = number_of_method<Method> != npos;
@@ -423,14 +434,14 @@ struct basic_any {
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
-  static_assert((check_copy<Methods<int>, Alloc, SooS>() && ...),
+  static_assert((noexport::check_copy<Methods<int>, Alloc, SooS>() && ...),
                 "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
                 "use aa::copy_with<Alloc, SooS>::tempalte method!");
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
       "Spaceship already contains most effective way to equality compare, if class have operator ==");
   static_assert(SooS >= sizeof(size_t));  // for storing sizeof of big element after allocation
-  static_assert(is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
+  static_assert(noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires destructor!");
 
   using base_any_type = basic_any;
@@ -732,7 +743,8 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
 
 template <typename T>
 struct invoke_unsafe_fn<destroy, T> {
-  static_assert(always_false<T>, "Invoking destructor of contained value in any by hands is a bad idea");
+  static_assert(noexport::always_false<T>,
+                "Invoking destructor of contained value in any by hands is a bad idea");
 };
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
 template <TTA Method>
@@ -778,7 +790,8 @@ struct invoke_fn<Method, type_list<Args...>> {
 
 template <typename T>
 struct invoke_fn<destroy, T> {
-  static_assert(always_false<T>, "Invoking destructor of contained value in any by hands is a bad idea");
+  static_assert(noexport::always_false<T>,
+                "Invoking destructor of contained value in any by hands is a bad idea");
 };
 
 template <TTA Method>
@@ -806,3 +819,20 @@ template <TTA... Methods>
 using any_with = strong_alias<any, Methods...>;
 
 }  // namespace aa
+
+namespace std {
+
+// clang-format off
+template<::aa::any_x T> requires (T::template has_method<::aa::hash>)
+struct hash<T> {
+  size_t operator()(const T& any) const {
+      return any.has_value() ? aa::invoke_unsafe<::aa::hash>(any) : 0;
+  }
+};
+// clang-format on
+
+}  // namespace std
+
+#undef AXIOM
+#undef PLEASE_INLINE
+#undef UNREACHABLE
