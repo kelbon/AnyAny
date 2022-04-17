@@ -8,8 +8,11 @@
 #include <random>
 #include <stop_token>
 #include <list>
-#include <memory_resource> // TODO - что то придумать с клангом
+#include <unordered_set>
+#include <memory_resource>
 
+#include "functional_paradigm.hpp" // example 0
+#include "basic_usage.hpp" // example 1
 #include "anyany.hpp"
 
 using namespace aa;
@@ -360,36 +363,6 @@ size_t TestInvoke() {
   return error_count;
 }
 
-template <typename T>
-struct Draw {
-  static void do_invoke(T self, std::ostream& out, void*&& op) {
-    self.draw(out, op);
-  }
-};
-
-using any_drawable = any_with<Draw>;
-
-struct Square {
-  void draw(std::ostream& out, auto&&) const {
-    out << "Square";
-  }
-};
-struct Circle {
-  void draw(std::ostream& out, auto&&) const {
-    out << "Cirle";
-  }
-};
-
-size_t TestJust(){
-  std::vector<int> vec(10, 2);
-  any_drawable d = Circle{};
-  invoke<Draw>(d, std::cout, nullptr);
-  any_with<Draw, copy, move> d0;
-  d0 = Square{};
-  invoke<Draw>(d0, std::cout, {});
-  return 0;
-}
-
 size_t TestCasts() {
   size_t error_count = 0;
   any_copyable<> cp;
@@ -407,7 +380,15 @@ size_t TestCasts() {
   return error_count;
 }
 
+using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
+
 int main() {
+  example1();
+  example2();
+  std::unordered_set<any_hashable> set;
+  set.insert(std::string{"hello world"});
+  set.emplace(5);
+  set.emplace(5.);
   srand(time(0));
-  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestJust() + TestCasts();
+  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
 }
