@@ -365,7 +365,7 @@ struct basic_any {
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
-  alignas(std::max_align_t) std::array<std::byte, SooS> data;
+  [[no_unique_address]] alignas(std::max_align_t) std::array<std::byte, SooS> data;
   [[no_unique_address]] Alloc alloc;
 
   // invariant of basic_any - it is always in one of those states:
@@ -440,7 +440,6 @@ struct basic_any {
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
       "Spaceship already contains most effective way to equality compare, if class have operator ==");
-  static_assert(SooS >= sizeof(size_t));  // for storing sizeof of big element after allocation
   static_assert(noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires destructor!");
 
@@ -550,13 +549,6 @@ struct basic_any {
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : alloc(std::move(alloc)) {
     emplace_in_empty<std::decay_t<T>>(std::forward<T>(value));
-  }
-
-  template <typename T> requires (!any_x<T>)
-  CRTP& operator=(T&& value) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>) {
-    *this = basic_any{std::forward<T>(value)};
-    return static_cast<CRTP&>(*this);
   }
   // clang-format on
 

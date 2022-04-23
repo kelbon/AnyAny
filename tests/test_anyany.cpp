@@ -382,7 +382,17 @@ size_t TestCasts() {
 
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 
+// allocates every time (SOO == 0)
+struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>, 0>::method, aa::move, aa::destroy, aa::equal_to> {
+    using xyz::basic_any::basic_any;
+};
 int main() {
+  xyz val = 5;
+  std::cout << sizeof(val);
+  val == 5;
+  val = std::string{"hello world"};
+  val = 0.f;
+  val = std::vector<int>{1, 2, 3, 4};
   example1();
   example2();
   std::unordered_set<any_hashable> set;
