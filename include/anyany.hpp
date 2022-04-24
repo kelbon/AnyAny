@@ -452,17 +452,12 @@ struct basic_any {
   ~basic_any() {
     if (has_value())
       destroy_value();
-    // TODO - check в ассемблере убирается ли приравнение value_ptr = &data в destroy_value(и инлайнится ли)
-    // если нет то вручную сюда заинлайнить destroy_value и убрать этот метод вообще
   }
 
   // basic_any copy/move stuff
 
   basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
-    // TODO - проверить что убирается всё про аллокатор
-    // TODO - проверить что нет лишней инициализации vtable_ptr нулём(и value_ptr тоже)
-    // TODO - проверку что аллок в копировании и тут совпадает... Или вообще брать его оттуда
     if (other.has_value()) {
       if constexpr (std::is_empty_v<Alloc>)
         value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
