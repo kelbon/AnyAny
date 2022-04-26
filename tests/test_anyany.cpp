@@ -389,7 +389,7 @@ struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std:
 int main() {
   xyz val = 5;
   std::cout << sizeof(val);
-  val == 5;
+  (void)(val == 5);
   val = std::string{"hello world"};
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};

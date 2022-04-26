@@ -165,15 +165,17 @@ struct invoker_for<T, Method, type_list<Args...>> {
     using self_sample = self_sample_t<Method>;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
-      return Method<T>::do_invoke(
-          *reinterpret_cast<std::conditional_t<const_method<Method>, const T, T>*>(self),
-          static_cast<Args&&>(args)...);
+      using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
+      return Method<T>::do_invoke(*std::launder(reinterpret_cast<real_self>(self)),
+                                  static_cast<Args&&>(args)...);
     } else if constexpr (std::is_pointer_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
-      return Method<T>::do_invoke(reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
+      return Method<T>::do_invoke(std::launder(reinterpret_cast<real_self>(self)),
+                                  static_cast<Args&&>(args)...);
 
     } else if constexpr (std::is_copy_constructible_v<T>) {
-      return Method<T>::do_invoke(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
+      return Method<T>::do_invoke(*std::launder(reinterpret_cast<const T*>(self)),
+                                  static_cast<Args&&>(args)...);
     } else {
       static_assert(noexport::always_false<T>,
                     "You pass self by value and it is not a copy constructible... or by rvalue reference");
@@ -652,7 +654,7 @@ struct caster {
     // T already remove_cv
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
-    return reinterpret_cast<const T*>(any->value_ptr);
+    return std::launder(reinterpret_cast<const T*>(any->value_ptr));
   }
   // clang-format off
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
@@ -660,7 +662,7 @@ struct caster {
     // clang-format on
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
-    return reinterpret_cast<T*>(any->value_ptr);
+    return std::launder(reinterpret_cast<T*>(any->value_ptr));
   }
 };
 
