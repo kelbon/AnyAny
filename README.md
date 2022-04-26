@@ -293,8 +293,17 @@ This is why this library was created, it providies an instruments to create such
   // All ready to use!
   ```
 
-### `build`
+## Using with CMake
+1. Copy this repository into folder with your project
+2. Add these lines to it's CMakeLists.txt
+  
+```CMake
+add_subdirectory(AnyAny)
+target_link_libraries(MyProjectName PUBLIC anyanylib)
 ```
+### `build`
+  
+```shell
 git clone https://github.com/kelbon/AnyAny
 cd AnyAny
 cmake . -B build
