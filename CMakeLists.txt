@@ -8,6 +8,8 @@ if(BUILD_TESTING)
 	file(GLOB ANYANY_EXAMPLES REGULAR_EXPRESSION ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
 endif()
 add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp ${ANYANY_TEST} ${ANYANY_EXAMPLES})
+target_include_directories(anyany PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_library(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
 target_include_directories(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
