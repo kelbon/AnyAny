@@ -2,14 +2,14 @@ cmake_minimum_required(VERSION 3.21)
 project(anyany)
 
 include(CTest)
-#add_library(anyany STATIC ${CMAKE_CURRENT_SOURCE_DIR}/anyany.ixx ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+
 if(BUILD_TESTING)
 	set(ANYANY_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anyany.cpp)
 	file(GLOB ANYANY_EXAMPLES REGULAR_EXPRESSION ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
 endif()
 add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp ${ANYANY_TEST} ${ANYANY_EXAMPLES})
-
-target_include_directories(anyany PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_library(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
+target_include_directories(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
 if(BUILD_TESTING)
