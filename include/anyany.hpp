@@ -58,6 +58,13 @@ struct type_list {};
 
 inline constexpr size_t npos = size_t(-1);
 
+// Method must have same signature for all types(except self),
+// so this type used to check what signature Method have
+// this means all methods must be specializable for interface_t
+// typical error - concept on Method's template argument, which is false for interface_t
+// (in this case you can explciitly specialize Method for interface_t)
+struct interface_t {};
+
 }  // namespace aa
 
 namespace noexport {
@@ -132,8 +139,29 @@ static consteval bool check_copy() {
 
 namespace aa {
 
+// just unique type for every Method, because i need to inherit from plugins
 template <TTA Method>
-using method_traits = noexport::any_method_traits<decltype(&Method<int>::do_invoke)>;
+struct nullplugin {};
+
+template <TTA Method>
+concept has_plugin = requires {
+  // nullplugin excepts template template argument with one input type. So it works
+  typename nullplugin<Method<interface_t>::template plugin>;
+};
+// its not only interface, because it can be statefull part of any!
+template <TTA Method, typename>
+struct plugin : std::type_identity<nullplugin<Method>> {};
+
+template <TTA Method, typename Any>
+requires has_plugin<Method>
+struct plugin<Method, Any> : std::type_identity<typename Method<interface_t>::template plugin<Any>> {
+};
+
+template<TTA Method, typename Any>
+using plugin_t = typename plugin<Method, Any>::type;
+
+template <TTA Method>
+using method_traits = noexport::any_method_traits<decltype(&Method<interface_t>::do_invoke)>;
 
 template <TTA Method>
 using result_t = typename method_traits<Method>::result_type;
@@ -294,7 +322,7 @@ constexpr inline auto default_any_soos = hardware_constructive_interference_size
 template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
 
-template<typename T>
+template <typename T>
 struct hash {
   static size_t do_invoke(const T& self) {
     return std::hash<T>{}(self);
@@ -338,10 +366,9 @@ struct vtable {
   std::tuple<type_erased_signature_t<Methods>...> table;
   size_t allocated_size;  // always std::max(SooS, sizeof(T)), needed for basic_any
 
-  struct methods_must_be_unique : Methods<int>... {};
-
   template <TTA Method>
-  static inline constexpr size_t number_of_method = noexport::number_of_first<Method<int>, Methods<int>...>;
+  static inline constexpr size_t number_of_method =
+      noexport::number_of_first<Method<interface_t>, Methods<interface_t>...>;
 
   template <TTA Method>
   static inline constexpr bool has_method = number_of_method<Method> != npos;
@@ -357,13 +384,13 @@ struct vtable {
 template <typename T, size_t SooS, TTA... Methods>
 constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}, std::max(sizeof(T), SooS)};
 
-    // CRTP - inheritor of basic_any
+// CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
 template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-struct basic_any {
+struct basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
@@ -395,7 +422,6 @@ struct basic_any {
   }
   // clang-format on
  private:
-
   template <typename T, typename... Args>
   void emplace_in_empty(Args&&... args) {
     if constexpr (any_is_small_for<T>) {
@@ -406,8 +432,7 @@ struct basic_any {
       void* old_value_ptr = std::exchange(value_ptr, alloc.allocate(allocation_size));
       if constexpr (std::is_nothrow_constructible_v<T, Args&&...>) {
         std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
-      }
-      else {
+      } else {
         try {
           std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
         } catch (...) {
@@ -436,13 +461,14 @@ struct basic_any {
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
-  static_assert((noexport::check_copy<Methods<int>, Alloc, SooS>() && ...),
+  static_assert((noexport::check_copy<Methods<interface_t>, Alloc, SooS>() && ...),
                 "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
                 "use aa::copy_with<Alloc, SooS>::tempalte method!");
   static_assert(
       !(has_method<spaceship> && has_method<equal_to>),
       "Spaceship already contains most effective way to equality compare, if class have operator ==");
-  static_assert(noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
+  static_assert(
+      noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires destructor!");
 
   using base_any_type = basic_any;
@@ -462,10 +488,11 @@ struct basic_any {
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (other.has_value()) {
       if constexpr (std::is_empty_v<Alloc>)
-        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
-      else
         value_ptr =
-            other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr), &alloc);
+            other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
+      else
+        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(
+            static_cast<void*>(value_ptr), &alloc);
     }
     vtable_ptr = other.vtable_ptr;
   }
@@ -601,7 +628,9 @@ struct basic_any {
  private :
 
      // precodition - has_value() == false
+     // clang-format off
   void move_value_from(basic_any&& other) {
+    // clang-format on
     if (!other.has_value())
       return;
     // `move` is noexcept (invariant of small state)
@@ -618,7 +647,7 @@ struct basic_any {
   }
   PLEASE_INLINE size_t allocated_size() const {
     assert(has_value() && memory_allocated());
-    return vtable_ptr->allocated_size; // always std::max(SooS, sizeof(T))
+    return vtable_ptr->allocated_size;  // always std::max(SooS, sizeof(T))
   }
   void destroy_value() {
     vtable_invoke<destroy>();
@@ -787,7 +816,7 @@ template <TTA Method>
 constexpr invoke_fn<Method> invoke = {};
 
 // TEMPLATE any - default any for inheritance from (creating your any with default allocator and SooS)
-                                                  // default any size is a one cache line in currect CPU
+// default any size is a one cache line in currect CPU
 template <typename CRTP, TTA... Methods>
 struct any : basic_any<CRTP, std::allocator<std::byte>, default_any_soos, destroy, Methods...> {
   using any::basic_any::basic_any;
