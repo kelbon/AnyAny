@@ -357,7 +357,7 @@ size_t TestInvoke() {
   any_fooable f1(std::in_place_type<destroy_me<50>>);
   any_fooable f2(std::in_place_type<destroy_me<500>>);
   any_fooable f3(std::in_place_type<destroy_me<100>>);
-  f0.foo();
+  (void)f0.foo();
   error_if(invoke<barx>(f0, 3, "hello world") != "bar called");
   error_if(invoke<barx>(f1, 3, "hello world") != "bar called");
   error_if(invoke<barx>(f2, 3, "hello world") != "bar called");
@@ -402,7 +402,8 @@ int main() {
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};
   example1();
-  example2();
+  example_draw();
+  example_draw_explicit();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);

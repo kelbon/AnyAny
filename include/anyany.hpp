@@ -148,7 +148,7 @@ concept has_plugin = requires {
   // nullplugin excepts template template argument with one input type. So it works
   typename nullplugin<Method<interface_t>::template plugin>;
 };
-// its not only interface, because it can be statefull part of any!
+
 template <TTA Method, typename>
 struct plugin : std::type_identity<nullplugin<Method>> {};
 
@@ -159,6 +159,27 @@ struct plugin<Method, Any> : std::type_identity<typename Method<interface_t>::te
 
 template<TTA Method, typename Any>
 using plugin_t = typename plugin<Method, Any>::type;
+
+template<TTA Method>
+concept has_explicit_interface = requires {
+  typename Method<interface_t>::explicit_interface;
+};
+
+template<TTA Method> // no matter nullplugin or what here, it is using for optimization
+using satisfy = nullplugin<Method>;
+
+// used if Method requires explicit subscribe,
+// for example : struct A { using satisfies = aa::satisfies<Fooable, Drawable>; };
+template <TTA... Methods>
+struct satisfies : satisfy<Methods>... {
+  static_assert((has_explicit_interface<Methods> && ...), "It's useless to subscribe if it is not required");
+};
+template <typename T, TTA... Methods>
+constexpr inline bool satisfies_v = false;
+// clang-format off
+template<typename T, TTA Method>
+concept is_satisfies = satisfies_v<T, Method> || std::is_base_of_v<satisfy<Method>, typename T::satisfies>;
+// clang-format on
 
 template <TTA Method>
 using method_traits = noexport::any_method_traits<decltype(&Method<interface_t>::do_invoke)>;
@@ -191,6 +212,10 @@ template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
   static PLEASE_INLINE auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
+    if constexpr (has_explicit_interface<Method>)
+      static_assert(is_satisfies<T, Method>,
+                    "Method requires explicit subscribe and your type not satisfies it explicitly(using "
+                    "satisfies = aa::satisfies<MethodName>;");
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
@@ -461,6 +486,7 @@ struct basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>..
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
+  static_assert((std::is_empty_v<plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>> && ...));
   static_assert((noexport::check_copy<Methods<interface_t>, Alloc, SooS>() && ...),
                 "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
                 "use aa::copy_with<Alloc, SooS>::tempalte method!");
