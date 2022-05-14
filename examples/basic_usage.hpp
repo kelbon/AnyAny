@@ -79,9 +79,8 @@ struct DrawExplicit {
     }
   };
 
-  // op here just for example
-  static void do_invoke(T self, std::ostream& out, int op) {
-    self.draw(out, op);
+  static void do_invoke(T self, std::ostream& out, int val) {
+    self.draw(out, val);
   }
 };
 // If method requires explicit interface you can specialize variable for type or write
