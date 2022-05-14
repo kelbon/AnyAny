@@ -409,13 +409,20 @@ struct vtable {
 template <typename T, size_t SooS, TTA... Methods>
 constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}, std::max(sizeof(T), SooS)};
 
+// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
+#if defined(_MSC_VER)
+#define MSVC_EMPTY_BASES_WORKAROUND __declspec(empty_bases)
+#else
+#define MSVC_EMPTY_BASES_WORKAROUND
+#endif
+
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
 template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-struct basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
+struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
