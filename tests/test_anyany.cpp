@@ -313,6 +313,12 @@ struct FooAble {
 
 template <typename T>
 struct foox {
+  template<typename CRTP>
+  struct plugin {
+    float foo() const {
+      return aa::invoke<foox>(static_cast<const CRTP&>(*this));
+    }
+  };
   static float do_invoke(T self) {
     return self.foo();
   }
@@ -325,7 +331,7 @@ struct barx {
   }
 };
 
-struct any_fooable : any<any_fooable, copy, destroy, move, foox, barx> {
+struct any_fooable : any<any_fooable, copy, move, foox, barx> {
   using any_fooable::any::any;
 };
 
@@ -351,6 +357,7 @@ size_t TestInvoke() {
   any_fooable f1(std::in_place_type<destroy_me<50>>);
   any_fooable f2(std::in_place_type<destroy_me<500>>);
   any_fooable f3(std::in_place_type<destroy_me<100>>);
+  (void)f0.foo();
   error_if(invoke<barx>(f0, 3, "hello world") != "bar called");
   error_if(invoke<barx>(f1, 3, "hello world") != "bar called");
   error_if(invoke<barx>(f2, 3, "hello world") != "bar called");
@@ -386,6 +393,7 @@ using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>, 0>::method, aa::move, aa::destroy, aa::equal_to> {
     using xyz::basic_any::basic_any;
 };
+
 int main() {
   xyz val = 5;
   std::cout << sizeof(val);
@@ -394,7 +402,8 @@ int main() {
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};
   example1();
-  example2();
+  example_draw();
+  example_draw_explicit();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);
