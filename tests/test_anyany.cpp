@@ -384,6 +384,21 @@ size_t TestCasts() {
   error_if(aa::any_cast<std::vector<int>>(cp) != vec);
   error_if(aa::any_cast<std::vector<int>>(std::move(cp)) != vec);
   error_if(aa::any_cast<std::vector<int>>(cp) != std::vector<int>{});
+  {
+    any_copyable<> acop = 10;
+    auto& ref = aa::any_cast<int&>(acop);
+    ref = 15;
+    auto& ref2 = aa::any_cast<const int&>(acop);
+    int val = aa::any_cast<int>(acop);
+    (void)ref2, (void)val;
+  }
+  {
+    const any_copyable<> acop = 10;
+    //auto& ref = aa::any_cast<int&>(acop); CE because of const
+    auto& ref2 = aa::any_cast<const int&>(acop);
+    int val = aa::any_cast<int>(acop);
+    (void)ref2, (void)val;
+  }
   return error_count;
 }
 
