@@ -739,32 +739,29 @@ template <typename T, any_x U>
 [[nodiscard]] PLEASE_INLINE const T* any_cast(const U* ptr) noexcept {
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
-  return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
+  return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
 }
 
 template <typename T, any_x U>
 [[nodiscard]] std::remove_cv_t<T> any_cast(U& any) {
-  T* ptr = any_cast<T>(std::addressof(any));
+  auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
-  std::remove_cv_t<T> result{*ptr};
-  return result;
+  return *ptr;
 }
 template <typename T, any_x U>
 [[nodiscard]] std::remove_cv_t<T> any_cast(U&& any) {
-  T* ptr = any_cast<T>(std::addressof(any));
+  auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
-  std::remove_cv_t<T> result{std::move(*ptr)};
-  return result;
+  return std::move(*ptr);
 }
 template <typename T, any_x U>
 [[nodiscard]] std::remove_cv_t<T> any_cast(const U& any) {
-  T* ptr = any_cast<T>(std::addressof(any));
+  const auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
-  std::remove_cv_t<T> result{*ptr};
-  return result;
+  return *ptr;
 }
 
 // TEMPLATE VARIABLE (FUNCTION OBJECT) invoke <Method> (any)
