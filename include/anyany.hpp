@@ -384,12 +384,26 @@ struct empty_any_method_call : std::exception {
   }
 };
 
+#ifdef AA_DLL_COMPATIBLE
+template<typename T>
+consteval const char* type_name() noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+  return __PRETTY_FUNCTION__;
+#else
+  return __FUNCSIG__;
+#endif
+}
+#endif
+
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
 struct vtable {
   std::tuple<type_erased_signature_t<Methods>...> table;
   size_t allocated_size;  // always std::max(SooS, sizeof(T)), needed for basic_any
+#ifdef AA_DLL_COMPATIBLE
+  const char* name;
+#endif
 
   template <TTA Method>
   static inline constexpr size_t number_of_method =
@@ -407,7 +421,13 @@ struct vtable {
 };
 
 template <typename T, size_t SooS, TTA... Methods>
-constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}, std::max(sizeof(T), SooS)};
+constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...},
+                                           std::max(sizeof(T), SooS)
+#ifdef AA_DLL_COMPATIBLE
+                                               ,
+                                           type_name<T>()
+#endif
+};
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)
@@ -714,16 +734,26 @@ struct caster {
   static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
     // T already remove_cv
+    #ifdef AA_DLL_COMPATIBLE
+    if (any == nullptr || !any->has_value() || std::strcmp(any->vtable_ptr->name, type_name<T>()) != 0)
+      return nullptr;
+    #else
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
+    #endif
     return std::launder(reinterpret_cast<const T*>(any->value_ptr));
   }
   // clang-format off
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static T* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
+    #ifdef AA_DLL_COMPATIBLE
+    if (any == nullptr || !any->has_value() || std::strcmp(any->vtable_ptr->name, type_name<T>()) != 0)
+      return nullptr;
+    #else
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
+    #endif
     return std::launder(reinterpret_cast<T*>(any->value_ptr));
   }
 };
