@@ -503,6 +503,14 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP,
   // for any_cast / unified function call
   friend struct caster;
 
+  static bool equal_types_stored(const basic_any& a, const basic_any& b) noexcept {
+#ifdef AA_DLL_COMPATIBLE
+    return std::strcmp(a.vtable_ptr->name, b.vtable_ptr->name) == 0;
+#else
+    return a.vtable_ptr == b.vtable_ptr;
+#endif
+  }
+
   template <TTA, typename>
   friend struct invoke_fn;
   template <TTA, typename>
@@ -659,7 +667,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP,
 
   [[nodiscard]] bool operator==(const basic_any& other) const
       requires(has_method<equal_to> || has_method<spaceship>) {
-    if (vtable_ptr != other.vtable_ptr)
+    if (!equal_types_stored(*this, other))
       return false;
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return true;
@@ -671,7 +679,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP,
   }
 
   std::partial_ordering operator<=>(const basic_any& other) const requires(has_method<spaceship>) {
-    if (vtable_ptr != other.vtable_ptr)
+    if (!equal_types_stored(*this, other))
       return std::partial_ordering::unordered;
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return std::partial_ordering::equivalent;
@@ -734,13 +742,13 @@ struct caster {
   static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
     // clang-format on
     // T already remove_cv
-    #ifdef AA_DLL_COMPATIBLE
+#ifdef AA_DLL_COMPATIBLE
     if (any == nullptr || !any->has_value() || std::strcmp(any->vtable_ptr->name, type_name<T>()) != 0)
       return nullptr;
-    #else
+#else
     if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
       return nullptr;
-    #endif
+#endif
     return std::launder(reinterpret_cast<const T*>(any->value_ptr));
   }
   // clang-format off
