@@ -538,7 +538,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP,
   basic_any(Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
 
-  ~basic_any() {
+  constexpr ~basic_any() {
     if (has_value())
       destroy_value();
   }
@@ -647,7 +647,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any : plugin_t<Methods, basic_any<CRTP,
 
   // observe
 
-  [[nodiscard]] PLEASE_INLINE bool has_value() const noexcept {
+  [[nodiscard]] PLEASE_INLINE constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
   [[nodiscard]] const std::type_info& type() const noexcept requires(has_method<RTTI>) {
