@@ -11,7 +11,6 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
-#include <bit>          // bit_cast
 
 // TODO remove when it will be C++20 module
 #undef AXIOM
@@ -480,7 +479,7 @@ struct const_polymorphic_ptr {
   constexpr const_polymorphic_ptr() = default;
   template <typename T>  // TODO vtable without SooS for this type?
   constexpr const_polymorphic_ptr(const T* ptr) noexcept
-      : poly_{&vtable_for<T, 0, Methods...>, std::bit_cast<void*>(ptr)} {
+      : poly_{&vtable_for<T, 0, Methods...>, const_cast<void*>(ptr)} {
   }
 
   // observers
