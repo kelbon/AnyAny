@@ -11,6 +11,7 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
+#include <bit>          // bit_cast
 
 // TODO remove when it will be C++20 module
 #undef AXIOM
