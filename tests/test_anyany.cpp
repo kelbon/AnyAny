@@ -409,7 +409,51 @@ struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std:
     using xyz::basic_any::basic_any;
 };
 
+// EXAMPLE WITH POLYMORPHIC_PTR
+template<typename T>
+struct Drawi {
+  static int do_invoke(const T& self, int val) {
+    return self.draw(val);
+  }
+
+  template<typename CRTP>
+  struct plugin {
+    int draw(int val) const noexcept {
+      return aa::invoke<Drawi>(*static_cast<const CRTP*>(this), val);
+    }
+  };
+};
+
+using drawable_ptr = aa::polymorphic_ptr<aa::destroy, Drawi>;
+using const_drawable_ptr = aa::const_polymorphic_ptr<aa::destroy, Drawi>;
+
+struct drawable0 {
+  int draw(int val) const {
+    std::cout << val;
+    return val;
+  }
+};
+
+struct drawable1 {
+  int draw(int val) const {
+    std::cout << 2 * val;
+    return 2 * val;
+  }
+};
+void Foobar(drawable_ptr v) {
+  std::cout << v->draw(150);
+  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+}
+void Foobar(const_drawable_ptr v) {
+  std::cout << v->draw(150);
+  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+}
+
 int main() {
+  drawable0 v00;
+  const drawable1 v01;
+  Foobar((drawable_ptr) & v00);
+  Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
   (void)(val == 5);
