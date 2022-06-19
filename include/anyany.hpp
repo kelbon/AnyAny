@@ -479,7 +479,7 @@ struct const_polymorphic_ptr {
   constexpr const_polymorphic_ptr() = default;
   template <typename T>  // TODO vtable without SooS for this type?
   constexpr const_polymorphic_ptr(const T* ptr) noexcept
-      : poly_{&vtable_for<T, 0, Methods...>, const_cast<void*>(ptr)} {
+      : poly_{&vtable_for<T, 0, Methods...>, const_cast<T*>(ptr)} {
   }
 
   // observers
