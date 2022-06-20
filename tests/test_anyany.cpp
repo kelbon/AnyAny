@@ -424,8 +424,7 @@ struct Drawi {
   };
 };
 
-using drawable_ptr = aa::polymorphic_ptr<aa::destroy, Drawi>;
-using const_drawable_ptr = aa::const_polymorphic_ptr<aa::destroy, Drawi>;
+using idrawable = aa::any_with<Drawi, aa::copy>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -440,19 +439,29 @@ struct drawable1 {
     return 2 * val;
   }
 };
-void Foobar(drawable_ptr v) {
-  std::cout << v->draw(150);
+void Foobar(idrawable::ptr v) {
+  //std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
-void Foobar(const_drawable_ptr v) {
+void Foobar(idrawable::const_ptr v) {
   std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 
+void foobar(const void*) {
+
+}
+void foobar(void*) {
+
+}
+
 int main() {
+
   drawable0 v00;
   const drawable1 v01;
-  Foobar((drawable_ptr) & v00);
+  foobar(&v00);
+  foobar(&v01);
+  Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало Ќ≈константный?
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
