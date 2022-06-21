@@ -13,30 +13,18 @@
 /// Also function supports currying and invoking from tuple, as in functional languages
 ///
 
-// quite a big of meta magic
-struct notype {};
-
-template<typename... Args>
-struct first : std::type_identity<notype> {
-};
-template<typename First, typename... Args>
-struct first<First, Args...> : std::type_identity<First> {};
-
-template<typename... Args>
-using first_t = typename first<Args...>::type;
-
 namespace example {
 
 // Creating an anyany Method for callable with needed signature
-template<typename>
+template <typename>
 struct call;
 
-template<typename R, typename... Args>
-struct call<R(Args...)> {
+template <typename R, typename Head, typename... Args>
+struct call<R(Head, Args...)> {
   template <typename T>
   struct method {
-    static R do_invoke(T& self, Args... args) {
-      return self(static_cast<Args&&>(args)...);
+    static R do_invoke(T& self, Head arg, Args... args) {
+      return self(static_cast<Head&&>(arg), static_cast<Args&&>(args)...);
     }
   };
 };
@@ -44,26 +32,29 @@ struct call<R(Args...)> {
 template <typename Signature, template <typename> typename... Methods>
 struct basic_function;
 
-template <typename R, typename... Args, template <typename> typename... Methods>
-struct basic_function<R(Args...), Methods...>
-    : aa::any<basic_function<R(Args...), Methods...>, call<R(Args...)>::template method, Methods...> {
-  using basic_function::any::any;
+template <typename R, typename Head, typename... Args, template <typename> typename... Methods>
+struct basic_function<R(Head, Args...), Methods...>
+    : aa::any_with<call<R(Head, Args...)>::template method, Methods...> {
+  using basic_function::any_with_t::any_with_t;
 
-  R operator()(Args... args) {
-    return aa::invoke<call<R(Args...)>::template method>(*this, static_cast<Args&&>(args)...);
+  R operator()(Head arg, Args... args) {
+    return aa::invoke<call<R(Head, Args...)>::template method>(*this, static_cast<Head&&>(arg),
+                                                               static_cast<Args&&>(args)...);
   }
   // all functions just accepts a tuple of arguments if you think about it
-  R operator()(std::tuple<Args...> args_tpl) {
-    return std::apply([&](Args&&... args) { return (*this)(static_cast<Args&&>(args)...); },
-                      std::move(args_tpl));
+  R operator()(std::tuple<Head, Args...> args_tpl) {
+    return std::apply(
+        [&](Head&& arg, Args&&... args) {
+          return (*this)(static_cast<Head&&>(arg), static_cast<Args&&>(args)...);
+        },
+        std::move(args_tpl));
   }
   // exposition only (can be more effective with && versions of operator())
-  [[nodiscard("currying!")]] auto operator()(first_t<Args...> value) requires(sizeof...(Args) > 1) {
-    return [&]<typename Head, typename... Tail>(aa::type_list<Head, Tail...>) {
-      return basic_function<R(Tail...), Methods...>(
-          std::bind_front(*this, static_cast<first_t<Args...>&&>(value)));
+  [[nodiscard("currying!")]] auto operator()(Head value) requires(sizeof...(Args) > 0) {
+    return [&]<typename... Tail>(aa::type_list<Tail...>) {
+      return basic_function<R(Args...), Methods...>(std::bind_front(*this, static_cast<Head&&>(value)));
     }
-    (aa::type_list<Args...>{});
+    (aa::type_list<Head, Args...>{});
   }
 };
 

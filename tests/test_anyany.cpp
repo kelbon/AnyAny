@@ -90,9 +90,9 @@ template <size_t Sz>
 struct destroy_me_throw : destroy_me<Sz> {
   std::list<int> l; // lol it is throw move / copy constructible... Allocations on move / default init
 };
-struct nomove_any : any<nomove_any> {
-  using nomove_any::any::any;
-};
+
+using nomove_any = aa::any_with<>;
+
 #define error_if(Cond) error_count += static_cast<bool>((Cond));
 size_t TestConstructors() {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
@@ -279,12 +279,9 @@ size_t TestConstructors() {
   return error_count;
 }
 
-struct any_compare : any<any_compare, copy, spaceship, move> {
-  using any_compare::any::any;
-};
-struct any_equal : any<any_equal, equal_to, move> {
-  using any_equal::any::any;
-};
+using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
+
+using any_equal = aa::any_with<aa::equal_to, aa::move>;
 
 size_t TestCompare() {
   size_t error_count = 0;
@@ -331,13 +328,12 @@ struct barx {
   }
 };
 
-struct any_fooable : any<any_fooable, copy, move, foox, barx> {
-  using any_fooable::any::any;
-};
+using any_fooable = aa::any_with<aa::copy, aa::move, foox, barx>;
 
 size_t TestAnyCast() {
   size_t error_count = 0;
   any_fooable v0 = destroy_me<3>{};
+  v0.foo();
   invoke<foox>(v0);
   error_if(any_cast<destroy_me<3>>(&v0) == nullptr);
   error_if(any_cast<destroy_me<4>>(&v0) != nullptr);
@@ -424,7 +420,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -448,19 +444,12 @@ void Foobar(idrawable::const_ptr v) {
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 
-void foobar(const void*) {
-
-}
-void foobar(void*) {
-
-}
-
 int main() {
 
   drawable0 v00;
   const drawable1 v01;
-  foobar(&v00);
-  foobar(&v01);
+  // TODO - разобратьс€ с кастом к меньшим требовани€м
+  Foobar(aa::polymorphic_ptr<aa::destroy, aa::move, Drawi, aa::copy>(nullptr));
   Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало Ќ≈константный?
   Foobar(&v01);
   xyz val = 5;
