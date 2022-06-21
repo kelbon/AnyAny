@@ -445,11 +445,14 @@ void Foobar(idrawable::const_ptr v) {
 }
 
 int main() {
-
+  Circle v0;
+  aa::polymorphic_ptr<Draw> polyptr = &v0;
+  auto polyref = *polyptr;
+  // TODO - оптимизация invoke для ref? Ну типа оно же всегда НЕ пустое...
+  aa::invoke_unsafe<Draw>(*polyptr, std::cout, 150);
+  aa::invoke_unsafe<Draw>(polyref, std::cout, 150);
   drawable0 v00;
   const drawable1 v01;
-  // TODO - разобраться с кастом к меньшим требованиям
-  Foobar(aa::polymorphic_ptr<aa::destroy, aa::move, Drawi, aa::copy>(nullptr));
   Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало НЕконстантный?
   Foobar(&v01);
   xyz val = 5;
