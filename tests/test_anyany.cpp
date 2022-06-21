@@ -448,7 +448,6 @@ int main() {
   Circle v0;
   aa::polymorphic_ptr<Draw> polyptr = &v0;
   auto polyref = *polyptr;
-  // TODO - оптимизация invoke для ref? Ну типа оно же всегда НЕ пустое...
   aa::invoke_unsafe<Draw>(*polyptr, std::cout, 150);
   aa::invoke_unsafe<Draw>(polyref, std::cout, 150);
   drawable0 v00;

@@ -398,7 +398,7 @@ consteval std::string_view n() {
       sizeof("class std::basic_string_view<char,struct std::char_traits<char> > __cdecl n<") - sizeof("");
   return std::string_view({__FUNCSIG__ + prefix_len, sizeof(__FUNCSIG__) - prefix_len - sizeof(">(void)")});
 #else
-#error Can't support dll with this compiler
+#error Cant support dll with this compiler
 #endif
 }
 // T always decayed, because all types decayed before constructing a vtable for them
@@ -490,8 +490,8 @@ struct polymorphic_ref : polymorphic_impl<polymorphic_ref<Methods...>, Methods..
  public:
   // from mutable lvalue
   // clang-format off
-  template <typename T>
-  requires(!std::is_const_v<T>)
+  template <typename T> // not shadow copy ctor
+  requires(!std::is_const_v<T> && !std::is_same_v<polymorphic_ref<Methods...>, T>)
   constexpr polymorphic_ref(T& value) noexcept
       // clang-format on
       : base_t{address_vtable_for_polyref_or_ptr<T, Methods...>, std::addressof(value)} {
@@ -532,10 +532,13 @@ struct const_polymorphic_ref : polymorphic_impl<const_polymorphic_ref<Methods...
 
  public:
   // from value
+     // clang-format off
   template <typename T>
+  requires(!std::is_same_v<const_polymorphic_ref<Methods...>, T>)
   constexpr const_polymorphic_ref(const T& value) noexcept
       : base_t{address_vtable_for_polyref_or_ptr<T, Methods...>, const_cast<T*>(std::addressof(value))} {
   }
+  // clang-format on
   // from Any
   // clang-format off
   template <any_x Any>
@@ -648,6 +651,9 @@ struct const_polymorphic_ptr {
   // static checks
   template <TTA Method>
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
+
+  const_polymorphic_ptr(const const_polymorphic_ptr&) = default;
+  const_polymorphic_ptr(const_polymorphic_ptr&&) = default;
 
   // from nothing(empty)
   constexpr const_polymorphic_ptr() = default;
