@@ -437,6 +437,36 @@ void Foobar(idrawable::const_ptr v) {
 }
 
 int main() {
+  // TODO - Хмм, а можно ли стереть последовательно один за другим ВСЕ типы в некой функции? До состояния
+  // void*, void* и т.д. оборачивая каждый раз в обёртку, которая примет void* и скастует его
+  // куда нужно. Получается erase_front лул
+  // TODO - в ридми описать концепцию - basic_any и все его наследники - polymorphic_value, плюс есть
+  // polymorphic_ref/ptr
+  // TODO any_cast для polymorphic_ptr (только к поинтерам разрешено)(ill-formed если не поинтер)
+  // TODO - протестировать polymorphic всё
+  // TODO - aligned_alloc<N> и пояснение в том числе в ридми зачем он нужен
+  // TODO - обновить readme(по поводу msvc и плагинов), а также полиморфных поинтеров и ссылок)))
+  // TODO - сделать плагины стандартным методам типа RTTI???(и убрать соответственно реализацию из anyany +
+  // протестировать)
+  // TODO - удостоверится что в nullptr не обращается при сравнениях vtable))
+  // TODO - ревизия friend чё надо чё нет
+  // TODO nullany_t / nullany???
+
+  // СТОООП, так там же ДРУГОЙ vtable в Any!!!. Который с allocated size!!! Короче нужно вынести это и правда
+  // в метод другой(отдельный) И убрать sizeof_now метод тогда И убрать все упоминания 0 и soos в типе
+  // создаваемой таблицы? Хм, всё же оставить методы
+  // TODO - методы sizeof_now для any / poly ref
+  // TODO test копирование поинтеров и референсов(для поинтеров ещё оператор=)
+  // TODO - запретить все другие способы вызывать метод кроме invoke/invoke_unsafe при реализации
+  // плагинов(например vtable_invoke)
+  // TODO - hmm, биткасты везде наставить вместо friends?
+  // Или убрать polymorphic impl нахрен и оставить 2 рефа отдельно?
+  // TODO - hmm, а что если сделать print на основе полиморфных константных ссылок?))
+  // TODO этот принт в качестве example
+  // то есть print(string_literal<...> pattern, const_polymorphic_ref<Print>...)
+  // // TODO - "трейт" Print на основе оператора << для стримов
+  // ЛУЛ, оно примерно так же и сделано
+  // TODO - глянуть как сделано make_format_args
   {
     // with plugin
     drawable0 v0;
@@ -455,12 +485,12 @@ int main() {
     (void)aa::any_cast<drawable0&>(*pip1);
     const idrawable cpval = v1;
     auto pip2 = &cpval;
-    void(pip1), void(pip2);
+    (void)pip1, (void)pip2;
     idrawable::ref pr4 = v0;
     idrawable::const_ref pr5 = v0;
     idrawable::ptr pp4 = &v0;
     idrawable::const_ptr pp5 = &v0;
-    void(pr4), void(pr5), void(pp4), void(pp5);
+    (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // HMM может быть оператор & для basic_any ?Возвращающий const|polymorphic_ptr?
     // deduction guides
     aa::polymorphic_ptr p_1 = pp1;
