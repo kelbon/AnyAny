@@ -15,6 +15,7 @@
 #include "basic_usage.hpp" // example 1
 #include "anyany.hpp"
 
+// TODO убрать это
 using namespace aa;
 
 template<typename T>
@@ -41,17 +42,10 @@ struct Y {
   auto operator<=>(const Y&) const noexcept = default;
 };
 
- // any movable
-template<typename Alloc = std::allocator<std::byte>>
-struct any_movable : basic_any<any_movable<Alloc>, Alloc, aa::default_any_soos, destroy, move> {
-  using any_movable::basic_any::basic_any;
-};
-
-// any copyable
 template<typename Alloc = std::allocator<char>>
-struct any_copyable : basic_any<any_copyable<Alloc>, Alloc, aa::default_any_soos, destroy, copy_with<Alloc, aa::default_any_soos>::template method, move, equal_to> {
-  using any_copyable::basic_any::basic_any;
-};
+using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
+template<typename Alloc = std::allocator<char>>
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, copy_with<Alloc, aa::default_any_soos>::template method, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -291,7 +285,7 @@ size_t TestCompare() {
   any_compare v2 = std::vector{10, 5};
   error_if((v1 <=> v2) != std::partial_ordering::unordered);
   auto v3 = v2;
-  any_cast<std::vector<int>>(&v3)->back() = 0;
+  any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
   error_if(!(v3 < v2));
   any_equal v4 = 3.14f;
   error_if(v4 != 3.14f);
@@ -335,8 +329,8 @@ size_t TestAnyCast() {
   any_fooable v0 = destroy_me<3>{};
   v0.foo();
   invoke<foox>(v0);
-  error_if(any_cast<destroy_me<3>>(&v0) == nullptr);
-  error_if(any_cast<destroy_me<4>>(&v0) != nullptr);
+  error_if(any_cast<destroy_me<3>>(std::addressof(v0)) == nullptr);
+  error_if(any_cast<destroy_me<4>>(std::addressof(v0)) != nullptr);
   try {
     auto i = any_cast<FooAble>(v0);
     (void)i;
@@ -369,7 +363,7 @@ size_t TestInvoke() {
 size_t TestCasts() {
   size_t error_count = 0;
   any_copyable<> cp;
-  error_if(aa::any_cast<int>(&cp) != nullptr);
+  error_if(aa::any_cast<int>(std::addressof(cp)) != nullptr);
   cp = 5;
   error_if(aa::any_cast<int>(cp) != 5);
   const volatile int i = 5;
@@ -401,9 +395,7 @@ size_t TestCasts() {
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 
 // allocates every time (SOO == 0)
-struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>, 0>::method, aa::move, aa::destroy, aa::equal_to> {
-    using xyz::basic_any::basic_any;
-};
+using xyz = aa::basic_any_with<std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>,0>::method, aa::move, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
@@ -436,7 +428,7 @@ struct drawable1 {
   }
 };
 void Foobar(idrawable::ptr v) {
-  //std::cout << v->draw(150);
+  std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 void Foobar(idrawable::const_ptr v) {
@@ -445,11 +437,154 @@ void Foobar(idrawable::const_ptr v) {
 }
 
 int main() {
-  Circle v0;
-  aa::polymorphic_ptr<Draw> polyptr = &v0;
-  auto polyref = *polyptr;
-  aa::invoke_unsafe<Draw>(*polyptr, std::cout, 150);
-  aa::invoke_unsafe<Draw>(polyref, std::cout, 150);
+    // TODO - Хмм, а можно ли стереть последовательно один за другим ВСЕ типы в некой функции? До состояния void*, void* и т.д. оборачивая каждый раз в обёртку, которая примет void* и скастует его
+    // куда нужно. Получается erase_front лул 
+  // TODO - в ридми описать концепцию - basic_any и все его наследники - polymorphic_value, плюс есть polymorphic_ref/ptr
+  // TODO any_cast для polymorphic_ptr (только к поинтерам разрешено)(ill-formed если не поинтер)
+  // TODO - протестировать polymorphic всё
+  // TODO - aligned_alloc<N> и пояснение в том числе в ридми зачем он нужен
+  // TODO - обновить readme(по поводу msvc и плагинов), а также полиморфных поинтеров и ссылок)))
+  // TODO - сделать плагины стандартным методам типа RTTI???(и убрать соответственно реализацию из anyany +
+  // протестировать)
+  // TODO - удостоверится что в nullptr не обращается при сравнениях vtable))
+  // TODO - ревизия friend чё надо чё нет
+  // TODO nullany_t / nullany???
+
+    // СТОООП, так там же ДРУГОЙ vtable в Any!!!. Который с allocated size!!! Короче нужно вынести это и правда в метод другой(отдельный)
+    // И убрать sizeof_now метод тогда И убрать все упоминания 0 и soos в типе создаваемой таблицы?
+    // Хм, всё же оставить методы
+    // TODO - методы sizeof_now для any / poly ref
+    // TODO test копирование поинтеров и референсов(для поинтеров ещё оператор=)
+    // TODO - запретить все другие способы вызывать метод кроме invoke/invoke_unsafe при реализации плагинов(например vtable_invoke)
+    // TODO - hmm, биткасты везде наставить вместо friends?
+    // Или убрать polymorphic impl нахрен и оставить 2 рефа отдельно?
+    // TODO - hmm, а что если сделать print на основе полиморфных константных ссылок?))
+    // TODO этот принт в качестве example
+    // то есть print(string_literal<...> pattern, const_polymorphic_ref<Print>...)
+    // // TODO - "трейт" Print на основе оператора << для стримов 
+    // ЛУЛ, оно примерно так же и сделано
+    // TODO - глянуть как сделано make_format_args
+  {
+    // with plugin
+    drawable0 v0;
+    const drawable1 v1;
+    // create
+    idrawable::ptr pp1 = &v0;
+    idrawable::const_ptr pp2 = &v0;
+    idrawable::ref pr1 = v0;
+    idrawable::const_ref pr2 = v0;
+    idrawable::const_ptr pp3 = &v1;
+    idrawable::const_ref pr3 = v1;
+    idrawable pval = v0;
+    auto pip1 = &pval;
+    if (!aa::any_cast<drawable0*>(pip1))
+      return -1;
+    (void)aa::any_cast<drawable0&>(*pip1);
+    const idrawable cpval = v1;
+    auto pip2 = &cpval;
+    void(pip1), void(pip2);
+    idrawable::ref pr4 = v0;
+    idrawable::const_ref pr5 = v0;
+    idrawable::ptr pp4 = &v0;
+    idrawable::const_ptr pp5 = &v0;
+    void(pr4), void(pr5), void(pp4), void(pp5);
+    // HMM может быть оператор & для basic_any ?Возвращающий const|polymorphic_ptr?
+    // deduction guides
+    aa::polymorphic_ptr p_1 = pp1;
+    aa::const_polymorphic_ptr p_2 = pp1;
+    aa::const_polymorphic_ptr p_3 = pp2;
+    (void)p_1, (void)p_2, (void)p_3;
+    // invoke
+    aa::invoke_unsafe<Drawi>(*pp1, 150);
+    aa::invoke_unsafe<Drawi>(pr1, 150);
+    aa::invoke_unsafe<Drawi>(*&pr1, 150);
+    aa::invoke_unsafe<Drawi>(*pp2, 150);
+    aa::invoke_unsafe<Drawi>(*pp3,  150);
+    aa::invoke_unsafe<Drawi>(pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr3, 150);
+    aa::invoke<Drawi>(*pp1, 150);
+    aa::invoke<Drawi>(pr1, 150);
+    aa::invoke<Drawi>(*&pr1, 150);
+    aa::invoke<Drawi>(*pp2, 150);
+    aa::invoke<Drawi>(*pp3, 150);
+    aa::invoke<Drawi>(pr2, 150);
+    aa::invoke<Drawi>(*&pr2, 150);
+    aa::invoke<Drawi>(*&pr3, 150);
+    pp1->draw(150);
+    pp2->draw(150);
+    pp3->draw(150);
+    pr1.draw(150);
+    pr2.draw(150);
+    pr3.draw(150);
+    (*&pr1).draw(150);
+    (*&pr2).draw(150);
+    (*&pr3).draw(150);
+    // casts
+    aa::any_cast<drawable0*>(pp1)->draw(150);
+    aa::any_cast<drawable0*>(pp2)->draw(150);
+    aa::any_cast<drawable1*>(pp3)->draw(150);
+    aa::any_cast<drawable0&>(pr1).draw(150);
+    aa::any_cast<drawable0&>(pr2).draw(150);
+    aa::any_cast<drawable1&>(pr3).draw(150);
+    aa::any_cast<const drawable0&>(pr1).draw(150);
+    aa::any_cast<const drawable0&>(pr2).draw(150);
+    aa::any_cast<const drawable1&>(pr3).draw(150);
+    if (aa::any_cast<drawable1*>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<const drawable1&>(pr1);
+      return -1;
+    } catch (...) {
+    // good
+    }
+  }
+  {
+    // without plugin
+    Circle v0;
+    const Circle v1{5, "hello world"};
+    // create
+    any_drawable::ptr pp1 = &v0;
+    any_drawable::const_ptr pp2 = &v0;
+    any_drawable::ref pr1 = v0;
+    any_drawable::const_ref pr2 = v0;
+    any_drawable::const_ptr pp3 = &v1;
+    any_drawable::const_ref pr3 = v1;
+    // invoke
+    aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
+    aa::invoke<Draw>(*pp1, std::cout, 150);
+    aa::invoke<Draw>(pr1, std::cout, 150);
+    aa::invoke<Draw>(*&pr1, std::cout, 150);
+    aa::invoke<Draw>(*pp2, std::cout, 150);
+    aa::invoke<Draw>(*pp3, std::cout, 150);
+    aa::invoke<Draw>(pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr3, std::cout, 150);
+    // casts
+    aa::any_cast<const Circle*>(pp1)->draw(std::cout, 150);
+    aa::any_cast<Circle*>(pp2)->draw(std::cout, 150);
+    aa::any_cast<const Circle*>(pp3)->draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr2).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr3).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr3).draw(std::cout, 150);
+    if (aa::any_cast<Triangle*>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<Triangle&>(pr3);
+      return -1;
+    } catch (...) {
+        // good
+    }
+  }
   drawable0 v00;
   const drawable1 v01;
   Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало НЕконстантный?
