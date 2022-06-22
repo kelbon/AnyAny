@@ -134,7 +134,15 @@ static consteval bool check_copy() {
   else
     return true;
 }
-
+// clang-format off
+template <class To, class From>
+requires(sizeof(To) == sizeof(From)
+&& std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
+To bit_cast(const From& src) noexcept {
+    // TODO - remove this shitty cast when possible))) (clang and gcc support...)
+  return *reinterpret_cast<const To*>(std::addressof(src));
+}
+// clang-format on
 }  // namespace noexport
 
 namespace aa {
@@ -521,7 +529,7 @@ struct AA_MSVC_EBO const_polymorphic_ref : plugin_t<Methods, const_polymorphic_r
   // clang-format on
   // from non-const ref
   constexpr const_polymorphic_ref(polymorphic_ref<Methods...> p) noexcept
-      : const_polymorphic_ref{std::bit_cast<const_polymorphic_ref<Methods...>>(p)} {
+      : const_polymorphic_ref{::noexport::bit_cast<const_polymorphic_ref<Methods...>>(p)} {
   }
   // returns const_polymorphic_ptr<Methods...>
   constexpr auto operator&() const noexcept;
@@ -673,11 +681,11 @@ struct const_polymorphic_ptr {
 
 template<TTA... Methods>
 constexpr auto polymorphic_ref<Methods...>::operator&() const noexcept {
-  return std::bit_cast<polymorphic_ptr<Methods...>>(*this);
+  return ::noexport::bit_cast<polymorphic_ptr<Methods...>>(*this);
 }
 template <TTA... Methods>
 constexpr auto const_polymorphic_ref<Methods...>::operator&() const noexcept {
-  return std::bit_cast<const_polymorphic_ptr<Methods...>>(*this);
+  return ::noexport::bit_cast<const_polymorphic_ptr<Methods...>>(*this);
 }
 
 // CRTP - inheritor of basic_any
