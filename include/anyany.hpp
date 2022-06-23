@@ -11,7 +11,7 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
-
+#include <bit>
 // TODO remove when it will be C++20 module
 #undef AXIOM
 #undef PLEASE_INLINE
@@ -139,8 +139,9 @@ template <class To, class From>
 requires(sizeof(To) == sizeof(From)
 && std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
 To bit_cast(const From& src) noexcept {
+    return std::bit_cast<To>(src);
     // TODO - remove this shitty cast when possible))) (clang and gcc support...)
-  return *reinterpret_cast<const To*>(std::addressof(src));
+ // return *reinterpret_cast<const To*>(std::addressof(src));
 }
 // clang-format on
 }  // namespace noexport
@@ -461,6 +462,10 @@ constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T
 #define AA_MSVC_EBO
 #endif
 
+// it is concept for removing ambigious ctors in polymorphic ptrs
+template <typename T>
+concept not_const_type = !std::is_const_v<T>;
+
 // non nullable non owner view to any type which satisfies Methods...
 template <TTA... Methods>
 struct AA_MSVC_EBO polymorphic_ref : plugin_t<Methods, polymorphic_ref<Methods...>>... {
@@ -478,6 +483,7 @@ struct AA_MSVC_EBO polymorphic_ref : plugin_t<Methods, polymorphic_ref<Methods..
   // uninitialized for pointer implementation
   constexpr polymorphic_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
+
  public:
   // cannot rebind reference
   polymorphic_ref(const polymorphic_ref&) = default;
@@ -486,8 +492,8 @@ struct AA_MSVC_EBO polymorphic_ref : plugin_t<Methods, polymorphic_ref<Methods..
   void operator=(const polymorphic_ref&) = delete;
   // clang-format off
   // from mutable lvalue
-  template <typename T> // not shadow copy ctor
-  requires(!std::is_const_v<T> && !std::is_same_v<polymorphic_ref<Methods...>, T>)
+  template <not_const_type T> // not shadow copy ctor
+  requires(!std::same_as<polymorphic_ref<Methods...>, T>)
   constexpr polymorphic_ref(T& value) noexcept
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
   }
@@ -522,7 +528,7 @@ struct AA_MSVC_EBO const_polymorphic_ref : plugin_t<Methods, const_polymorphic_r
   // clang-format off
   // from value
   template <typename T> // not shadow copy ctor
-  requires(!std::is_same_v<const_polymorphic_ref<Methods...>, T>)
+  requires(!std::same_as<const_polymorphic_ref<Methods...>, T>)
   constexpr const_polymorphic_ref(const T& value) noexcept
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
   }
@@ -534,17 +540,6 @@ struct AA_MSVC_EBO const_polymorphic_ref : plugin_t<Methods, const_polymorphic_r
   // returns const_polymorphic_ptr<Methods...>
   constexpr auto operator&() const noexcept;
 };
-
-// polymorphic_ptr TYPE - used to replace pointers to bases with virtual functions:
-// separates polymorphic behavior and type logic, so you can use your type in
-// non polymorphic context and in it without boilerplait code or runtime overhead
-// with this abstraction there are no change to create polymorphic type without
-// correct destructor or make a slicing, more explicit interface for polymorphic functions - good too
-// And its only way to create polymorphic function, which take argument by copy
-
-// it is concept for removing ambigious ctors in polymorphic ptrs
-template<typename T>
-concept not_const_type = !std::is_const_v<T>;
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
 // usage example : void foo(polymorphic_ptr<Method0, Method1> p) (same Methods like in AnyAny)
