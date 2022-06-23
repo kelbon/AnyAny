@@ -7,10 +7,10 @@ https://github.com/kelbon/AnyAny/actions/workflows/clang.yml)
 [![GCC](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml/badge.svg?branch=main)](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
-(MSVC works too) _(Note : in Visual Studio 19 v142 toolset have parser bug in C++20 code, if you want to use msvc use v143 toolset (Visual Studio 2022) )_
+(MSVC have bugs, which are already reported, you can use Visual Studio 2022 clang-cl now)
 
 This is a library for dynamic polymorphism through type erasure with better code readability and reusage, performance, far less boilerplate then with usual way (virtual functions).
-
+* [`Design and understanding`](#design)
 * [`How to build?`](#build)
 
 ### Basic design knowledge (please read this example first)
@@ -71,8 +71,7 @@ Wait, copy... Move? Yes, by default any is only have a destructor, so you can cr
 
 Note: result type of do_invoke and Args must be same for all types T (as for virtual functions)
 
-* [`basic_any`](#basic_any)
-* [`any`](#any)
+* [`basic_any_with`](#basic_any_with)
 * [`any_with<Methods...>`](#any_with)
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
@@ -90,81 +89,75 @@ Note: result type of do_invoke and Args must be same for all types T (as for vir
 
 ### `any_with`
 It is a template which accepts a any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
-Example : see first example on top!
-
-### `basic_any`
-interface:
+Created type is a **polymorphic value type** (see design)
+Interface of created type:
 ```C++
-// CRTP - inheritor of basic_any, popular pattern
-// Alloc - yes, any can allocate memory. It must be allocator for char/std::byte/unsigned char (other is meaningless)
-// SooS - Small Object Optimization Size(like SSO in strings).
-// You can increase it to less allocate or decrease it, for example,
-// if you know, that sizeof of all types which will be stored not more then X bytes
-// Methods... - see first example
 
-template <typename CRTP, typename Alloc, size_t SooS, template<typename> typename... Methods>
-struct basic_any {
+// All constructors and move assign operators are exception safe
+// move and move assign always noexcept
+default constructor ( creates empty poly value)
 
-// constructors, move, copy assign, dctor
-// move and move assign is noexcept always
+constructor from Alloc
+
+copy constructor(if aa::copy Method used)
+
+copy assign operator (if aa::copy AND aa::move Methods are used)
+
+move constructor and move assign operator(if aa::move Method used)
+
+template <typename T, typename... Args>
+constructor(std::in_place_type_t<T>, Args&&... args);
+
+// creating with emplace
+template <typename T, typename U, typename... Args>
+constructor(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args);
+
+constructor(auto&& value); // from any type
+
+constructor(std::allocator_arg_t, Alloc alloc, T&& value); // from any value, but with Alloc
 
 bool has_value() const noexcept; // true if not empty
+// returns sizeof of type currently in Any, (0 if empty)
+std::size_t sizeof_now() const noexcept;
 
 // emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
 
 template<typename T, typename... Args>
 std::decay_t& emplace<T>(Args&&...); // returns reference to emplaced value
 
-// there are also version of emplace with initializer list
-// and emplace-ctor with std::in_place_type tag. You know if you know...
+template <typename T, typename U, typename... Args>
+std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args)
 
 void reset() noexcept; // after this method has_value() == false 
 
-// DISABLED BY DEFAULT to enable this method add Method aa::RTTI to your type creation(like in first example on top!)
+// presented if method aa::RTTI is used
 const std::type_info& type() const noexcept;
 
-// DISABLED BY DEFAULT to enable this add Method aa::equal_to OR aa::spaceship
+// presented if aa::equal_to OR aa::spaceship Methods are used
 bool operator==( ... ) const;
 
-// DISABLED BY DEFAULT to enable this operator add Method aa::spaceship
+// presented if aa::spaceship
 std::partial_ordering operator<=>(...) const; 
 
 };
 ```
 
+Example : see first example on top!
+
+### `basic_any_with`
+Creates a type like any_with, but with custom alloc and SOO buffer size - if you need a copy method, then use aa::copy_with<Alloc, SooS>::method
+interface:
+```C++
+template<typename Alloc, size_t SooS, TTA... Methods>
+using basic_any_with = /*...*/;
+
+```
+
 **All constructor any copy/move assignment operators have strong exception guarantee**
 
-_Note : operator spaceship for any always returns partial ordering (if enabled), this means that two anyes can be unordered_
+_Note : operator spaceship for any always returns partial ordering, this means that two anyes can be unordered_
 
 **Important** it is important if your type has noexcept move constructor, it really can increase perfomance(like in std::vector case, if you know).
-
-### `any`
-It is just an basic_any with default alloc (std::allocator<std::byte>) and default SooS such that sizeof (any) == Machine Word Size (64 / 32 bytes) for perfomance.
-
-Usually used to inherit from, when you want to invoke methods like in common type with .MethodName(Args...)
-
-Example:
-
-```C++
-struct any_executor : any<any_executor, Execute, aa::copy> {
-  // use all constructors and move/copy assign operators of base class
-  using any_executor::any::any;
-
-  void execute(std::function<void()> foo) {
-    if(has_value()) // Note! any can be empty!
-      vtable_invoke<Execute>(std::move(foo)); // vtable_invoke - basic_any's protected method
-  }
-};
-
-int main () {
-  any_executor a = SomeExecutor{};
-  a.execute([] {}); 
-}
-
-// line 148 just a short-cut for
-// using base_t = any<any_executor, Execute, aa::copy>
-// using base_t::base_t;
-```
 
 ### `any_cast`
 There are two versions, for pointer (noexcept) and throwing:
@@ -245,11 +238,36 @@ concept any_x = requires {
 ```
   base_any_type - is a inner type alias in basic_any, usefull for inheriting (using base_t::base_t), convering etc
   
-### Background and design
-
-For example you want to create a Machine class which engine can be changed on runtime. Engine must have Go method.
-
-Without this library it is a very annoying task
+### `design`
+ 
+Library provides several abstractions:
+  
+**Polymorphic value, reference and pointer** - similar to just **T, T& and T***, but for polymorphic context.
+  
+ And several actions on these abstractions:
+  * invoke<Method> - accepts reference or polymorphic value and arguments, invokes a method
+  * any_cast - accepts a pointer/ref/value and tryies to cast it into non polymorphic pointer/reference/value
+  
+Value(value of type, created by aa::any_with<Methods...>) - is a type erased storage for one value(or empty)
+  can be constructed from:
+  * non polymorphic value, if type satisfies requirements (Methods)
+  * other value with same methods
+  
+Reference cannot be null and cannot be rebinded to another value after creating
+Reference(aa::poly_ref) can be be created from:
+  * non-polymorphic value, if type satisfies requirements (Methods)
+  * from polymorphic pointer(operator*)
+  
+Pointer(aa::poly_ptr) is nullable and can be created from:
+  * pointer to non polymorphic value, if type satisfies requirements (Methods)
+  * polymorphic reference (operator&)
+  * polymorphic value (operator&)
+  * pointer to polymorphic value
+  
+Also there are casts poly_ptr -> const_poly_ptr / poly_ref -> const_poly_ref, similar to T&->const T& / T*->const T* too
+  
+For example you want to create a Machine class which engine can be changed on runtime. Engine in this case is a **polymorphic value**
+Classic way to do it: (bad)
 ```C++
 class IEngine {
   virtual void Go() = 0;
@@ -263,11 +281,11 @@ class Machine {
   // shared_ptr also do not work, all machines will use same engine, again useless allocations 
 }
 ```
-And of course i dont need a **pointer** to polymoprhic object here, i need an engine, a **polymorphic value**.
+Semms like i dont want a **pointer** to polymoprhic value here, i need an engine - **polymorphic value**.
 
 it is obvious that the approach with virtual functions does not express our intentions in the code, which means that it becomes much more difficult for us and the compiler to understand what is happening in it.
 
-As you can see, there are many problems. Whats a solution?
+Whats a solution?
 
 In ideal world it must be something like: 
 ```C++
@@ -283,16 +301,48 @@ This is why this library was created, it providies an instruments to create such
   ```C++
   template<typename T>
   struct Go {
-    static int do_invoke(T self, int value) {
-     self.go(value);
-     return value * 4;
+    static int do_invoke(T& self, int value) {
+      return self.go(value);
     }
   }
   
   using any_engine = aa::any_with<Go, aa::copy, aa::move>;
   // All ready to use!
   ```
-
+Or another case : we want to reduce binary file size and interface for our 'print' function
+  typical way to implement it(bad):
+```C++
+  // now we have one function for every set of Ts..., for example different print for <int, double> and <double, int>
+  // so we want to type erase it
+  template<typename... Ts>
+  void print(const Ts&... args) {
+    (std::cout << ... << args);
+  }
+  int main() {
+    print(5, 10, std::string{"abc"}, std::string_view{"hello world"});
+  }
+```
+  
+  With anyany we can erase each type only once and use same 'print' function for all of them
+  
+```C++
+template <typename T>
+struct Print {
+    static void do_invoke(const T& self) {
+      std::cout << self;
+    }
+};
+// we can remove init list here, but its just an example
+void print(std::initializer_list<aa::const_poly_ref<Print>> list) {
+  // aa::invoke is a functional object with operator()
+  std::ranges::for_each(list, aa::invoke<Print>);
+}
+int main() {
+  print({5, 10, std::string{"abc"}, std::string_view{"hello world"}});
+}
+```
+And even more - now the function in the signature explicitly indicates which methods it needs
+ 
 ## Using with CMake
 1. Copy this repository into folder with your project
 2. Add these lines to it's CMakeLists.txt
