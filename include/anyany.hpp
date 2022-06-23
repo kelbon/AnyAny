@@ -139,9 +139,9 @@ template <class To, class From>
 requires(sizeof(To) == sizeof(From)
 && std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
 To bit_cast(const From& src) noexcept {
-    return std::bit_cast<To>(src);
-    // TODO - remove this shitty cast when possible))) (clang and gcc support...)
- // return *reinterpret_cast<const To*>(std::addressof(src));
+  // TODO - remove this shitty cast when possible))) (clang and gcc support...)
+  // (cant support no default constructible types without compiler magic)
+  return *reinterpret_cast<const To*>(std::addressof(src));
 }
 // clang-format on
 }  // namespace noexport
