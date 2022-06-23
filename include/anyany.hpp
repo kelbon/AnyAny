@@ -11,7 +11,7 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 #include <climits>      // CHAR_BIT on gcc
-
+#include <bit>
 // TODO remove when it will be C++20 module
 #undef AXIOM
 #undef PLEASE_INLINE
@@ -134,7 +134,16 @@ static consteval bool check_copy() {
   else
     return true;
 }
-
+// clang-format off
+template <class To, class From>
+requires(sizeof(To) == sizeof(From)
+&& std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
+To bit_cast(const From& src) noexcept {
+  // TODO - remove this shitty cast when possible))) (clang and gcc support...)
+  // (cant support no default constructible types without compiler magic)
+  return *reinterpret_cast<const To*>(std::addressof(src));
+}
+// clang-format on
 }  // namespace noexport
 
 namespace aa {
@@ -260,6 +269,7 @@ struct move {
       std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
       std::destroy_at(src);
     } else {
+      // not static assert, because will be never called, but needed to compile
       UNREACHABLE();
     }
   }
@@ -383,26 +393,40 @@ struct empty_any_method_call : std::exception {
     return "Empty any method was called";
   }
 };
-
+// utility method for basic_any
+template<typename T>
+struct size_of {
+  static constexpr std::size_t do_invoke(const T&) noexcept {
+    return sizeof(T);
+  }
+};
 #ifdef AA_DLL_COMPATIBLE
+// name 'n' because need to reduce name size - MAGIC ENUM
 template <typename T>
-consteval const char* type_name() noexcept {
+consteval std::string_view n() {
 #if defined(__clang__) || defined(__GNUC__)
-  return __PRETTY_FUNCTION__;
+  constexpr size_t prefix_len = sizeof("std::string_view n() [T = ") - sizeof("");
+  return std::string_view(__PRETTY_FUNCTION__ + prefix_len,
+                          sizeof(__PRETTY_FUNCTION__) - prefix_len - sizeof("]"));
+#elif defined(_MSC_VER)
+  constexpr size_t prefix_len =
+      sizeof("class std::basic_string_view<char,struct std::char_traits<char> > __cdecl n<") - sizeof("");
+  return std::string_view({__FUNCSIG__ + prefix_len, sizeof(__FUNCSIG__) - prefix_len - sizeof(">(void)")});
 #else
-  return __FUNCSIG__;
+#error Cant support dll with this compiler
 #endif
 }
+// T always decayed, because all types decayed before constructing a vtable for them
+template<typename T>
+constexpr inline std::string_view type_name = n<std::decay_t<T>>();
 #endif
-
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
 struct vtable {
   std::tuple<type_erased_signature_t<Methods>...> table;
-  size_t allocated_size;  // always std::max(SooS, sizeof(T)), needed for basic_any
 #ifdef AA_DLL_COMPATIBLE
-  const char* name;
+  std::string_view name;
 #endif
 
   template <TTA Method>
@@ -419,144 +443,263 @@ struct vtable {
     return std::get<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
-
-template <typename T, size_t SooS, TTA... Methods>
-constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...},
-                                           std::max(sizeof(T), SooS)
+// must be never called explicitly, because needed to decay type before
+template <typename T, TTA... Methods>
+constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}
 #ifdef AA_DLL_COMPATIBLE
-                                               ,
-                                           type_name<T>()
+                                           ,
+                                           type_name<T>
 #endif
 };
+// always decays type to reduce count of vtables
+template<typename T, TTA... Methods>
+constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>; 
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)
-#define MSVC_EMPTY_BASES_WORKAROUND __declspec(empty_bases)
+#define AA_MSVC_EBO __declspec(empty_bases)
 #else
-#define MSVC_EMPTY_BASES_WORKAROUND
+#define AA_MSVC_EBO
 #endif
 
+// it is concept for removing ambigious ctors in poly ptrs
+template <typename T>
+concept not_const_type = !std::is_const_v<T>;
+
+// non nullable non owner view to any type which satisfies Methods...
 template <TTA... Methods>
-struct MSVC_EMPTY_BASES_WORKAROUND polymorphic_impl : plugin_t<Methods, polymorphic_impl<Methods...>>... {
-  const vtable<Methods...>* vtable_ptr = nullptr;
-  void* value_ptr = nullptr;
-
-  constexpr polymorphic_impl() = default;
-  constexpr polymorphic_impl(const vtable<Methods...>* vtable_ptr, void* value_ptr) noexcept
-      : vtable_ptr(vtable_ptr), value_ptr(value_ptr) {
-  }
-};
-
-// polymorphic_ptr TYPE - used to replace pointers to bases with virtual functions:
-// separates polymorphic behavior and type logic, so you can use your type in
-// non polymorphic context and in it without boilerplait code or runtime overhead
-// with this abstraction there are no change to create polymorphic type without
-// correct destructor or make a slicing, more explicit interface for polymorphic functions - good too
-// And its only way to create polymorphic function, which take argument by copy
-
-// non owning pointer-like type, behaves like pointer to CONST abstract base type
-// usage example : void foo(const_polymorphic_ptr<Method0, Method1> p) (same Methods like in AnyAny)
-template <TTA... Methods>
-struct const_polymorphic_ptr {
+struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
  private:
-  using poly_impl = polymorphic_impl<Methods...>;
-  poly_impl poly_;
+  const vtable<Methods...>* vtable_ptr;
+  void* value_ptr;
 
-  // for ctor access
+  friend struct caster;
+  template <TTA, typename>
+  friend struct invoke_fn;
+  template <TTA, typename>
+  friend struct invoke_unsafe_fn;
   template <TTA...>
-  friend struct polymorphic_ptr;
-  constexpr const_polymorphic_ptr(poly_impl p) noexcept : poly_(std::move(p)) {
+  friend struct poly_ptr;
+  // uninitialized for pointer implementation
+  constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
 
  public:
-  // static checks
-  template <TTA Method>
-  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-
-  static_assert(has_method<destroy>, "Any requires destructor!");
-
-  // creating
-  constexpr const_polymorphic_ptr() = default;
-  template <typename T>  // TODO vtable without SooS for this type?
-  constexpr const_polymorphic_ptr(const T* ptr) noexcept
-      : poly_{&vtable_for<T, 0, Methods...>, const_cast<T*>(ptr)} {
+  // cannot rebind reference
+  poly_ref(const poly_ref&) = default;
+  poly_ref(poly_ref&&) = default;
+  void operator=(poly_ref&&) = delete;
+  void operator=(const poly_ref&) = delete;
+  // clang-format off
+  // from mutable lvalue
+  template <not_const_type T> // not shadow copy ctor
+  requires(!std::same_as<poly_ref<Methods...>, T>)
+  constexpr poly_ref(T& value) noexcept
+      : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
+      static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
-
-  // observers
-
-  constexpr bool has_value() const noexcept {
-    return poly_.value_ptr != nullptr;
+  // from const value, if all Methods are const
+  template <typename T> // not shadow copy ctor
+  requires(!std::same_as<poly_ref<Methods...>, T> && (const_method<Methods> && ...))
+  constexpr poly_ref(const T& value) noexcept
+      : vtable_ptr{addr_vtable_for<T, Methods...>},
+      value_ptr{const_cast<void*>(reinterpret_cast<const void*>(std::addressof(value)))} {
+      static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
-  constexpr explicit operator bool() const noexcept {
-    return has_value();
-  }
+  // clang-format on
+  // returns poly_ptr<Methods...>
+  constexpr auto operator&() const noexcept;
+};
 
-  // access
+// non nullable non owner view to any type which satisfies Methods...
+// Do not extends lifetime!!! (when constructed from literal '5' for example)
+template<TTA... Methods>
+struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>>... {
+ private:
+  const vtable<Methods...>* vtable_ptr;
+  const void* value_ptr;
 
-  constexpr const poly_impl& operator*() const noexcept {
-    return poly_;
+  friend struct caster;
+  template <TTA, typename>
+  friend struct invoke_fn;
+  template <TTA, typename>
+  friend struct invoke_unsafe_fn;
+  template<TTA...>
+  friend struct const_poly_ptr;
+  // uninitialized for pointer implementation
+  constexpr const_poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
-  constexpr const poly_impl* operator->() const noexcept {
-    return &poly_;
+ public:
+  // cannot rebind reference
+  const_poly_ref(const const_poly_ref&) = default;
+  const_poly_ref(const_poly_ref&&) = default;
+  void operator=(const_poly_ref&&) = delete;
+  void operator=(const const_poly_ref&) = delete;
+  // clang-format off
+  // from value
+  template <typename T> // not shadow copy ctor
+  requires(!std::same_as<const_poly_ref<Methods...>, T>)
+  constexpr const_poly_ref(const T& value) noexcept
+      : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
+      static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
+  // clang-format on
+  // from non-const ref
+  constexpr const_poly_ref(poly_ref<Methods...> p) noexcept
+      : const_poly_ref{::noexport::bit_cast<const_poly_ref<Methods...>>(p)} {
+  }
+  // returns const_poly_ptr<Methods...>
+  constexpr auto operator&() const noexcept;
 };
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
-// usage example : void foo(polymorphic_ptr<Method0, Method1> p) (same Methods like in AnyAny)
+// usage example : void foo(poly_ptr<Method0, Method1> p) (same Methods like in AnyAny)
 template <TTA... Methods>
-struct polymorphic_ptr {
+struct poly_ptr {
  private:
-  using poly_impl = polymorphic_impl<Methods...>;
-  poly_impl poly_;
+  // uninitialized reference by default
+  poly_ref<Methods...> poly_ = nullptr;
+
+  friend struct caster;
 
  public:
-  // static checks
-  template <TTA Method>
-  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-
-  static_assert(has_method<destroy>, "Any requires destructor!");
-
-  // creating
-  constexpr polymorphic_ptr() = default;
+  // from nothing (empty)
+  constexpr poly_ptr() = default;
+  constexpr poly_ptr(std::nullptr_t) noexcept : poly_ptr() {
+  }
+  constexpr poly_ptr& operator=(std::nullptr_t) noexcept {
+    poly_.value_ptr = nullptr;
+    poly_.vtable_ptr = nullptr;
+    return *this;
+  }
+  // from mutable pointer
   // clang-format off
-  template <typename T>  // requires used(and not deleted ctor(const auto*) for better overload resolution
-  requires(!std::is_const_v<T>)  // TODO vtable without SooS for this type?
-  constexpr polymorphic_ptr(T* ptr) noexcept
-      : poly_{&vtable_for<T, 0, Methods...>, ptr} {
+  template <not_const_type T>
+  constexpr poly_ptr(T* ptr) noexcept {
+      poly_.value_ptr = ptr;
+      poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
+  }
+  // from const value, if all Methods are const
+  template <typename T>
+  requires(const_method<Methods> && ...)
+  constexpr poly_ptr(const T* ptr) noexcept {
+      poly_.value_ptr = const_cast<void*>(reinterpret_cast<const void*>(ptr));
+      poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
+  }
+  // from mutable pointer to Any
+  template <any_x Any>
+  requires(not_const_type<Any> && std::same_as<typename Any::methods_list, type_list<Methods<interface_t>...>>)
+  constexpr poly_ptr(Any* ptr) noexcept {
+      if(ptr == nullptr) [[unlikely]] {
+          *this = nullptr;
+          return;
+      }
+      poly_.vtable_ptr = ptr->vtable_ptr;
+      poly_.value_ptr = ptr->value_ptr;
   }
   // clang-format on
-
   // observers
 
+  constexpr void* raw() const noexcept {
+    return poly_.value_ptr;
+  }
   constexpr bool has_value() const noexcept {
     return poly_.value_ptr != nullptr;
+  }
+  constexpr bool operator==(std::nullptr_t) const noexcept {
+    return !has_value();
   }
   constexpr explicit operator bool() const noexcept {
     return has_value();
   }
 
-  // 'pointer' to mutable value can be converted into 'pointer' to constant
-  constexpr operator const_polymorphic_ptr<Methods...>() const noexcept {
-    return const_polymorphic_ptr<Methods...>{poly_};
-  }
   // access
 
-  constexpr poly_impl& operator*() & noexcept {
+  constexpr poly_ref<Methods...> operator*() const noexcept {
+    assert(has_value());
     return poly_;
   }
-  constexpr poly_impl operator*() && noexcept {
-    return std::move(poly_);
-  }
-  constexpr const poly_impl& operator*() const& noexcept {
-    return poly_;
-  }
-  constexpr poly_impl* operator->() noexcept {
-    return &poly_;
-  }
-  constexpr const poly_impl* operator->() const noexcept {
-    return &poly_;
+  constexpr const poly_ref<Methods...>* operator->() const noexcept {
+    return std::addressof(poly_);
   }
 };
+
+// non owning pointer-like type, behaves like pointer to CONST abstract base type
+// usage example : void foo(const_poly_ptr<Method0, Method1> p) (same Methods like in AnyAny)
+template <TTA... Methods>
+struct const_poly_ptr {
+ private:
+  // uninitialized reference by default
+  const_poly_ref<Methods...> poly_ = nullptr;
+
+  friend struct caster;
+
+ public:
+  // from nothing(empty)
+  constexpr const_poly_ptr() = default;
+  constexpr const_poly_ptr(std::nullptr_t) noexcept : const_poly_ptr() {
+  }
+  constexpr const_poly_ptr& operator=(std::nullptr_t) noexcept {
+    poly_.value_ptr = nullptr;
+    poly_.vtable_ptr = nullptr;
+    return *this;
+  }
+  // from pointer to value
+  template <typename T>
+  constexpr const_poly_ptr(const T* ptr) noexcept {
+    poly_.value_ptr = ptr;
+    poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
+  }
+  // from pointer to Any
+  // clang-format off
+  template <any_x Any>
+  requires(std::same_as<typename Any::methods_list, type_list<Methods<interface_t>...>>)
+  constexpr const_poly_ptr(const Any* p) noexcept {
+    // clang-format on
+    if (p == nullptr) [[unlikely]] {
+      *this = nullptr;
+      return;
+    }
+    poly_.vtable_ptr = p->vtable_ptr;
+    poly_.value_ptr = p->value_ptr;
+  }
+  // from non-const poly pointer
+  constexpr const_poly_ptr(poly_ptr<Methods...> p) noexcept : poly_{*p} {
+  }
+
+  // observers
+
+  constexpr const void* raw() const noexcept {
+    return poly_.value_ptr;
+  }
+  constexpr bool has_value() const noexcept {
+    return poly_.value_ptr != nullptr;
+  }
+  constexpr bool operator==(std::nullptr_t) const noexcept {
+    return !has_value();
+  }
+  constexpr explicit operator bool() const noexcept {
+    return has_value();
+  }
+
+  // access
+
+  constexpr const_poly_ref<Methods...> operator*() const noexcept {
+    return poly_;
+  }
+  constexpr const const_poly_ref<Methods...>* operator->() const noexcept {
+    return std::addressof(poly_);
+  }
+};
+
+template<TTA... Methods>
+constexpr auto poly_ref<Methods...>::operator&() const noexcept {
+  return ::noexport::bit_cast<poly_ptr<Methods...>>(*this);
+}
+template <TTA... Methods>
+constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
+  return ::noexport::bit_cast<const_poly_ptr<Methods...>>(*this);
+}
 
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
@@ -564,8 +707,7 @@ struct polymorphic_ptr {
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
 template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-struct MSVC_EMPTY_BASES_WORKAROUND basic_any
-    : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
+struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
@@ -617,7 +759,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
         }
       }
     }
-    vtable_ptr = &vtable_for<T, SooS, Methods...>;
+    vtable_ptr = addr_vtable_for<T, Methods...>;
   }
 
   using alloc_traits = std::allocator_traits<Alloc>;
@@ -625,10 +767,16 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
   using alloc_size_type = typename alloc_traits::size_type;
   // for any_cast / unified function call
   friend struct caster;
+  template <TTA...>
+  friend struct poly_ptr;
+  template <TTA...>
+  friend struct const_poly_ptr;
 
   static bool equal_types_stored(const basic_any& a, const basic_any& b) noexcept {
 #ifdef AA_DLL_COMPATIBLE
-    return std::strcmp(a.vtable_ptr->name, b.vtable_ptr->name) == 0;
+    if (a.vtable_ptr == nullptr || b.vtable_ptr == nullptr)
+      return a.vtable_ptr == b.vtable_ptr;
+    return a.vtable_ptr->name == b.vtable_ptr->name;
 #else
     return a.vtable_ptr == b.vtable_ptr;
 #endif
@@ -653,10 +801,24 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
       "Spaceship already contains most effective way to equality compare, if class have operator ==");
   static_assert(
       noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
-  static_assert(has_method<destroy>, "Any requires destructor!");
+  static_assert(has_method<destroy>, "Any requires aa::destroy method");
+  static_assert(has_method<size_of>, "Any requires aa::size_of method");
+  static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
 
   using base_any_type = basic_any;
+  using methods_list = type_list<Methods<interface_t>...>;
 
+  using ptr = poly_ptr<Methods...>;
+  using const_ptr = const_poly_ptr<Methods...>;
+  using ref = poly_ref<Methods...>;
+  using const_ref = const_poly_ref<Methods...>;
+
+  constexpr ptr operator&() noexcept {
+    return {this};
+  }
+  constexpr const_ptr operator&() const noexcept {
+    return {this};
+  }
   constexpr basic_any() = default;
   basic_any(Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
@@ -682,7 +844,6 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
-    static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
     return alloc;
   }
   // postcondition: other do not contain a value after move
@@ -770,15 +931,17 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
 
   // observe
 
-  [[nodiscard]] PLEASE_INLINE constexpr bool has_value() const noexcept {
+  PLEASE_INLINE constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
-  [[nodiscard]] const std::type_info& type() const noexcept requires(has_method<RTTI>) {
+  const std::type_info& type() const noexcept requires(has_method<RTTI>) {
     if (!has_value())
       return typeid(void);
     return vtable_ptr->template invoke<RTTI>();
   }
-
+  std::size_t sizeof_now() const noexcept {
+    return has_value() ? vtable_invoke<size_of>() : 0;
+  }
   // COMPARE
 
   // there are NO operator==(auto&&) or operator<=>(auto&&)
@@ -831,7 +994,7 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
   }
   PLEASE_INLINE size_t allocated_size() const {
     assert(has_value() && memory_allocated());
-    return vtable_ptr->allocated_size;  // always std::max(SooS, sizeof(T))
+    return std::max(SooS, vtable_invoke<size_of>());
   }
   void destroy_value() {
     vtable_invoke<destroy>();
@@ -844,48 +1007,78 @@ struct MSVC_EMPTY_BASES_WORKAROUND basic_any
 
 // TEMPLATE FUNCTION any_cast<T>(any | any*) -> T | T* (type decayed)
 
-struct bad_any_cast : std::exception {
- private:
-  std::string message;
-
- public:
-  // string was created before exception and it is not bad_alloc, move is noexcept, all good!
-  bad_any_cast(std::string s) noexcept : message(std::move(s)) {
-  }
-
-  [[nodiscard]] const char* what() const noexcept override {
-    return message.c_str();
-  }
-};
-
 // friend of basic_any
 struct caster {
-  // clang-format off
-  template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods >
+  template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
-    // clang-format on
-    // T already remove_cv
+// T already remove_cv
 #ifdef AA_DLL_COMPATIBLE
-    if (any == nullptr || !any->has_value() || std::strcmp(any->vtable_ptr->name, type_name<T>()) != 0)
+    if (any == nullptr || !any->has_value() || any->vtable_ptr->name != type_name<T>)
       return nullptr;
 #else
-    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
+    if (any == nullptr || any->vtable_ptr != addr_vtable_for<T, Methods...>)
       return nullptr;
 #endif
     return std::launder(reinterpret_cast<const T*>(any->value_ptr));
   }
-  // clang-format off
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static T* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
-// clang-format on
 #ifdef AA_DLL_COMPATIBLE
-    if (any == nullptr || !any->has_value() || std::strcmp(any->vtable_ptr->name, type_name<T>()) != 0)
+    if (any == nullptr || !any->has_value() || any->vtable_ptr->name != type_name<T>)
       return nullptr;
 #else
-    if (any == nullptr || !any->has_value() || any->vtable_ptr != &vtable_for<T, SooS, Methods...>)
+    if (any == nullptr || any->vtable_ptr != addr_vtable_for<T, Methods...>)
       return nullptr;
 #endif
     return std::launder(reinterpret_cast<T*>(any->value_ptr));
+  }
+  template <typename T, TTA... Methods>
+  static T any_cast_impl(poly_ptr<Methods...> p) noexcept {
+    static_assert(std::is_pointer_v<T>);
+#ifdef AA_DLL_COMPATIBLE
+    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<std::remove_pointer_t<T>>)
+      return nullptr;
+#else
+    if (p.poly_.vtable_ptr != addr_vtable_for<std::remove_pointer_t<T>, Methods...>)
+      return nullptr;
+#endif
+    return reinterpret_cast<T>(p.raw());
+  }
+  template <typename T, TTA... Methods>
+  static const std::remove_pointer_t<T>* any_cast_impl(const_poly_ptr<Methods...> p) noexcept {
+    static_assert(std::is_pointer_v<T>);
+#ifdef AA_DLL_COMPATIBLE
+    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<std::remove_pointer_t<T>>)
+      return nullptr;
+#else
+    if (p.poly_.vtable_ptr != addr_vtable_for<std::remove_pointer_t<T>, Methods...>)
+      return nullptr;
+#endif
+    return reinterpret_cast<const std::remove_pointer_t<T>*>(p.raw());
+  }
+  template <typename T, TTA... Methods>
+  static T any_cast_impl(poly_ref<Methods...> p) {
+    static_assert(std::is_lvalue_reference_v<T>);
+#ifdef AA_DLL_COMPATIBLE
+    if (p.vtable_ptr->name != type_name<T>) [[unlikely]]
+      throw std::bad_cast{};
+#else
+    if (p.vtable_ptr != addr_vtable_for<T, Methods...>) [[unlikely]]
+      throw std::bad_cast{};
+#endif
+    return *reinterpret_cast<std::remove_cvref_t<T>*>(p.value_ptr);
+  }
+  template <typename T, TTA... Methods>
+  static const std::remove_reference_t<T>& any_cast_impl(const_poly_ref<Methods...> p) {
+    static_assert(std::is_lvalue_reference_v<T>);
+#ifdef AA_DLL_COMPATIBLE
+    if (p.vtable_ptr->name != type_name<T>) [[unlikely]]
+      throw std::bad_cast{};
+#else
+    if (p.vtable_ptr != addr_vtable_for<T, Methods...>) [[unlikely]]
+      throw std::bad_cast{};
+#endif
+    return *reinterpret_cast<const std::remove_cvref_t<T>*>(p.value_ptr);
   }
 };
 
@@ -904,25 +1097,41 @@ template <typename T, any_x U>
 }
 
 template <typename T, any_x U>
-[[nodiscard]] std::remove_cv_t<T> any_cast(U& any) {
+[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(U& any) {
   auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
   return *ptr;
 }
 template <typename T, any_x U>
-[[nodiscard]] std::remove_cv_t<T> any_cast(U&& any) {
+[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(U&& any) {
   auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
   return std::move(*ptr);
 }
 template <typename T, any_x U>
-[[nodiscard]] std::remove_cv_t<T> any_cast(const U& any) {
+[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(const U& any) {
   const auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
   if (!ptr)
     throw std::bad_cast{};
   return *ptr;
+}
+template <typename T, TTA... Methods>
+[[nodiscard]] PLEASE_INLINE auto* any_cast(poly_ptr<Methods...> p) noexcept {
+  return caster::any_cast_impl<T>(p);
+}
+template <typename T, TTA... Methods>
+[[nodiscard]] PLEASE_INLINE const auto* any_cast(const_poly_ptr<Methods...> p) noexcept {
+  return caster::any_cast_impl<T>(p);
+}
+template <typename T, TTA... Methods>
+[[nodiscard]] PLEASE_INLINE auto& any_cast(poly_ref<Methods...> p) {
+  return caster::any_cast_impl<T>(p);
+}
+template <typename T, TTA... Methods>
+[[nodiscard]] PLEASE_INLINE const auto& any_cast(const_poly_ref<Methods...> p) {
+  return caster::any_cast_impl<T>(p);
 }
 
 // TEMPLATE VARIABLE (FUNCTION OBJECT) invoke <Method> (any)
@@ -951,23 +1160,30 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
 
-  // FOR POLYMORPHIC
+  // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(polymorphic_impl<Methods...>& p, Args... args) const {
-    AXIOM(p.vtable_ptr != nullptr);
+  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const polymorphic_impl<Methods...>& p, Args... args) const {
-    AXIOM(p.vtable_ptr != nullptr);
+  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
-  template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(polymorphic_impl<Methods...>&& p, Args... args) const {
-    AXIOM(p.vtable_ptr != nullptr);
-    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
+
+  // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
+  // (result can create useless copies of args, because assumes to be invoked more then one time)
+  constexpr auto with(Args... args) const {
+    return [tpl = std::make_tuple(static_cast<Args&&>(args)...)](auto&& self) mutable -> result_t<Method> {
+      return std::apply(
+          [&](Args&... args_) mutable
+          -> result_t<Method> {  // cast to Args, so its move only if Args is rvalue reference
+            return aa::invoke_unsafe_fn<Method>{}(std::forward<decltype(self)>(self),
+                                                  static_cast<Args>(args_)...);
+          },
+          tpl);
+    };
   }
 };
 
@@ -1017,26 +1233,29 @@ struct invoke_fn<Method, type_list<Args...>> {
     }
   }
 
-  // FOR POLYMORPHIC
+  // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(polymorphic_impl<Methods...>& p, Args... args) const {
-    if (p.value_ptr == nullptr) [[unlikely]]
-      throw empty_any_method_call{};
+  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const polymorphic_impl<Methods...>& p, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
-    if (p.value_ptr == nullptr) [[unlikely]]
-      throw empty_any_method_call{};
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
-  template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(polymorphic_impl<Methods...>&& p, Args... args) const {
-    if (p.value_ptr == nullptr) [[unlikely]]
-      throw empty_any_method_call{};
-    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
+
+  // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
+  // (result can create useless copies of args, because assumes to be invoked more then one time)
+  constexpr auto with(Args... args) const {
+    return [tpl = std::make_tuple(static_cast<Args&&>(args)...)](auto&& self) mutable -> result_t<Method> {
+      return std::apply(
+          [&](Args&... args_) mutable
+          -> result_t<Method> {  // cast to Args, so its move only if Args is rvalue reference
+            return aa::invoke_fn<Method>{}(std::forward<decltype(self)>(self), static_cast<Args>(args_)...);
+          },
+          tpl);
+    };
   }
 };
 
@@ -1049,26 +1268,21 @@ struct invoke_fn<destroy, T> {
 template <TTA Method>
 constexpr invoke_fn<Method> invoke = {};
 
-// TEMPLATE any - default any for inheritance from (creating your any with default allocator and SooS)
-// default any size is a one cache line in currect CPU
-template <typename CRTP, TTA... Methods>
-struct any : basic_any<CRTP, std::allocator<std::byte>, default_any_soos, destroy, Methods...> {
-  using any::basic_any::basic_any;
-};
-
-// used to cover CRTP, if you do not want to add member-methods(and want to use unified function call with
-// invoke)
-template <template <typename, TTA...> typename Base, TTA... Methods>
-struct strong_alias : Base<strong_alias<Base, Methods...>, Methods...> {
+// Strong alias to basic_any with Alloc, SooS and Methods..., used to cover CRTP
+template <typename Alloc, size_t SooS, TTA... Methods>
+struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, Methods...> {
  private:
-  using base_t = Base<strong_alias, Methods...>;
+  using base_t = basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, Methods...>;
 
  public:
   using base_t::base_t;
 };
 
 template <TTA... Methods>
-using any_with = strong_alias<any, Methods...>;
+using any_with = any_with_t<std::allocator<std::byte>, default_any_soos, size_of, destroy, Methods...>;
+
+template<typename Alloc, size_t SooS, TTA... Methods>
+using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 
 }  // namespace aa
 

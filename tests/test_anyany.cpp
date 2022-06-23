@@ -13,45 +13,14 @@
 
 #include "functional_paradigm.hpp" // example 0
 #include "basic_usage.hpp" // example 1
+#include "polyref.hpp"
+
 #include "anyany.hpp"
 
-using namespace aa;
-
-template<typename T>
-struct Y {
-  int value = 10;
-  bool operator<(const Y&) const noexcept {
-    return false;
-  }
-  bool operator>(const Y&) const noexcept {
-    return false;
-  }
-  bool operator<=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator>=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator!=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator==(const Y&) const noexcept {
-    return false;
-  }
-  auto operator<=>(const Y&) const noexcept = default;
-};
-
- // any movable
-template<typename Alloc = std::allocator<std::byte>>
-struct any_movable : basic_any<any_movable<Alloc>, Alloc, aa::default_any_soos, destroy, move> {
-  using any_movable::basic_any::basic_any;
-};
-
-// any copyable
 template<typename Alloc = std::allocator<char>>
-struct any_copyable : basic_any<any_copyable<Alloc>, Alloc, aa::default_any_soos, destroy, copy_with<Alloc, aa::default_any_soos>::template method, move, equal_to> {
-  using any_copyable::basic_any::basic_any;
-};
+using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
+template<typename Alloc = std::allocator<char>>
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc, aa::default_any_soos>::template method, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -90,9 +59,9 @@ template <size_t Sz>
 struct destroy_me_throw : destroy_me<Sz> {
   std::list<int> l; // lol it is throw move / copy constructible... Allocations on move / default init
 };
-struct nomove_any : any<nomove_any> {
-  using nomove_any::any::any;
-};
+
+using nomove_any = aa::any_with<>;
+
 #define error_if(Cond) error_count += static_cast<bool>((Cond));
 size_t TestConstructors() {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
@@ -279,22 +248,19 @@ size_t TestConstructors() {
   return error_count;
 }
 
-struct any_compare : any<any_compare, copy, spaceship, move> {
-  using any_compare::any::any;
-};
-struct any_equal : any<any_equal, equal_to, move> {
-  using any_equal::any::any;
-};
+using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
+
+using any_equal = aa::any_with<aa::equal_to, aa::move>;
 
 size_t TestCompare() {
   size_t error_count = 0;
-  any_compare v1(Y<double>{});
+  any_compare v1(5.);
   error_if((v1 <=> v1) != std::partial_ordering::equivalent);
   error_if(v1 != v1);
   any_compare v2 = std::vector{10, 5};
   error_if((v1 <=> v2) != std::partial_ordering::unordered);
   auto v3 = v2;
-  any_cast<std::vector<int>>(&v3)->back() = 0;
+  any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
   error_if(!(v3 < v2));
   any_equal v4 = 3.14f;
   error_if(v4 != 3.14f);
@@ -331,16 +297,15 @@ struct barx {
   }
 };
 
-struct any_fooable : any<any_fooable, copy, move, foox, barx> {
-  using any_fooable::any::any;
-};
+using any_fooable = aa::any_with<aa::copy, aa::move, foox, barx>;
 
 size_t TestAnyCast() {
   size_t error_count = 0;
   any_fooable v0 = destroy_me<3>{};
-  invoke<foox>(v0);
-  error_if(any_cast<destroy_me<3>>(&v0) == nullptr);
-  error_if(any_cast<destroy_me<4>>(&v0) != nullptr);
+  v0.foo();
+  aa::invoke<foox>(v0);
+  error_if(any_cast<destroy_me<3>>(std::addressof(v0)) == nullptr);
+  error_if(any_cast<destroy_me<4>>(std::addressof(v0)) != nullptr);
   try {
     auto i = any_cast<FooAble>(v0);
     (void)i;
@@ -358,13 +323,13 @@ size_t TestInvoke() {
   any_fooable f2(std::in_place_type<destroy_me<500>>);
   any_fooable f3(std::in_place_type<destroy_me<100>>);
   (void)f0.foo();
-  error_if(invoke<barx>(f0, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f1, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f2, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f3, 3, "hello world") != "bar called");
-  static_assert(const_method<foox>);
-  static_assert(!const_method<barx>);
-  error_if(invoke<foox>(std::as_const(f3)) != 1.f);
+  error_if(aa::invoke<barx>(f0, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f1, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f2, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f3, 3, "hello world") != "bar called");
+  static_assert(aa::const_method<foox>);
+  static_assert(!aa::const_method<barx>);
+  error_if(aa::invoke<foox>(std::as_const(f3)) != 1.f);
   f0 = f2 = f1 = f0 = f0 = f0 = std::move(f1) = f2 = f3 = any_fooable{} = f3 = std::move(f2) = f1 = f2 = f3 =
       f3 = f1 = f2;
   return error_count;
@@ -373,7 +338,7 @@ size_t TestInvoke() {
 size_t TestCasts() {
   size_t error_count = 0;
   any_copyable<> cp;
-  error_if(aa::any_cast<int>(&cp) != nullptr);
+  error_if(aa::any_cast<int>(std::addressof(cp)) != nullptr);
   cp = 5;
   error_if(aa::any_cast<int>(cp) != 5);
   const volatile int i = 5;
@@ -405,9 +370,7 @@ size_t TestCasts() {
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 
 // allocates every time (SOO == 0)
-struct xyz : aa::basic_any<xyz, std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>, 0>::method, aa::move, aa::destroy, aa::equal_to> {
-    using xyz::basic_any::basic_any;
-};
+using xyz = aa::basic_any_with<std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>,0>::method, aa::move, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
@@ -424,8 +387,7 @@ struct Drawi {
   };
 };
 
-using drawable_ptr = aa::polymorphic_ptr<aa::destroy, Drawi>;
-using const_drawable_ptr = aa::const_polymorphic_ptr<aa::destroy, Drawi>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -440,19 +402,141 @@ struct drawable1 {
     return 2 * val;
   }
 };
-void Foobar(drawable_ptr v) {
+void Foobar(idrawable::ptr v) {
   std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
-void Foobar(const_drawable_ptr v) {
+void Foobar(idrawable::const_ptr v) {
   std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 
 int main() {
+  {
+    // with plugin
+    drawable0 v0;
+    const drawable1 v1;
+    // create
+    idrawable::ptr pp1 = &v0;
+    idrawable::const_ptr pp2 = &v0;
+    idrawable::ref pr1 = v0;
+    idrawable::const_ref pr2 = v0;
+    idrawable::const_ptr pp3 = &v1;
+    idrawable::const_ref pr3 = v1;
+    idrawable pval = v0;
+    auto pip1 = &pval;
+    if (!aa::any_cast<drawable0*>(pip1))
+      return -1;
+    (void)aa::any_cast<drawable0&>(*pip1);
+    const idrawable cpval = v1;
+    if (cpval.sizeof_now() != sizeof(drawable1))
+      return -1;
+    auto pip2 = &cpval;
+    (void)pip1, (void)pip2;
+    idrawable::ref pr4 = v0;
+    idrawable::const_ref pr5 = v0;
+    idrawable::ptr pp4 = &v0;
+    idrawable::const_ptr pp5 = &v0;
+    (void)pr4, (void)pr5, (void)pp4, (void)pp5;
+    // deduction guides
+    aa::poly_ptr p_1 = pp1;
+    aa::const_poly_ptr p_2 = pp1;
+    aa::const_poly_ptr p_3 = pp2;
+    (void)p_1, (void)p_2, (void)p_3;
+    // invoke
+    aa::invoke_unsafe<Drawi>(*pp1, 150);
+    aa::invoke_unsafe<Drawi>(pr1, 150);
+    aa::invoke_unsafe<Drawi>(*&pr1, 150);
+    aa::invoke_unsafe<Drawi>(*pp2, 150);
+    aa::invoke_unsafe<Drawi>(*pp3,  150);
+    aa::invoke_unsafe<Drawi>(pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr3, 150);
+    aa::invoke<Drawi>(*pp1, 150);
+    aa::invoke<Drawi>(pr1, 150);
+    aa::invoke<Drawi>(*&pr1, 150);
+    aa::invoke<Drawi>(*pp2, 150);
+    aa::invoke<Drawi>(*pp3, 150);
+    aa::invoke<Drawi>(pr2, 150);
+    aa::invoke<Drawi>(*&pr2, 150);
+    aa::invoke<Drawi>(*&pr3, 150);
+    pp1->draw(150);
+    pp2->draw(150);
+    pp3->draw(150);
+    pr1.draw(150);
+    pr2.draw(150);
+    pr3.draw(150);
+    (*&pr1).draw(150);
+    (*&pr2).draw(150);
+    (*&pr3).draw(150);
+    // casts
+    aa::any_cast<drawable0*>(pp1)->draw(150);
+    aa::any_cast<drawable0*>(pp2)->draw(150);
+    aa::any_cast<drawable1*>(pp3)->draw(150);
+    aa::any_cast<drawable0&>(pr1).draw(150);
+    aa::any_cast<drawable0&>(pr2).draw(150);
+    aa::any_cast<drawable1&>(pr3).draw(150);
+    aa::any_cast<const drawable0&>(pr1).draw(150);
+    aa::any_cast<const drawable0&>(pr2).draw(150);
+    aa::any_cast<const drawable1&>(pr3).draw(150);
+    if (aa::any_cast<drawable1*>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<const drawable1&>(pr1);
+      return -1;
+    } catch (...) {
+    // good
+    }
+  }
+  {
+    // without plugin
+    Circle v0;
+    const Circle v1{5, "hello world"};
+    // create
+    any_drawable::ptr pp1 = &v0;
+    any_drawable::const_ptr pp2 = &v0;
+    any_drawable::ref pr1 = v0;
+    any_drawable::const_ref pr2 = v0;
+    any_drawable::const_ptr pp3 = &v1;
+    any_drawable::const_ref pr3 = v1;
+    // invoke
+    aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
+    aa::invoke<Draw>(*pp1, std::cout, 150);
+    aa::invoke<Draw>(pr1, std::cout, 150);
+    aa::invoke<Draw>(*&pr1, std::cout, 150);
+    aa::invoke<Draw>(*pp2, std::cout, 150);
+    aa::invoke<Draw>(*pp3, std::cout, 150);
+    aa::invoke<Draw>(pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr3, std::cout, 150);
+    // casts
+    aa::any_cast<const Circle*>(pp1)->draw(std::cout, 150);
+    aa::any_cast<Circle*>(pp2)->draw(std::cout, 150);
+    aa::any_cast<const Circle*>(pp3)->draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr2).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr3).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr3).draw(std::cout, 150);
+    if (aa::any_cast<Triangle*>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<Triangle&>(pr3);
+      return -1;
+    } catch (...) {
+        // good
+    }
+  }
   drawable0 v00;
   const drawable1 v01;
-  Foobar((drawable_ptr) & v00);
+  Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало Ќ≈константный?
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
@@ -463,6 +547,7 @@ int main() {
   example1();
   example_draw();
   example_draw_explicit();
+  example_polyref();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);
