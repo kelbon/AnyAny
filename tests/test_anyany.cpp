@@ -13,39 +13,14 @@
 
 #include "functional_paradigm.hpp" // example 0
 #include "basic_usage.hpp" // example 1
+#include "polyref.hpp"
+
 #include "anyany.hpp"
-
-// TODO убрать это
-using namespace aa;
-
-template<typename T>
-struct Y {
-  int value = 10;
-  bool operator<(const Y&) const noexcept {
-    return false;
-  }
-  bool operator>(const Y&) const noexcept {
-    return false;
-  }
-  bool operator<=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator>=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator!=(const Y&) const noexcept {
-    return false;
-  }
-  bool operator==(const Y&) const noexcept {
-    return false;
-  }
-  auto operator<=>(const Y&) const noexcept = default;
-};
 
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, copy_with<Alloc, aa::default_any_soos>::template method, aa::move, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc, aa::default_any_soos>::template method, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -279,7 +254,7 @@ using any_equal = aa::any_with<aa::equal_to, aa::move>;
 
 size_t TestCompare() {
   size_t error_count = 0;
-  any_compare v1(Y<double>{});
+  any_compare v1(5.);
   error_if((v1 <=> v1) != std::partial_ordering::equivalent);
   error_if(v1 != v1);
   any_compare v2 = std::vector{10, 5};
@@ -328,7 +303,7 @@ size_t TestAnyCast() {
   size_t error_count = 0;
   any_fooable v0 = destroy_me<3>{};
   v0.foo();
-  invoke<foox>(v0);
+  aa::invoke<foox>(v0);
   error_if(any_cast<destroy_me<3>>(std::addressof(v0)) == nullptr);
   error_if(any_cast<destroy_me<4>>(std::addressof(v0)) != nullptr);
   try {
@@ -348,13 +323,13 @@ size_t TestInvoke() {
   any_fooable f2(std::in_place_type<destroy_me<500>>);
   any_fooable f3(std::in_place_type<destroy_me<100>>);
   (void)f0.foo();
-  error_if(invoke<barx>(f0, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f1, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f2, 3, "hello world") != "bar called");
-  error_if(invoke<barx>(f3, 3, "hello world") != "bar called");
-  static_assert(const_method<foox>);
-  static_assert(!const_method<barx>);
-  error_if(invoke<foox>(std::as_const(f3)) != 1.f);
+  error_if(aa::invoke<barx>(f0, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f1, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f2, 3, "hello world") != "bar called");
+  error_if(aa::invoke<barx>(f3, 3, "hello world") != "bar called");
+  static_assert(aa::const_method<foox>);
+  static_assert(!aa::const_method<barx>);
+  error_if(aa::invoke<foox>(std::as_const(f3)) != 1.f);
   f0 = f2 = f1 = f0 = f0 = f0 = std::move(f1) = f2 = f3 = any_fooable{} = f3 = std::move(f2) = f1 = f2 = f3 =
       f3 = f1 = f2;
   return error_count;
@@ -436,36 +411,6 @@ void Foobar(idrawable::const_ptr v) {
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 
-// TODO - Хмм, а можно ли стереть последовательно один за другим ВСЕ типы в некой функции? До состояния
-// void*, void* и т.д. оборачивая каждый раз в обёртку, которая примет void* и скастует его
-// куда нужно. Получается erase_front лул
-// TODO - в ридми описать концепцию - basic_any и все его наследники - polymorphic_value, плюс есть
-// polymorphic_ref/ptr
-// TODO any_cast для polymorphic_ptr (только к поинтерам разрешено)(ill-formed если не поинтер)
-// TODO - протестировать polymorphic всё
-// TODO - aligned_alloc<N> и пояснение в том числе в ридми зачем он нужен
-// TODO - обновить readme(по поводу msvc и плагинов), а также полиморфных поинтеров и ссылок)))
-// TODO - сделать плагины стандартным методам типа RTTI???(и убрать соответственно реализацию из anyany +
-// протестировать)
-// TODO - удостоверится что в nullptr не обращается при сравнениях vtable))
-// TODO - ревизия friend чё надо чё нет
-// TODO nullany_t / nullany???
-
-// СТОООП, так там же ДРУГОЙ vtable в Any!!!. Который с allocated size!!! Короче нужно вынести это и правда
-// в метод другой(отдельный) И убрать sizeof_now метод тогда И убрать все упоминания 0 и soos в типе
-// создаваемой таблицы? Хм, всё же оставить методы
-// TODO - методы sizeof_now для any / poly ref
-// TODO test копирование поинтеров и референсов(для поинтеров ещё оператор=)
-// TODO - запретить все другие способы вызывать метод кроме invoke/invoke_unsafe при реализации
-// плагинов(например vtable_invoke)
-// TODO - hmm, биткасты везде наставить вместо friends?
-// Или убрать polymorphic impl нахрен и оставить 2 рефа отдельно?
-// TODO - hmm, а что если сделать print на основе полиморфных константных ссылок?))
-// TODO этот принт в качестве example
-// то есть print(string_literal<...> pattern, const_polymorphic_ref<Print>...)
-// // TODO - "трейт" Print на основе оператора << для стримов
-// ЛУЛ, оно примерно так же и сделано
-// TODO - глянуть как сделано make_format_args
 int main() {
   {
     // with plugin
@@ -484,6 +429,8 @@ int main() {
       return -1;
     (void)aa::any_cast<drawable0&>(*pip1);
     const idrawable cpval = v1;
+    if (cpval.sizeof_now() != sizeof(drawable1))
+      return -1;
     auto pip2 = &cpval;
     (void)pip1, (void)pip2;
     idrawable::ref pr4 = v0;
@@ -492,9 +439,9 @@ int main() {
     idrawable::const_ptr pp5 = &v0;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
-    aa::polymorphic_ptr p_1 = pp1;
-    aa::const_polymorphic_ptr p_2 = pp1;
-    aa::const_polymorphic_ptr p_3 = pp2;
+    aa::poly_ptr p_1 = pp1;
+    aa::const_poly_ptr p_2 = pp1;
+    aa::const_poly_ptr p_3 = pp2;
     (void)p_1, (void)p_2, (void)p_3;
     // invoke
     aa::invoke_unsafe<Drawi>(*pp1, 150);
@@ -600,6 +547,7 @@ int main() {
   example1();
   example_draw();
   example_draw_explicit();
+  example_polyref();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);
