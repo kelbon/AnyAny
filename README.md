@@ -351,14 +351,17 @@ Polymorphic value - is a type erased storage for one value(or empty)
 
 Can be constructed from:
   * non polymorphic value, if type satisfies requirements (Methods)
-  * other polymorphic value value with same methods
+  * other polymorphic value with same methods
   
 Reference(aa::poly_ref) cannot be null and cannot be rebinded to another value after creating
+
 Can be constructed from:
   * non-polymorphic value, if type satisfies requirements (Methods)
   * from polymorphic pointer(operator*)
   
-Pointer(aa::poly_ptr) is nullable and can be created from:
+Pointer(aa::poly_ptr) +-nullable polymorphic reference
+
+Can be constructed from:
   * pointer to non polymorphic value, if type satisfies requirements (Methods)
   * polymorphic reference (operator&)
   * polymorphic value (operator&)
