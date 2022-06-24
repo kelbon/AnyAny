@@ -83,6 +83,9 @@ Actions:
 Compile time information:
 * [`method_traits<Method>`](#method_traits)
 
+Interface plugins and interface requirement:
+* [`plugin`](#plugins)
+* [`explicit_interface`](#explicit_interface)
 ### Methods
 
 * [`destroy`](#destroy)
@@ -242,9 +245,9 @@ Same as poly_ptr, but can be created from poly_ptr and const T*/Any*
 
 Functional object with operator():
 
-* any_cast<T>(any | any*) -> std::remove_cv_t<T> | T*
-* any_cast<T&>(const|poly_ref) -> const|T&
-* any_cast<T>(const|poly_ptr) -> const|std::remove_reference_t\<T\>*
+* any_cast\<T\>(any_x|poly_ref) -> std::remove_cv_t\<T\>
+* any_cast<T&>(any_x|poly_ref) -> T&
+* any_cast\<T\>(any_x*|poly_ptr) -> std::remove_reference_t\<T\>*
 
 Version which returns pointer returns nullptr, if dynamic type is not T (ignores const/volatile etc)
 
@@ -331,6 +334,40 @@ concept any_x = /*...*/;
 ### `method_traits`
 Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
 
+### `plugins`
+  With plugins you can add an interface for type, created by `aa::any_with`/`aa::poly_ref`, for example:
+```C++
+template <typename T>
+struct Draw {
+    static void do_invoke(T self, std::ostream& out, int val) {
+      self.draw(out, val);
+    }
+  // interface plugin, Any with this method will have methods from plugin
+    template <typename CRTP>
+    struct plugin {
+      void draw(std::ostream& out) const {
+  // CRTP here is a resulting type, which will be created, its always interits from plugin
+        aa::invoke<DrawExplicit>(*static_cast<const CRTP*>(this), out);
+      }
+    };
+};
+using any_drawable = aa::any_with<Draw>;
+any_drawable val = /*...*/;
+val.draw(std::cout); // we have method .draw from plugin!
+
+```
+### `explicit_interface`
+  If your Method have inner alias `using explicit_interface = /*anything*/`;
+  Then all types before inserting into created Any type will be checked - they must
+  explicitly satisfy your Method by `using satisfies = aa::satisfies<Method1, Method2...>;`
+  OR with specialization like that:
+```C++
+namespace aa {
+  template <>
+  constexpr inline bool satisfies_v<Circle, Draw> = true;
+}  // namespace aa
+```
+  
 ### `design`
  
 Library provides several abstractions:
