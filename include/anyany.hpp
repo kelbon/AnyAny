@@ -498,14 +498,6 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
       static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
-  // from const value, if all Methods are const
-  template <typename T> // not shadow copy ctor
-  requires(!std::same_as<poly_ref<Methods...>, T> && (const_method<Methods> && ...))
-  constexpr poly_ref(const T& value) noexcept
-      : vtable_ptr{addr_vtable_for<T, Methods...>},
-      value_ptr{const_cast<void*>(reinterpret_cast<const void*>(std::addressof(value)))} {
-      static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
-  }
   // clang-format on
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
@@ -577,13 +569,6 @@ struct poly_ptr {
   template <not_const_type T>
   constexpr poly_ptr(T* ptr) noexcept {
       poly_.value_ptr = ptr;
-      poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
-  }
-  // from const value, if all Methods are const
-  template <typename T>
-  requires(const_method<Methods> && ...)
-  constexpr poly_ptr(const T* ptr) noexcept {
-      poly_.value_ptr = const_cast<void*>(reinterpret_cast<const void*>(ptr));
       poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
   }
   // from mutable pointer to Any
@@ -725,7 +710,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   static inline constexpr bool any_is_small_for =
       alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
 
- protected:
   template <TTA Method, typename... Args>
   PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
     AXIOM(vtable_ptr != nullptr);
@@ -738,7 +722,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format on
- private:
   template <typename T, typename... Args>
   void emplace_in_empty(Args&&... args) {
     if constexpr (any_is_small_for<T>) {
@@ -1005,9 +988,11 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   }
 };
 
-// TEMPLATE FUNCTION any_cast<T>(any | any*) -> T | T* (type decayed)
+// TEMPLATE FUNCTIONAL OBJECT any_cast
+// any_cast<T>(any | any*) -> std::remove_cv_t<T> | T*
+// any_cast<T&>(const|poly_ref) -> const|T&
+// any_cast<T*>(const|poly_ptr) -> const|T*
 
-// friend of basic_any
 struct caster {
   template <typename T, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static const T* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
@@ -1082,57 +1067,63 @@ struct caster {
   }
 };
 
-template <typename T, any_x U>
-[[nodiscard]] PLEASE_INLINE T* any_cast(U* ptr) noexcept {
-  // references ill-formed already (because of T*)
-  static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
-                "Incorrect call, it will be always nullptr");
-  return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
-}
-template <typename T, any_x U>
-[[nodiscard]] PLEASE_INLINE const T* any_cast(const U* ptr) noexcept {
-  static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
-                "Incorrect call, it will be always nullptr");
-  return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
-}
+template<typename T>
+struct any_cast_fn {
+  template <any_x U>
+  PLEASE_INLINE auto* operator()(U* ptr) const noexcept {
+    // references ill-formed already (because of T*)
+    static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
+                  "Incorrect call, it will be always nullptr");
+    return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
+  }
+  template <any_x U>
+  PLEASE_INLINE const auto* operator()(const U* ptr) const noexcept {
+    static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
+                  "Incorrect call, it will be always nullptr");
+    return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
+  }
 
-template <typename T, any_x U>
-[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(U& any) {
-  auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
-  if (!ptr)
-    throw std::bad_cast{};
-  return *ptr;
-}
-template <typename T, any_x U>
-[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(U&& any) {
-  auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
-  if (!ptr)
-    throw std::bad_cast{};
-  return std::move(*ptr);
-}
-template <typename T, any_x U>
-[[nodiscard]] PLEASE_INLINE std::remove_cv_t<T> any_cast(const U& any) {
-  const auto* ptr = any_cast<std::remove_cvref_t<T>>(std::addressof(any));
-  if (!ptr)
-    throw std::bad_cast{};
-  return *ptr;
-}
-template <typename T, TTA... Methods>
-[[nodiscard]] PLEASE_INLINE auto* any_cast(poly_ptr<Methods...> p) noexcept {
-  return caster::any_cast_impl<T>(p);
-}
-template <typename T, TTA... Methods>
-[[nodiscard]] PLEASE_INLINE const auto* any_cast(const_poly_ptr<Methods...> p) noexcept {
-  return caster::any_cast_impl<T>(p);
-}
-template <typename T, TTA... Methods>
-[[nodiscard]] PLEASE_INLINE auto& any_cast(poly_ref<Methods...> p) {
-  return caster::any_cast_impl<T>(p);
-}
-template <typename T, TTA... Methods>
-[[nodiscard]] PLEASE_INLINE const auto& any_cast(const_poly_ref<Methods...> p) {
-  return caster::any_cast_impl<T>(p);
-}
+  template <any_x U>
+  PLEASE_INLINE std::remove_cv_t<T> operator()(U& any) const {
+    auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
+    if (!ptr)
+      throw std::bad_cast{};
+    return *ptr;
+  }
+  template <any_x U>
+  PLEASE_INLINE std::remove_cv_t<T> operator()(U&& any) const {
+    auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
+    if (!ptr)
+      throw std::bad_cast{};
+    return std::move(*ptr);
+  }
+  template <any_x U>
+  PLEASE_INLINE std::remove_cv_t<T> operator()(const U& any) const {
+    const auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
+    if (!ptr)
+      throw std::bad_cast{};
+    return *ptr;
+  }
+  template <TTA... Methods>
+  PLEASE_INLINE auto* operator()(poly_ptr<Methods...> p) const noexcept {
+    return caster::any_cast_impl<T>(p);
+  }
+  template <TTA... Methods>
+  PLEASE_INLINE const auto* operator()(const_poly_ptr<Methods...> p) const noexcept {
+    return caster::any_cast_impl<T>(p);
+  }
+  template <TTA... Methods>
+  PLEASE_INLINE auto& operator()(poly_ref<Methods...> p) const {
+    return caster::any_cast_impl<T>(p);
+  }
+  template <TTA... Methods>
+  PLEASE_INLINE const auto& operator()(const_poly_ref<Methods...> p) const {
+    return caster::any_cast_impl<T>(p);
+  }
+};
+
+template<typename T>
+constexpr inline any_cast_fn<T> any_cast = {};
 
 // TEMPLATE VARIABLE (FUNCTION OBJECT) invoke <Method> (any)
 

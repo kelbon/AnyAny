@@ -260,7 +260,7 @@ size_t TestCompare() {
   any_compare v2 = std::vector{10, 5};
   error_if((v1 <=> v2) != std::partial_ordering::unordered);
   auto v3 = v2;
-  any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
+  aa::any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
   error_if(!(v3 < v2));
   any_equal v4 = 3.14f;
   error_if(v4 != 3.14f);
@@ -304,10 +304,10 @@ size_t TestAnyCast() {
   any_fooable v0 = destroy_me<3>{};
   v0.foo();
   aa::invoke<foox>(v0);
-  error_if(any_cast<destroy_me<3>>(std::addressof(v0)) == nullptr);
-  error_if(any_cast<destroy_me<4>>(std::addressof(v0)) != nullptr);
+  error_if(aa::any_cast<destroy_me<3>>(std::addressof(v0)) == nullptr);
+  error_if(aa::any_cast<destroy_me<4>>(std::addressof(v0)) != nullptr);
   try {
-    auto i = any_cast<FooAble>(v0);
+    auto i = aa::any_cast<FooAble>(v0);
     (void)i;
   } catch (...) {
     return error_count;
@@ -437,6 +437,11 @@ int main() {
     idrawable::const_ref pr5 = v0;
     idrawable::ptr pp4 = &v0;
     idrawable::const_ptr pp5 = &v0;
+    if (aa::any_cast<const drawable0*>(pp1) == nullptr || aa::any_cast<drawable0*>(pp1) == nullptr ||
+        aa::any_cast<const volatile drawable0*>(pp1) == nullptr ||
+        aa::any_cast<const drawable0* const>(pp1) == nullptr ||
+        aa::any_cast<const volatile drawable0* const>(pp1) == nullptr)
+      return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
     aa::poly_ptr p_1 = pp1;
@@ -536,7 +541,7 @@ int main() {
   }
   drawable0 v00;
   const drawable1 v01;
-  Foobar((idrawable::ptr) & v00); // todo что то с приведением мб, чтобы это само выбирало Ќ≈константный?
+  Foobar((idrawable::ptr) & v00);
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
