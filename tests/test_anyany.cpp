@@ -424,13 +424,25 @@ int main() {
     idrawable::const_ref pr2 = v0;
     idrawable::const_ptr pp3 = &v1;
     idrawable::const_ref pr3 = v1;
+    (void)aa::any_cast<const drawable1>(pr3);
+    (void)aa::any_cast<drawable1>(pr3);
+    (void)aa::any_cast<const drawable1&>(pr3);
+    (void)aa::any_cast<drawable1&>(pr3);
+    (void)aa::any_cast<const drawable0>(pr1);
+    (void)aa::any_cast<drawable0>(pr1);
+    (void)aa::any_cast<const drawable0&>(pr1);
+    (void)aa::any_cast<drawable0&>(pr1);
     idrawable pval = v0;
     auto pip1 = &pval;
     if (aa::any_cast<drawable0>(pip1) == nullptr)
       return -1;
     (void)aa::any_cast<drawable0&>(*pip1);
     const idrawable cpval = v1;
-    aa::any_cast<drawable1>(&cpval)->draw(5);  // without addressof, same rules - same result
+    // same rules for poly ptr/poly ref/ poly value
+    aa::any_cast<drawable1>(*&cpval).draw(5);  // without addressof, same rules - same result
+    aa::any_cast<drawable1>(&cpval)->draw(5);
+    aa::any_cast<drawable1>(std::addressof(cpval))->draw(5);
+    aa::any_cast<const drawable1>(std::addressof(cpval))->draw(5);
     if (cpval.sizeof_now() != sizeof(drawable1))
       return -1;
     auto pip2 = &cpval;

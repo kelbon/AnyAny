@@ -1038,8 +1038,7 @@ struct caster {
     return reinterpret_cast<const T*>(p.raw());
   }
   template <typename T, TTA... Methods>
-  static T any_cast_impl(poly_ref<Methods...> p) {
-    static_assert(std::is_lvalue_reference_v<T>);
+  static std::remove_cv_t<T> any_cast_impl(poly_ref<Methods...> p) {
 #ifdef AA_DLL_COMPATIBLE
     if (p.vtable_ptr->name != type_name<T>) [[unlikely]]
       throw std::bad_cast{};
@@ -1049,9 +1048,11 @@ struct caster {
 #endif
     return *reinterpret_cast<std::remove_cvref_t<T>*>(p.value_ptr);
   }
+  // clang-format off
   template <typename T, TTA... Methods>
-  static const std::remove_reference_t<T>& any_cast_impl(const_poly_ref<Methods...> p) {
-    static_assert(std::is_lvalue_reference_v<T>);
+  static std::conditional_t<std::is_reference_v<T>, const std::remove_reference_t<T>&, std::remove_cv_t<T>>
+      any_cast_impl(const_poly_ref<Methods...> p) {
+    // clang-format on
 #ifdef AA_DLL_COMPATIBLE
     if (p.vtable_ptr->name != type_name<T>) [[unlikely]]
       throw std::bad_cast{};
@@ -1109,11 +1110,11 @@ struct any_cast_fn {
     return caster::any_cast_impl<std::remove_reference_t<T>>(p);
   }
   template <TTA... Methods>
-  PLEASE_INLINE auto& operator()(poly_ref<Methods...> p) const {
+  PLEASE_INLINE decltype(auto) operator()(poly_ref<Methods...> p) const {
     return caster::any_cast_impl<T>(p);
   }
   template <TTA... Methods>
-  PLEASE_INLINE const auto& operator()(const_poly_ref<Methods...> p) const {
+  PLEASE_INLINE decltype(auto) operator()(const_poly_ref<Methods...> p) const {
     return caster::any_cast_impl<T>(p);
   }
 };
