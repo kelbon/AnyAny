@@ -15,7 +15,7 @@ This is a library for dynamic polymorphism through type erasure with better code
 
 ### Basic design knowledge (please read this example first)
 
-The whole library is built on **Methods**, it is a short description of _captured_ method - class template with one argument
+The whole library is built on **Methods**, it is a short description of _captured_ method - template with one argument
 and static function `do_invoke(Self, Args...)` where `Self` - value from which method will be invoked and `Args` is a _captured_ method arguments.
 
 For example, i want to create a type to store any other type with .say() method:
@@ -29,9 +29,7 @@ struct Say {
     self.say(out);
   }
 };
-// Every time do_invoke invoked by library self is a reference to type T with .say() method. 
 // Self can be const T& / T& / const T* / T* or just T - in this case self will be provided by copy -
-// (if it is copy constructible of course) (its like C++23 deducing this if you know)
 // (Self also can be cv void* but... even in this case, under it always lies an object of type T)
 
 // Create a type which can contain any other type with method .say !
@@ -56,26 +54,33 @@ int main() {
   any_animal Pet = Cat{};
   // there are several ways to invoke - external and internal.
   aa::invoke<Say>(Pet, std::cout); // external way
-  // internal - if you write a single row method in any_animal with exactly this->vtable_invoke<Say>(out);
+  // internal - if you write a plugin (see basic_usage.hpp in examples)
   // Pet.say(std::cout); // just an any other type
 }
 ```
 There are no virtual functions, inheritance, pointers, memory management etc! Nice!
 It is modular and flexible:
 You can add any number of methods like
-`using any_my = any_with<Say, Draw, Float, aa::copy, aa::move>;`
-
-For _flexibility_ see basic_any!
+`using any_my = aa::any_with<Say, Draw, Float, aa::copy, aa::move>;`
 
 Wait, copy... Move? Yes, by default any is only have a destructor, so you can create move only any or ... copy only etc
 
 Note: result type of do_invoke and Args must be same for all types T (as for virtual functions)
 
-* [`basic_any_with`](#basic_any_with)
+Type creators:
 * [`any_with<Methods...>`](#any_with)
+* [`basic_any_with<Methods...>`](#basic_any_with)
+* [`poly_ref<Methods...>`](#poly_ref)
+* [`poly_ptr<Methods...>`](#poly_ptr)
+* [`const_poly_ref<Methods...>`](#const_poly_ref)
+* [`const_poly_ptr<Methods...>`](#const_poly_ptr)
+
+Actions:
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
 * [`invoke_unsafe<Method>`](#invoke_unsafe)
+
+Compile time information:
 * [`method_traits<Method>`](#method_traits)
 
 ### Methods
@@ -84,20 +89,28 @@ Note: result type of do_invoke and Args must be same for all types T (as for vir
 * [`copy`](#copy)
 * [`move`](#move)
 * [`RTTI`](#rtti)
+* [`hash`](#hash)
 * [`equal_to`](#equal_to)
 * [`spaceship`](#spaceship)
 
 ### `any_with`
-It is a template which accepts a any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
-Created type is a **polymorphic value type** (see design)
+It is a template alias which accepts any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
+
+Created type is a **polymorphic value type** (see [`design`](#design)) and has inner alliases for ptr, ref, const_ptr, const_ref (see [`design`](#design))
+
 Interface of created type:
 ```C++
+// all interface from method's plugins(see basic_usage in /examples)
 
 // All constructors and move assign operators are exception safe
 // move and move assign always noexcept
-default constructor ( creates empty poly value)
 
-constructor from Alloc
+// creates empty poly value
+default constructor
+
+constructor(auto&& value); // from any type
+constructor(Alloc)
+constructor(std::allocator_arg_t, Alloc alloc, T&& value); // from any value, but with Alloc
 
 copy constructor(if aa::copy Method used)
 
@@ -105,30 +118,32 @@ copy assign operator (if aa::copy AND aa::move Methods are used)
 
 move constructor and move assign operator(if aa::move Method used)
 
+// poly_ptr/poly_ref/const_poly_ptr/const_poly_ref
+using ptr = /*...*/;
+using ref = /*...*/;
+using const_ptr = /*...*/;
+using const_ref = /*...*/;
+
+// creating with emplace
 template <typename T, typename... Args>
 constructor(std::in_place_type_t<T>, Args&&... args);
 
-// creating with emplace
 template <typename T, typename U, typename... Args>
 constructor(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args);
-
-constructor(auto&& value); // from any type
-
-constructor(std::allocator_arg_t, Alloc alloc, T&& value); // from any value, but with Alloc
 
 bool has_value() const noexcept; // true if not empty
 // returns sizeof of type currently in Any, (0 if empty)
 std::size_t sizeof_now() const noexcept;
 
 // emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
-
 template<typename T, typename... Args>
-std::decay_t& emplace<T>(Args&&...); // returns reference to emplaced value
+std::decay_t<T>& emplace(Args&&...); // returns reference to emplaced value
 
 template <typename T, typename U, typename... Args>
 std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args)
 
-void reset() noexcept; // after this method has_value() == false 
+// after this method has_value() == false
+void reset() noexcept; 
 
 // presented if method aa::RTTI is used
 const std::type_info& type() const noexcept;
@@ -137,44 +152,103 @@ const std::type_info& type() const noexcept;
 bool operator==( ... ) const;
 
 // presented if aa::spaceship
+// Note: always returns std::partial_ordering, this means that two anyes can be unordered
 std::partial_ordering operator<=>(...) const; 
 
-};
-```
+poly_ptr<Methods...> operator&() noexcept;
+const_poly_ptr<Methods...> operator&() const noexcept;
 
-Example : see first example on top!
+};
+
+// Created type also has specialization of std::hash, if aa::hash method used!
+
+```
+**All constructors and copy/move assignment operators have strong exception guarantee**
+
+**Important** - if your type has noexcept move constructor, it can really increase perfomance(like in std::vector case).
+
+Example of type creation:
+
+Creates type which is movable and satisfies user defined `Print` method:
+
+`using any_printable = aa::any_with<Print, aa::move>;`
 
 ### `basic_any_with`
-Creates a type like any_with, but with custom alloc and SOO buffer size - if you need a copy method, then use aa::copy_with<Alloc, SooS>::method
+Same as `any_with`, but with custom alloc and small object optimization buffer size - if you need a copy method, then use **aa::copy_with<Alloc, SooS>::method**
+
 interface:
 ```C++
 template<typename Alloc, size_t SooS, TTA... Methods>
 using basic_any_with = /*...*/;
-
 ```
 
-**All constructor any copy/move assignment operators have strong exception guarantee**
+### `poly_ref`
+Non owning, always not null, lightweight(~=void*)
 
-_Note : operator spaceship for any always returns partial ordering, this means that two anyes can be unordered_
+Interface:
+```C++
+template <template<typename> typename... Methods>
+struct poly_ref {
+  // cannot rebind reference after creation, but can copy it
+  poly_ref(const poly_ref&) = default;
+  poly_ref(poly_ref&&) = default;
+  void operator=(poly_ref&&) = delete;
+  void operator=(const poly_ref&) = delete;
 
-**Important** it is important if your type has noexcept move constructor, it really can increase perfomance(like in std::vector case, if you know).
+  // from mutable lvalue
+  template <not_const_type T> // not shadow copy ctor
+  poly_ref(T& value) noexcept
+  poly_ptr<Methods...> operator&() const noexcept;
+}
+```
+
+### `const_poly_ref`
+Same as poly_ref, but can be created from poly_ref and const T& (not extends lifetime)
+
+### `poly_ptr`
+Non owning, nullable, lightweight(~=void*)
+
+Interface:
+```C++
+template <template<typename> typename... Methods>
+struct poly_ptr {
+  poly_ptr() = default;
+  poly_ptr(std::nullptr_t) noexcept;
+  poly_ptr& operator=(std::nullptr_t) noexcept;
+  // from mutable pointer
+  template <not_const_type T>
+  poly_ptr(T* ptr) noexcept;
+  // from mutable pointer to Any with same methods
+  template <any_x Any>
+  poly_ptr(Any* ptr) noexcept;
+  
+  // observers
+ 
+  // returns raw pointer to value
+  void* raw() const noexcept;
+  bool has_value() const noexcept;
+  bool operator==(std::nullptr_t) const noexcept;
+  explicit operator bool() const noexcept;
+
+  // access
+  poly_ref<Methods...> operator*() const noexcept;
+  const poly_ref<Methods...>* operator->() const noexcept;
+}
+```
+### `const_poly_ptr`
+Same as poly_ptr, but can be created from poly_ptr and const T*/Any*
 
 ### `any_cast`
-There are two versions, for pointer (noexcept) and throwing:
 
-```C++
-template<typename T, any_x Any> // concept aa::any_x here
-T* any_cast(Any*) noexcept;
-/* also version for const T* */
-```
-Returns `nullptr` if Any is empty or dynamic type in Any is not T
+Functional object with operator():
 
-```C++
-template<typename T, any_x Any>
-std::decay_t<T> any_cast(Any&&); // thrown aa::bad_any_cast if T is not contained in any
+* any_cast<T>(any | any*) -> std::remove_cv_t<T> | T*
+* any_cast<T&>(const|poly_ref) -> const|T&
+* any_cast<T>(const|poly_ptr) -> const|std::remove_reference_t\<T\>*
 
-/* also versions for & && const & etc versions of Any */
-```
+Version which returns pointer returns nullptr, if dynamic type is not T (ignores const/volatile etc)
+
+Other versions throws std::bad_cast on failure
 
 Example:
 ```C++
@@ -183,12 +257,30 @@ using any_comparable = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 void Foo() {
   any_comparable value = 5;
   value.emplace<std::vector<int>>({ 1, 2, 3, 4}); // constructed in-place
-  aa::any_cast<std::vector<int>>(&value)->back() = 0; // any_cast returns pointer to vector<int>(or nullptr if any do not containts vector<int>)
+  // any_cast returns pointer to vector<int>(or nullptr if any do not containts vector<int>)
+  aa::any_cast<std::vector<int>>(std::addressof(value))->back() = 0;
+  // version for reference
+  aa::any_cast<std::vector<int>&>(value).back() = 0;
+  // version which returns by copy (or move, if 'value' is rvalue) 
+  auto vec = aa::any_cast<std::vector<int>>(value);
 }
 ```
 ### `invoke`
-tool for unified call syntax. Invokes a Method on value of some type Any
-If Any is const, then only **const Methods** permitted (methods which Self is const T* / const T& / const void* / T (accepted by copy))
+Functional object with operator().
+
+Accepts polymorphic value or reference and arguments. Invokes Method.
+
+Throws aa::empty_any_method_call if value was empty
+
+Has method .with(MethodArgs...) which binds arguments and returns invocable for passing to algorithms
+
+Example:
+```C++
+void foo(std::vector<aa::poly_ref<Foo>> vec) {
+  std::for_each(vec, aa::invoke<Foo>);
+}
+```
+If Any is const, then only **const Methods** permitted (method are const if Self is const T* / const T& / T (accepted by copy))
 (call `destroy` method if forbidden)
 Throws aa::empty_any_method_called if !any.has_value();
 Example: 
@@ -200,18 +292,17 @@ Example:
 ```
 
 ### `invoke_unsafe`
-Same as `invoke`, but more effective and if any has no value -> undefined behavior
+Same as `invoke`, but more effective and if any has no value -> undefined behavior (never throws empty_any_method_call)
 
-### `method_traits`
-Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
-basic_any also have compile time information, static member variables bool has_method<Method> and bool has_copy
-  
 ## Methods
-  Methods are modules of any, user defined methods - is a runtime _concept_ on type which can be emplaced in any and enables support for invoke<Method>.
-  But there are library provided methods, which are enables basic_any things, such as type() or spaceship operator
+  Methods - user defined template types with one argument and static function `do_invoke`, first argument is a Self, others - method arguments
+  
+  Methods used to create polymorphic types - values, references and pointers(`design`) and invoking
+  
+  Methods 'from the box':
 
 ### `destroy`
-  `any` have it by default. Cannot be invoked explicitly
+  Polymorphic value have by default. Cannot be invoked explicitly
   
 ### `copy`
 enables copy = )
@@ -222,6 +313,9 @@ enables copy = )
 ### `rtti`
   enables `.type()` method in basic_any, forces to store additional info about type
 
+### `hash`
+ enables specialization of std::hash, Hash for polymorphic value returns std::hash<T>{}(stored_value) or 0, if any is empty
+ 
 ### `equal_to`
   Incompatible with `spaceship`(spaceship already contains it). Enables operator== with other any.
   
@@ -229,32 +323,38 @@ enables copy = )
   enables operator<=>
 
 ### `any_x`
+concept of any type created by any_with, basic_any_with or successor of such type
 ```C++
-// concept of any value inherited from basic_any<...>
 template <typename T>
-concept any_x = requires {
-  typename std::remove_cvref_t<T>::base_any_type;
-};
+concept any_x = /*...*/;
 ```
-  base_any_type - is a inner type alias in basic_any, usefull for inheriting (using base_t::base_t), convering etc
-  
+### `method_traits`
+Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
+
 ### `design`
  
 Library provides several abstractions:
+
+  Type creators:
   
+  * any_with<Methods...> - creates a polymorphic value type
+  * basic_any_with<Alloc, size_t, Methods...> - creates a polymorphic value type with custom alloc and SOO buffer size
+  * const/poly_ref<Methods...> - creates a const/polymorphic reference type
+  * const/poly_ptr<Methods...> - creates a const/polymorphic pointer type
 **Polymorphic value, reference and pointer** - similar to just **T, T& and T***, but for polymorphic context.
   
  And several actions on these abstractions:
-  * invoke<Method> - accepts reference or polymorphic value and arguments, invokes a method
-  * any_cast - accepts a pointer/ref/value and tryies to cast it into non polymorphic pointer/reference/value
+  * invoke\<Method\> - accepts reference or polymorphic value and arguments, invokes a method
+  * any_cast\<T\> - accepts a pointer/ref/value and tryies to cast it into non polymorphic pointer/reference/value
   
-Value(value of type, created by aa::any_with<Methods...>) - is a type erased storage for one value(or empty)
-  can be constructed from:
+Polymorphic value - is a type erased storage for one value(or empty)
+
+Can be constructed from:
   * non polymorphic value, if type satisfies requirements (Methods)
-  * other value with same methods
+  * other polymorphic value value with same methods
   
-Reference cannot be null and cannot be rebinded to another value after creating
-Reference(aa::poly_ref) can be be created from:
+Reference(aa::poly_ref) cannot be null and cannot be rebinded to another value after creating
+Can be constructed from:
   * non-polymorphic value, if type satisfies requirements (Methods)
   * from polymorphic pointer(operator*)
   
@@ -265,11 +365,15 @@ Pointer(aa::poly_ptr) is nullable and can be created from:
   * pointer to polymorphic value
   
 Also there are casts poly_ptr -> const_poly_ptr / poly_ref -> const_poly_ref, similar to T&->const T& / T*->const T* too
-  
-For example you want to create a Machine class which engine can be changed on runtime. Engine in this case is a **polymorphic value**
-Classic way to do it: (bad)
+
+These general concepts are enough to get started with the example
+
+You want to create a `Machine` type which `engine` can be changed on runtime. Engine in this case is a **polymorphic value**
+
+Classic way to do it(bad):
 ```C++
 class IEngine {
+public:
   virtual void Go() = 0;
   virtual ~IEngine() = default;
 };
@@ -281,7 +385,7 @@ class Machine {
   // shared_ptr also do not work, all machines will use same engine, again useless allocations 
 }
 ```
-Semms like i dont want a **pointer** to polymoprhic value here, i need an engine - **polymorphic value**.
+Seems like we dont want a **pointer** to polymoprhic value here, but we need an engine - **polymorphic value**.
 
 it is obvious that the approach with virtual functions does not express our intentions in the code, which means that it becomes much more difficult for us and the compiler to understand what is happening in it.
 
@@ -295,7 +399,7 @@ struct Machine {
 };
 
 ```
-And it is possibile! But usually it is SO hard to write such class, that nobody do it!
+And it is possibile! But usually it is SO hard to write such type, that nobody do it!
 This is why this library was created, it providies an instruments to create such types as fast and flexible as it possible
   
   ```C++
@@ -309,8 +413,9 @@ This is why this library was created, it providies an instruments to create such
   using any_engine = aa::any_with<Go, aa::copy, aa::move>;
   // All ready to use!
   ```
-Or another case : we want to reduce binary file size and interface for our 'print' function
-  typical way to implement it(bad):
+Or another case : we want to create 'print' function, which prints all arguments
+
+Typical way to implement it(bad):
 ```C++
   // now we have one function for every set of Ts..., for example different print for <int, double> and <double, int>
   // so we want to type erase it
@@ -322,8 +427,8 @@ Or another case : we want to reduce binary file size and interface for our 'prin
     print(5, 10, std::string{"abc"}, std::string_view{"hello world"});
   }
 ```
-  
-  With anyany we can erase each type only once and use same 'print' function for all of them
+  How to reduce count of 'print's ? (and binary file size)? 
+  With anyany we can easily erase each type only once and use same 'print' function for all of them
   
 ```C++
 template <typename T>
@@ -344,7 +449,7 @@ int main() {
 And even more - now the function in the signature explicitly indicates which methods it needs
  
 ## Using with CMake
-1. Copy this repository into folder with your project
+1. Clone this repository into folder with your project
 2. Add these lines to it's CMakeLists.txt
   
 ```CMake
