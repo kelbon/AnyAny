@@ -261,6 +261,8 @@ size_t TestCompare() {
   error_if((v1 <=> v2) != std::partial_ordering::unordered);
   auto v3 = v2;
   aa::any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
+  aa::any_cast<std::vector<int>&>(v3).back() = 0;
+  auto vec = aa::any_cast<std::vector<int>>(v3);
   error_if(!(v3 < v2));
   any_equal v4 = 3.14f;
   error_if(v4 != 3.14f);
@@ -410,7 +412,6 @@ void Foobar(idrawable::const_ptr v) {
   std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
-
 int main() {
   {
     // with plugin
@@ -425,10 +426,11 @@ int main() {
     idrawable::const_ref pr3 = v1;
     idrawable pval = v0;
     auto pip1 = &pval;
-    if (!aa::any_cast<drawable0*>(pip1))
+    if (aa::any_cast<drawable0>(pip1) == nullptr)
       return -1;
     (void)aa::any_cast<drawable0&>(*pip1);
     const idrawable cpval = v1;
+    aa::any_cast<drawable1>(&cpval)->draw(5);  // without addressof, same rules - same result
     if (cpval.sizeof_now() != sizeof(drawable1))
       return -1;
     auto pip2 = &cpval;
@@ -437,10 +439,8 @@ int main() {
     idrawable::const_ref pr5 = v0;
     idrawable::ptr pp4 = &v0;
     idrawable::const_ptr pp5 = &v0;
-    if (aa::any_cast<const drawable0*>(pp1) == nullptr || aa::any_cast<drawable0*>(pp1) == nullptr ||
-        aa::any_cast<const volatile drawable0*>(pp1) == nullptr ||
-        aa::any_cast<const drawable0* const>(pp1) == nullptr ||
-        aa::any_cast<const volatile drawable0* const>(pp1) == nullptr)
+    if (aa::any_cast<drawable0>(pp1) == nullptr ||
+        aa::any_cast<const drawable0>(pp1) == nullptr)
       return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
@@ -475,16 +475,16 @@ int main() {
     (*&pr2).draw(150);
     (*&pr3).draw(150);
     // casts
-    aa::any_cast<drawable0*>(pp1)->draw(150);
-    aa::any_cast<drawable0*>(pp2)->draw(150);
-    aa::any_cast<drawable1*>(pp3)->draw(150);
+    aa::any_cast<drawable0>(pp1)->draw(150);
+    aa::any_cast<drawable0>(pp2)->draw(150);
+    aa::any_cast<drawable1>(pp3)->draw(150);
     aa::any_cast<drawable0&>(pr1).draw(150);
     aa::any_cast<drawable0&>(pr2).draw(150);
     aa::any_cast<drawable1&>(pr3).draw(150);
     aa::any_cast<const drawable0&>(pr1).draw(150);
     aa::any_cast<const drawable0&>(pr2).draw(150);
     aa::any_cast<const drawable1&>(pr3).draw(150);
-    if (aa::any_cast<drawable1*>(pp1) != nullptr)
+    if (aa::any_cast<drawable1>(pp1) != nullptr)
       return -1;
     try {
       (void)aa::any_cast<const drawable1&>(pr1);
@@ -522,15 +522,15 @@ int main() {
     aa::invoke<Draw>(*&pr2, std::cout, 150);
     aa::invoke<Draw>(*&pr3, std::cout, 150);
     // casts
-    aa::any_cast<const Circle*>(pp1)->draw(std::cout, 150);
-    aa::any_cast<Circle*>(pp2)->draw(std::cout, 150);
-    aa::any_cast<const Circle*>(pp3)->draw(std::cout, 150);
+    aa::any_cast<const Circle>(pp1)->draw(std::cout, 150);
+    aa::any_cast<Circle>(pp2)->draw(std::cout, 150);
+    aa::any_cast<const Circle>(pp3)->draw(std::cout, 150);
     aa::any_cast<Circle&>(pr1).draw(std::cout, 150);
     aa::any_cast<const Circle&>(pr1).draw(std::cout, 150);
     aa::any_cast<Circle&>(pr2).draw(std::cout, 150);
     aa::any_cast<const Circle&>(pr3).draw(std::cout, 150);
     aa::any_cast<Circle&>(pr3).draw(std::cout, 150);
-    if (aa::any_cast<Triangle*>(pp1) != nullptr)
+    if (aa::any_cast<Triangle>(pp1) != nullptr)
       return -1;
     try {
       (void)aa::any_cast<Triangle&>(pr3);

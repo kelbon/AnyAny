@@ -918,9 +918,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     return vtable_ptr != nullptr;
   }
   const std::type_info& type() const noexcept requires(has_method<RTTI>) {
-    if (!has_value())
-      return typeid(void);
-    return vtable_ptr->template invoke<RTTI>();
+    return has_value() ? vtable_ptr->template invoke<RTTI>() : typeid(void);
   }
   std::size_t sizeof_now() const noexcept {
     return has_value() ? vtable_invoke<size_of>() : 0;
@@ -1018,28 +1016,26 @@ struct caster {
     return std::launder(reinterpret_cast<T*>(any->value_ptr));
   }
   template <typename T, TTA... Methods>
-  static T any_cast_impl(poly_ptr<Methods...> p) noexcept {
-    static_assert(std::is_pointer_v<T>);
+  static T* any_cast_impl(poly_ptr<Methods...> p) noexcept {
 #ifdef AA_DLL_COMPATIBLE
-    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<std::remove_pointer_t<T>>)
+    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<T>)
       return nullptr;
 #else
-    if (p.poly_.vtable_ptr != addr_vtable_for<std::remove_pointer_t<T>, Methods...>)
+    if (p.poly_.vtable_ptr != addr_vtable_for<T, Methods...>)
       return nullptr;
 #endif
-    return reinterpret_cast<T>(p.raw());
+    return reinterpret_cast<T*>(p.raw());
   }
   template <typename T, TTA... Methods>
-  static const std::remove_pointer_t<T>* any_cast_impl(const_poly_ptr<Methods...> p) noexcept {
-    static_assert(std::is_pointer_v<T>);
+  static const T* any_cast_impl(const_poly_ptr<Methods...> p) noexcept {
 #ifdef AA_DLL_COMPATIBLE
-    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<std::remove_pointer_t<T>>)
+    if (p == nullptr || p.poly_.vtable_ptr->name != type_name<T>)
       return nullptr;
 #else
-    if (p.poly_.vtable_ptr != addr_vtable_for<std::remove_pointer_t<T>, Methods...>)
+    if (p.poly_.vtable_ptr != addr_vtable_for<T, Methods...>)
       return nullptr;
 #endif
-    return reinterpret_cast<const std::remove_pointer_t<T>*>(p.raw());
+    return reinterpret_cast<const T*>(p.raw());
   }
   template <typename T, TTA... Methods>
   static T any_cast_impl(poly_ref<Methods...> p) {
@@ -1106,11 +1102,11 @@ struct any_cast_fn {
   }
   template <TTA... Methods>
   PLEASE_INLINE auto* operator()(poly_ptr<Methods...> p) const noexcept {
-    return caster::any_cast_impl<T>(p);
+    return caster::any_cast_impl<std::remove_reference_t<T>>(p);
   }
   template <TTA... Methods>
   PLEASE_INLINE const auto* operator()(const_poly_ptr<Methods...> p) const noexcept {
-    return caster::any_cast_impl<T>(p);
+    return caster::any_cast_impl<std::remove_reference_t<T>>(p);
   }
   template <TTA... Methods>
   PLEASE_INLINE auto& operator()(poly_ref<Methods...> p) const {
