@@ -412,11 +412,26 @@ void Foobar(idrawable::const_ptr v) {
   std::cout << v->draw(150);
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
+
+template <typename T>
+struct Drawiptr {
+  static int do_invoke(const T* self, int val) {
+    return self->draw(val);
+  }
+};
+
 int main() {
   {
     // with plugin
     drawable0 v0;
     const drawable1 v1;
+    // invoke on non polymorphic values for same interface
+    aa::invoke<Drawi>(v0, 1);
+    aa::invoke_unsafe<Drawi>(v0, 2);
+    aa::invoke<Drawi>(v1, 3);
+    aa::invoke<Drawiptr>(v1, 3);
+    aa::invoke_unsafe<Drawi>(v1, 4);
+    aa::invoke_unsafe<Drawiptr>(v1, 4);
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;

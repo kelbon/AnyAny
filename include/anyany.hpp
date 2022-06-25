@@ -14,17 +14,14 @@
 #include <bit>
 // TODO remove when it will be C++20 module
 #undef AXIOM
-#undef PLEASE_INLINE
 #undef UNREACHABLE
 
 // No prefix because it will be C++20 module when it will be possible on all compilers
 #ifndef _MSC_VER
 #ifdef __clang__
-#define PLEASE_INLINE __attribute__((always_inline))
 #define AXIOM(cond) __builtin_assume((cond))
 #define UNREACHABLE() __builtin_unreachable()
 #else
-#define PLEASE_INLINE __attribute__((always_inline))
 #define AXIOM(cond)         \
   do {                         \
     if (!(cond))               \
@@ -33,7 +30,6 @@
 #define UNREACHABLE() __builtin_unreachable()
 #endif
 #else
-#define PLEASE_INLINE __forceinline
 #define AXIOM(cond) __assume((cond))
 #define UNREACHABLE() __assume(false)
 #endif
@@ -219,7 +215,7 @@ struct invoker_for;
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static PLEASE_INLINE auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
     if constexpr (has_explicit_interface<Method>)
       static_assert(is_satisfies<T, Method>,
@@ -255,7 +251,7 @@ concept any_x = requires {
 
 template <std::destructible T>
 struct destroy {
-  static PLEASE_INLINE void do_invoke(const T* self) noexcept {
+  static void do_invoke(const T* self) noexcept {
     std::destroy_at(self);
   }
 };
@@ -264,8 +260,9 @@ template <std::destructible T>
 struct move {
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
   // constructible. Actially relocates
-  static PLEASE_INLINE void do_invoke(T* src, void* dest) {
+  static void do_invoke(T* src, void* dest) {
     if constexpr (std::is_nothrow_move_constructible_v<T>) {
+        // TODO std::relocate ? When possible, if type is relocable
       std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
       std::destroy_at(src);
     } else {
@@ -289,7 +286,7 @@ struct copy_with {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static PLEASE_INLINE void* do_invoke(const T* src, void* dest) {
+    static void* do_invoke(const T* src, void* dest) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
@@ -326,7 +323,7 @@ struct copy_with<Alloc, SooS> {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static PLEASE_INLINE void* do_invoke(const T* src, void* dest, Alloc* alloc) {
+    static void* do_invoke(const T* src, void* dest, Alloc* alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), *src);
         return dest;
@@ -366,7 +363,7 @@ struct hash {
 
 template <typename T>
 struct RTTI {
-  static PLEASE_INLINE const std::type_info& do_invoke() noexcept {
+  static const std::type_info& do_invoke() noexcept {
     return typeid(T);
   }
 };
@@ -374,7 +371,7 @@ struct RTTI {
 // since C++20 operator== it is a != too
 template <typename T>
 struct equal_to {
-  static PLEASE_INLINE bool do_invoke(const T* first, const void* second) {
+  static bool do_invoke(const T* first, const void* second) {
     return *first == *reinterpret_cast<const T*>(second);
   }
 };
@@ -383,7 +380,7 @@ template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static PLEASE_INLINE std::partial_ordering do_invoke(const T* first, const void* second) {
+  static std::partial_ordering do_invoke(const T* first, const void* second) {
     return *first <=> *reinterpret_cast<const T*>(second);
   }
 };
@@ -438,7 +435,7 @@ struct vtable {
   // clang-format off
   template <TTA Method, typename... Args>
   requires(has_method<Method>)
-  constexpr PLEASE_INLINE decltype(auto) invoke(Args&&... args) const {
+  constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
     return std::get<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
@@ -711,13 +708,13 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
 
   template <TTA Method, typename... Args>
-  PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) {
+  decltype(auto) vtable_invoke(Args&&... args) {
     AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
   }
   // clang-format off
   template <TTA Method, typename... Args> requires const_method<Method>
-  PLEASE_INLINE decltype(auto) vtable_invoke(Args&&... args) const {
+  decltype(auto) vtable_invoke(Args&&... args) const {
     AXIOM(vtable_ptr != nullptr);
     return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
   }
@@ -914,7 +911,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 
   // observe
 
-  PLEASE_INLINE constexpr bool has_value() const noexcept {
+  constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
   const std::type_info& type() const noexcept requires(has_method<RTTI>) {
@@ -970,10 +967,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
-  PLEASE_INLINE bool memory_allocated() const {
+  bool memory_allocated() const {
     return value_ptr != &data;
   }
-  PLEASE_INLINE size_t allocated_size() const {
+  size_t allocated_size() const {
     assert(has_value() && memory_allocated());
     return std::max(SooS, vtable_invoke<size_of>());
   }
@@ -1066,55 +1063,52 @@ struct caster {
 
 template<typename T>
 struct any_cast_fn {
+  static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
+                "Incorrect call, it will be always nullptr");
   template <any_x U>
-  PLEASE_INLINE auto* operator()(U* ptr) const noexcept {
-    // references ill-formed already (because of T*)
-    static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
-                  "Incorrect call, it will be always nullptr");
-    return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<typename U::base_any_type*>(ptr));
+  auto* operator()(U* ptr) const noexcept {
+    return caster::any_cast_impl<std::remove_cvref_t<T>>(static_cast<typename U::base_any_type*>(ptr));
   }
   template <any_x U>
-  PLEASE_INLINE const auto* operator()(const U* ptr) const noexcept {
-    static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
-                  "Incorrect call, it will be always nullptr");
-    return caster::any_cast_impl<std::remove_cv_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
+  const auto* operator()(const U* ptr) const noexcept {
+    return caster::any_cast_impl<std::remove_cvref_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
   }
 
   template <any_x U>
-  PLEASE_INLINE std::remove_cv_t<T> operator()(U& any) const {
+  std::remove_cv_t<T> operator()(U& any) const {
     auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
     if (!ptr)
       throw std::bad_cast{};
     return *ptr;
   }
   template <any_x U>
-  PLEASE_INLINE std::remove_cv_t<T> operator()(U&& any) const {
+  std::remove_cv_t<T> operator()(U&& any) const {
     auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
     if (!ptr)
       throw std::bad_cast{};
     return std::move(*ptr);
   }
   template <any_x U>
-  PLEASE_INLINE std::remove_cv_t<T> operator()(const U& any) const {
+  std::remove_cv_t<T> operator()(const U& any) const {
     const auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
     if (!ptr)
       throw std::bad_cast{};
     return *ptr;
   }
   template <TTA... Methods>
-  PLEASE_INLINE auto* operator()(poly_ptr<Methods...> p) const noexcept {
+  auto* operator()(poly_ptr<Methods...> p) const noexcept {
     return caster::any_cast_impl<std::remove_reference_t<T>>(p);
   }
   template <TTA... Methods>
-  PLEASE_INLINE const auto* operator()(const_poly_ptr<Methods...> p) const noexcept {
+  const auto* operator()(const_poly_ptr<Methods...> p) const noexcept {
     return caster::any_cast_impl<std::remove_reference_t<T>>(p);
   }
   template <TTA... Methods>
-  PLEASE_INLINE decltype(auto) operator()(poly_ref<Methods...> p) const {
+  decltype(auto) operator()(poly_ref<Methods...> p) const {
     return caster::any_cast_impl<T>(p);
   }
   template <TTA... Methods>
-  PLEASE_INLINE decltype(auto) operator()(const_poly_ref<Methods...> p) const {
+  decltype(auto) operator()(const_poly_ref<Methods...> p) const {
     return caster::any_cast_impl<T>(p);
   }
 };
@@ -1135,13 +1129,13 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  result_t<Method> operator()(U&& any, Args... args) const {
     AXIOM(any.vtable_ptr != nullptr);
     return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
   }
   // clang-format off
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     AXIOM(any.vtable_ptr != nullptr);
@@ -1151,15 +1145,26 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
-
+  // FOR NON POLYMORPHIC VALUE (common interface with all types)
+  // clang-format off
+  template<typename T>
+  requires (!any_x<T>)
+  result_t<Method> operator()(T&& value, Args... args) const {
+    // clang-format on
+    if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
+      return Method<std::remove_reference_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
+    } else {
+      return Method<std::remove_reference_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+    }
+  }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
   // (result can create useless copies of args, because assumes to be invoked more then one time)
   constexpr auto with(Args... args) const {
@@ -1192,7 +1197,7 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
     if constexpr (std::is_void_v<result_t<Method>>) {
@@ -1206,7 +1211,7 @@ struct invoke_fn<Method, type_list<Args...>> {
     }
   }
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  result_t<Method> operator()(const U& any, Args... args) const {
     static_assert(const_method<Method>);
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
@@ -1224,15 +1229,27 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
 
+  // FOR NON POLYMORPHIC VALUE (common interface with all types)
+  // clang-format off
+  template<typename T>
+  requires (!any_x<T>)
+  result_t<Method> operator()(T&& value, Args... args) const {
+    // clang-format on
+    if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
+      return Method<std::remove_reference_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
+    } else {
+      return Method<std::remove_reference_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+    }
+  }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
   // (result can create useless copies of args, because assumes to be invoked more then one time)
   constexpr auto with(Args... args) const {
@@ -1288,5 +1305,5 @@ struct hash<T> {
 }  // namespace std
 
 #undef AXIOM
-#undef PLEASE_INLINE
+
 #undef UNREACHABLE
