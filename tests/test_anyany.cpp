@@ -419,8 +419,55 @@ struct Drawiptr {
     return self->draw(val);
   }
 };
+// TODO method from CPO
+// Можно кстати сделать реализацию, которая с ветвлением и не self reference, а по ссылкам всё равно без ветвлений ходить(но ссылку брать сложнее будет)
+// TODO - можно приводить к меньшему подмножеству методов, но только если они идут в одном порядке, то есть ToMethods... встречаются где то в FromMethods... как строка
+// destroy / size_of перенести в конец получается(хотя не обязательно)
+// TODO creating any any from higher requirements?
+struct A1 {
+  int i = 10;
+};
+struct A2 {
+  double i = 3.14;
+};
+template <typename T>
+struct M1 {
+  static void do_invoke(const T& self, int val) {
+    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\n'; 
+  }
+};
+template <typename T>
+struct M2 {
+  static void do_invoke(const T& self, double val, int val2) {
+    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\t' << val2 << '\n'; 
+  }
+};
 
 int main() {
+  A1 u;
+  A2 u1;
+  aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
+  aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
+  aa::invoke<M1>(cfi, -1);
+  aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
+  aa::invoke<M2>(cfi2, 3.14, -2);
+  aa::const_poly_ref<M2> cfi3 = cfi2;
+  aa::invoke<M2>(cfi3, 134., -3);
+  aa::const_poly_ref<M1, M2> cfi4 = fi;
+  aa::invoke<M1>(cfi4, -5);
+  aa::invoke<M2>(cfi4, 13400., -6);
+  aa::poly_ref<M2, aa::copy> fi2 = fi;
+  aa::poly_ref<M2> fi3 = fi2;
+  aa::invoke<M1>(fi, 10);
+  aa::invoke<M2>(fi, 11., 12);
+  aa::invoke<M2>(fi2, 11., 12);
+  aa::invoke<M2>(fi3, 11., 12);
+  constexpr auto j0 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
+  constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
+  constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j4 = noexport::find_subset(aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
+  (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
   {
     // with plugin
     drawable0 v0;

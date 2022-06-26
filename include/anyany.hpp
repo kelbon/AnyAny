@@ -34,6 +34,13 @@
 #define UNREACHABLE() __assume(false)
 #endif
 
+// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
+#if defined(_MSC_VER)
+#define AA_MSVC_EBO __declspec(empty_bases)
+#else
+#define AA_MSVC_EBO
+#endif
+
 // C++ features is not supported in clang ...
 #ifdef __cpp_lib_hardware_interference_size
 using std::hardware_constructive_interference_size;
@@ -64,6 +71,31 @@ struct interface_t {};
 }  // namespace aa
 
 namespace noexport {
+
+template <typename T, size_t>
+struct value_in_tuple {
+  T value{};
+};
+
+template <typename...>
+struct tuple_base;
+
+template <size_t... Is, typename... Ts>
+struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
+  constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  }
+};
+// stores values always in right order(in memory), used only for function pointers in vtable
+template <typename... Ts>
+struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
+  using tuple::tuple_base::tuple_base;
+};
+
+// in this library tuple used ONLY for function pointers in vtable, so get_value returns value
+template<size_t I, typename U>
+constexpr U get_value(value_in_tuple<U, I> v) noexcept {
+  return v.value;
+}
 
 template <size_t I, typename... Args>
 struct number_of_impl {
@@ -135,11 +167,37 @@ template <class To, class From>
 requires(sizeof(To) == sizeof(From)
 && std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
 To bit_cast(const From& src) noexcept {
-  // TODO - remove this shitty cast when possible))) (clang and gcc support...)
-  // (cant support no default constructible types without compiler magic)
-  return *reinterpret_cast<const To*>(std::addressof(src));
+  // clang-format on
+  // TODO replace this cast with std::bit_cast when possible(support on all compilers)
+  alignas(To) std::byte buf[sizeof(To)];
+  std::memcpy(buf, std::addressof(src), sizeof(To));
+  return std::move(*reinterpret_cast<const To*>(buf));
 }
-// clang-format on
+
+consteval bool starts_with(aa::type_list<>, auto&&) {
+  return true;
+}
+// first type not equal
+consteval bool starts_with(auto&&, auto&&) {
+  return false;
+}
+template <typename Head, typename... Ts1, typename... Ts2>
+consteval bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<Head, Ts2...>) {
+  return starts_with(aa::type_list<Ts1...>{}, aa::type_list<Ts2...>{});
+}
+
+// returns index in list where first typelist starts as subset in second typelist or npos if no such index
+template <typename... Ts1, typename Head, typename... Ts2>
+consteval size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
+                             size_t n = 0) noexcept {
+  if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
+    return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
+  else if constexpr (starts_with(needle, all))
+    return n;
+  else
+    return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
+}
+
 }  // namespace noexport
 
 namespace aa {
@@ -421,7 +479,7 @@ constexpr inline std::string_view type_name = n<std::decay_t<T>>();
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
 struct vtable {
-  std::tuple<type_erased_signature_t<Methods>...> table;
+  ::noexport::tuple<type_erased_signature_t<Methods>...> table;
 #ifdef AA_DLL_COMPATIBLE
   std::string_view name;
 #endif
@@ -437,7 +495,7 @@ struct vtable {
   requires(has_method<Method>)
   constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
-    return std::get<number_of_method<Method>>(table)(std::forward<Args>(args)...);
+    return ::noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
 // must be never called explicitly, because needed to decay type before
@@ -451,13 +509,6 @@ constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}
 // always decays type to reduce count of vtables
 template<typename T, TTA... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>; 
-
-// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
-#if defined(_MSC_VER)
-#define AA_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_MSVC_EBO
-#endif
 
 // it is concept for removing ambigious ctors in poly ptrs
 template <typename T>
@@ -477,6 +528,8 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   friend struct invoke_unsafe_fn;
   template <TTA...>
   friend struct poly_ptr;
+  template <TTA...>
+  friend struct poly_ref;
   // uninitialized for pointer implementation
   constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
@@ -495,7 +548,22 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
       static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
-  // clang-format on
+#ifndef AA_DLL_COMPATIBLE
+  // with type name in dll cast will be incorrect
+
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template<TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr poly_ref(poly_ref<FromMethods...> p) noexcept {
+    // clang-format on
+    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                                     type_list<FromMethods<interface_t>...>{});
+    value_ptr = p.value_ptr;
+    vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
+        reinterpret_cast<const std::byte*>(p.vtable_ptr) + (sizeof(void*) * index));
+  }
+#endif
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
 };
@@ -515,6 +583,8 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   friend struct invoke_unsafe_fn;
   template<TTA...>
   friend struct const_poly_ptr;
+  template<TTA...>
+  friend struct const_poly_ref;
   // uninitialized for pointer implementation
   constexpr const_poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
@@ -537,6 +607,31 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   constexpr const_poly_ref(poly_ref<Methods...> p) noexcept
       : const_poly_ref{::noexport::bit_cast<const_poly_ref<Methods...>>(p)} {
   }
+#ifndef AA_DLL_COMPATIBLE
+  // with type name in dll cast will be incorrect
+  // clang-format off
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template <TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr const_poly_ref(const_poly_ref<FromMethods...> p) noexcept {
+    // clang-format on
+    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                                     type_list<FromMethods<interface_t>...>{});
+    value_ptr = p.value_ptr;
+    vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
+        reinterpret_cast<const std::byte*>(p.vtable_ptr) + (sizeof(void*) * index));
+  }
+  // clang-format off
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template <TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
+      // clang-format on
+      : const_poly_ref(const_poly_ref<FromMethods...>{p}) {
+  }
+#endif
   // returns const_poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
 };
@@ -1160,9 +1255,9 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   result_t<Method> operator()(T&& value, Args... args) const {
     // clang-format on
     if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
-      return Method<std::remove_reference_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
+      return Method<std::decay_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
     } else {
-      return Method<std::remove_reference_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+      return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
     }
   }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
@@ -1245,9 +1340,9 @@ struct invoke_fn<Method, type_list<Args...>> {
   result_t<Method> operator()(T&& value, Args... args) const {
     // clang-format on
     if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
-      return Method<std::remove_reference_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
+      return Method<std::decay_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
     } else {
-      return Method<std::remove_reference_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+      return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
     }
   }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
