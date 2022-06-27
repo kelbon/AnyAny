@@ -5,7 +5,7 @@ on: push
 jobs:
 
   main:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
@@ -15,7 +15,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install ninja-build lld clang
           sudo ln -sf /usr/local/bin/ld /usr/bin/lld
-
       - name: Configure CMake
         run: |
           cmake . -DBUILD_TESTING=ON -B build \
