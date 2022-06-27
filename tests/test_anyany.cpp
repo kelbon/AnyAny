@@ -389,7 +389,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move, aa::type_name>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -419,11 +419,6 @@ struct Drawiptr {
     return self->draw(val);
   }
 };
-// TODO method from CPO
-// Можно кстати сделать реализацию, которая с ветвлением и не self reference, а по ссылкам всё равно без ветвлений ходить(но ссылку брать сложнее будет)
-// TODO - можно приводить к меньшему подмножеству методов, но только если они идут в одном порядке, то есть ToMethods... встречаются где то в FromMethods... как строка
-// destroy / size_of перенести в конец получается(хотя не обязательно)
-// TODO creating any any from higher requirements?
 struct A1 {
   int i = 10;
 };

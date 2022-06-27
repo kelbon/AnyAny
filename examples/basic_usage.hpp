@@ -18,7 +18,7 @@ struct Draw {
   }
 };
 
-using any_drawable = aa::any_with<Draw>;
+using any_drawable = aa::any_with<Draw, aa::type_name>;
 
 // some types with .draw( )
 struct Circle {
