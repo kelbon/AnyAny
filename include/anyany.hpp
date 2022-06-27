@@ -72,6 +72,32 @@ struct interface_t {};
 
 namespace noexport {
 
+// this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
+template <typename T, size_t>
+struct value_in_tuple {
+  T value{};
+};
+
+template <typename...>
+struct tuple_base;
+
+template <size_t... Is, typename... Ts>
+struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
+  constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  }
+};
+// stores values always in right order(in memory), used only for function pointers in vtable
+template <typename... Ts>
+struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
+  using tuple::tuple_base::tuple_base;
+};
+
+// in this library tuple used ONLY for function pointers in vtable, so get_value returns value
+template <size_t I, typename U>
+constexpr U get_value(value_in_tuple<U, I> v) noexcept {
+  return v.value;
+}
+
 template <size_t I, typename... Args>
 struct number_of_impl {
   static constexpr size_t value = aa::npos;  // no such element in pack
@@ -97,8 +123,8 @@ constexpr inline bool always_false = false;
 
 template <typename Self>
 consteval bool is_const_method() noexcept {
-    // looks like compiler bug (in msvc AND clang too) "reinterpret_cast from 'void*'
-    // to 'const char*&' casts away qualifirs" what is obviosly a lie
+  // looks like compiler bug (in msvc AND clang too) "reinterpret_cast from 'void*'
+  // to 'const char*&' casts away qualifirs" what is obviosly a lie
   if (std::is_pointer_v<Self>)
     return std::is_const_v<std::remove_pointer_t<Self>>;
   else if (std::is_reference_v<Self>)
@@ -109,7 +135,7 @@ consteval bool is_const_method() noexcept {
 template <typename>
 struct any_method_traits;
 
-// Note: for signature && added to arguments for forwarding 
+// Note: for signature && added to arguments for forwarding
 template <typename R, typename Self, typename... Args>
 struct any_method_traits<R (*)(Self, Args...)> {
   using self_sample_type = Self;
@@ -189,7 +215,7 @@ consteval std::string_view n() {
   return "";
 #endif
 }
-template<typename T>
+template <typename T>
 constexpr inline std::string_view type_name = n<std::decay_t<T>>();
 
 }  // namespace noexport
@@ -464,7 +490,7 @@ struct type_name {
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
 struct vtable {
-  std::array<void*, sizeof...(Methods)> table;
+  ::noexport::tuple<type_erased_signature_t<Methods>...> table;
 
   template <TTA Method>
   static inline constexpr size_t number_of_method =
@@ -477,14 +503,13 @@ struct vtable {
   requires(has_method<Method>)
   constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
-    return reinterpret_cast<type_erased_signature_t<Method>>(table[number_of_method<Method>])(
-        std::forward<Args>(args)...);
+    return ::noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, TTA... Methods>   // dont know why, but only C cast works on constexpr here
-constexpr vtable<Methods...> vtable_for = {(void*)(&invoker_for<T, Methods>::value)...};
+constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}};
 // always decays type
 template<typename T, TTA... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>; 
@@ -508,6 +533,8 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   friend struct poly_ptr;
   template <TTA...>
   friend struct poly_ref;
+  template<TTA...>
+  friend struct const_poly_ptr;
   // uninitialized for pointer implementation
   constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
@@ -608,6 +635,9 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   constexpr auto operator&() const noexcept;
 };
 
+template <TTA... Methods>
+const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
+
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
 // usage example : void foo(poly_ptr<Method0, Method1> p) (same Methods like in AnyAny)
 template <TTA... Methods>
@@ -616,6 +646,10 @@ struct poly_ptr {
   // uninitialized reference by default
   poly_ref<Methods...> poly_ = nullptr;
 
+  template<TTA...>
+  friend struct poly_ptr;
+  template<TTA...>
+  friend struct const_poly_ptr;
  public:
   // from nothing (empty)
   constexpr poly_ptr() = default;
@@ -643,7 +677,20 @@ struct poly_ptr {
       poly_.value_ptr = ptr->value_ptr;
     }
   }
-
+  // clang-format off
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template <TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept
+  // clang-format on
+  {
+    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                                     type_list<FromMethods<interface_t>...>{});
+    poly_.value_ptr = p.poly_.value_ptr;
+    poly_.vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
+        reinterpret_cast<const std::byte*>(p.poly_.vtable_ptr) + (sizeof(void*) * index));
+  }
   // observers
 
   constexpr void* raw() const noexcept {
@@ -680,7 +727,8 @@ struct const_poly_ptr {
 
   template<typename>
   friend struct any_cast_fn;
-
+  template<TTA...>
+  friend struct const_poly_ptr;
  public:
   // from nothing(empty)
   constexpr const_poly_ptr() = default;
@@ -709,9 +757,33 @@ struct const_poly_ptr {
     }
   }
   // from non-const poly pointer
-  constexpr const_poly_ptr(poly_ptr<Methods...> p) noexcept : poly_{*p} {
+  constexpr const_poly_ptr(poly_ptr<Methods...> p) noexcept {
+    poly_.value_ptr = p.poly_.value_ptr;
+    poly_.vtable_ptr = p.poly_.vtable_ptr;
   }
-
+  // clang-format off
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template <TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept
+  // clang-format on
+  {
+    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                                     type_list<FromMethods<interface_t>...>{});
+    poly_.value_ptr = p.poly_.value_ptr;
+    poly_.vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
+        reinterpret_cast<const std::byte*>(p.poly_.vtable_ptr) + (sizeof(void*) * index));
+  }
+  // clang-format off
+  // creating from higher requirements, if Methods are contigious subset of FromMethods
+  template <TTA... FromMethods>
+  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                   type_list<FromMethods<interface_t>...>{}) != npos)
+  constexpr const_poly_ptr(poly_ptr<FromMethods...> p) noexcept
+      // clang-format on
+      : const_poly_ptr(const_poly_ptr<FromMethods...>{p}) {
+  }
   // observers
 
   constexpr const void* raw() const noexcept {
@@ -738,6 +810,9 @@ struct const_poly_ptr {
 };
 
 template<TTA... Methods>
+const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
+
+template <TTA... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
   return ::noexport::bit_cast<poly_ptr<Methods...>>(*this);
 }
