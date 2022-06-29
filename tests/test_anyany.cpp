@@ -389,7 +389,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy, aa::move, aa::type_name>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move, aa::type_id>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -470,6 +470,9 @@ int main() {
   aa::invoke<M2>(fi2, 11., 12);
   aa::invoke<M2>(fi3, 11., 12);
   aa::invoke<M2>(*fi3p, 11., 12);
+  int i = 1;
+  if (i && cfi2.has_value()) // consteval static member function of reference, true always
+    std::cout << "works\n";
   constexpr auto j0 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
   constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
   constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});

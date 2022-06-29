@@ -432,6 +432,7 @@ constexpr inline auto default_any_soos = hardware_constructive_interference_size
 template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
 
+// enables std::hash specialization for polymorphic value, and reference
 template <typename T>
 struct hash {
   static size_t do_invoke(const T& self) {
@@ -439,10 +440,18 @@ struct hash {
   }
 };
 
+// enables any_cast for poly_ref/ptr
 template <typename T>
-struct RTTI {
-  static const std::type_info& do_invoke() noexcept {
+struct type_id {
+  static decltype(auto) do_invoke(const T&) noexcept {
+#ifdef AA_DLL_COMPATIBLE
+#ifdef AA_CANT_GET_TYPENAME
+#error Cant support any_cast for DLL on this compiler
+#endif
+    return ::noexport::type_name<T>;
+#else
     return typeid(T);
+#endif
   }
 };
 
@@ -473,16 +482,6 @@ template<typename T>
 struct size_of {
   static constexpr std::size_t do_invoke(const T&) noexcept {
     return sizeof(T);
-  }
-};
-
-template<typename T>
-struct type_name {
-  static constexpr std::string_view do_invoke(const T&) noexcept {
-#ifdef AA_CANT_GET_TYPENAME
-    static_assert(::noexport::always_false<T>, "Cant get typename on this compiler");
-#endif
-    return ::noexport::type_name<T>;
   }
 };
 
@@ -525,6 +524,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   const vtable<Methods...>* vtable_ptr;
   void* value_ptr;
 
+  static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
   template <TTA, typename>
   friend struct invoke_fn;
   template <TTA, typename>
@@ -533,7 +533,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   friend struct poly_ptr;
   template <TTA...>
   friend struct poly_ref;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ptr;
   // uninitialized for pointer implementation
   constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
@@ -565,6 +565,10 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
     vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
         reinterpret_cast<const std::byte*>(p.vtable_ptr) + (sizeof(void*) * index));
   }
+  // for same interface(in plugins for example), always returns true
+  static consteval bool has_value() noexcept {
+    return true;
+  }
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
 };
@@ -577,15 +581,16 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   const vtable<Methods...>* vtable_ptr;
   const void* value_ptr;
 
-  template<typename>
+  static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
+  template <typename>
   friend struct any_cast_fn;
   template <TTA, typename>
   friend struct invoke_fn;
   template <TTA, typename>
   friend struct invoke_unsafe_fn;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ptr;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ref;
   // uninitialized for pointer implementation
   constexpr const_poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
@@ -630,6 +635,10 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
       // clang-format on
       : const_poly_ref(const_poly_ref<FromMethods...>{p}) {
+  }
+  // for same interface(in plugins for example), always returns true
+  static consteval bool has_value() noexcept {
+    return true;
   }
   // returns const_poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
@@ -888,7 +897,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 #ifdef AA_DLL_COMPATIBLE
     if (a.vtable_ptr == nullptr || b.vtable_ptr == nullptr)
       return a.vtable_ptr == b.vtable_ptr;
-    return a.vtable_invoke<type_name>() == b.vtable_invoke<type_name>();
+    return a.vtable_invoke<type_id>() == b.vtable_invoke<type_id>();
 #else
     return a.vtable_ptr == b.vtable_ptr;
 #endif
@@ -1052,9 +1061,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
-  const std::type_info& type() const noexcept requires(has_method<RTTI>) {
-    return has_value() ? vtable_ptr->template invoke<RTTI>() : typeid(void);
-  }
   std::size_t sizeof_now() const noexcept {
     return has_value() ? vtable_invoke<size_of>() : 0;
   }
@@ -1134,7 +1140,7 @@ struct any_cast_fn {
 // U already remove_cv
 #ifdef AA_DLL_COMPATIBLE
     if (any == nullptr || !any->has_value() ||
-        any->template vtable_invoke<type_name>() != ::noexport::type_name<U>)
+        any->template vtable_invoke<type_id>() != ::noexport::type_name<U>)
       return nullptr;
 #else
     if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
@@ -1146,7 +1152,7 @@ struct any_cast_fn {
   static U* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
 #ifdef AA_DLL_COMPATIBLE
     if (any == nullptr || !any->has_value() ||
-        any->template vtable_invoke<type_name>() != ::noexport::type_name<U>)
+        any->template vtable_invoke<type_id>() != ::noexport::type_name<U>)
       return nullptr;
 #else
     if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
@@ -1187,12 +1193,17 @@ struct any_cast_fn {
       throw std::bad_cast{};
     return *ptr;
   }
-  // any cast for poly_ptr/ref needs Method aa::type_name
+  // any cast for poly_ptr/ref needs Method aa::type_id
   // because of possibility to cast poly_ref<A, B, C> to poly_ref<B, C> (with changing address of vtable)
   template <TTA... Methods>
   const std::remove_reference_t<T>* operator()(const_poly_ptr<Methods...> p) const noexcept {
-    if (p == nullptr || p.poly_.vtable_ptr->template invoke<type_name>(p.raw()) != ::noexport::type_name<T>)
+#ifdef AA_DLL_COMPATIBLE
+    if (p == nullptr || p.poly_.vtable_ptr->template invoke<type_id>(p.raw()) != ::noexport::type_name<T>)
       return nullptr;
+#else
+    if (p == nullptr || p.poly_.vtable_ptr->template invoke<type_id>(p.raw()) != typeid(std::decay_t<T>))
+      return nullptr;
+#endif
     return reinterpret_cast<const std::remove_reference_t<T>*>(p.raw());
   }
   template <TTA... Methods>
@@ -1388,11 +1399,18 @@ struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, 
   using base_t::base_t;
 };
 #ifdef AA_DLL_COMPATIBLE
-// adds Method type name if it was not in Methods to enable any cast for polymorphic value
+template<typename Alloc, size_t SooS, TTA... Methods>
+consteval auto any_with_typeid() noexcept {
+  // not std::conditional because compilation may breaks if two type_id in type
+  if constexpr (vtable<Methods...>::template has_method<type_id>)
+    return std::type_identity<any_with_t<Alloc, SooS, size_of, destroy, Methods...>>{};
+  else
+    return std::type_identity<any_with_t<Alloc, SooS, size_of, destroy, type_id, Methods...>>{};
+}
+// adds Method type_id if it was not in Methods to enable any cast
 template <typename Alloc, size_t SooS, TTA... Methods>
-using basic_any_with = std::conditional_t<vtable<Methods...>::template has_method<type_name>,
-                                          any_with_t<Alloc, SooS, size_of, destroy, Methods...>,
-                                          any_with_t<Alloc, SooS, size_of, destroy, type_name, Methods...>>;
+using basic_any_with = typename decltype(any_with_typeid<Alloc, SooS, Methods...>())::type;
+
 #else
 template <typename Alloc, size_t SooS, TTA... Methods>
 using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
@@ -1407,8 +1425,32 @@ namespace std {
 // clang-format off
 template<::aa::any_x T> requires (T::template has_method<::aa::hash>)
 struct hash<T> {
-  size_t operator()(const T& any) const {
+  size_t operator()(const T& any) const noexcept {
       return any.has_value() ? aa::invoke_unsafe<::aa::hash>(any) : 0;
+  }
+};
+template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+struct hash<::aa::poly_ref<Methods...>> {
+  size_t operator()(const ::aa::poly_ref<Methods...>& r) const noexcept {
+      return aa::invoke_unsafe<::aa::hash>(r);
+  }
+};
+template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+struct hash<::aa::const_poly_ref<Methods...>> {
+  size_t operator()(const ::aa::const_poly_ref<Methods...>& r) const noexcept {
+      return aa::invoke_unsafe<::aa::hash>(r);
+  }
+};
+template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+struct hash<::aa::poly_ptr<Methods...>> {
+  size_t operator()(const ::aa::poly_ptr<Methods...>& p) const noexcept {
+      return ::std::hash<void*>{}(p.raw());
+  }
+};
+template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+struct hash<::aa::const_poly_ptr<Methods...>> {
+  size_t operator()(const ::aa::const_poly_ptr<Methods...>& p) const noexcept {
+      return ::std::hash<void*>{}(p.raw());
   }
 };
 // clang-format on
