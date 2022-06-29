@@ -472,17 +472,36 @@ struct spaceship {
   }
 };
 
-struct empty_any_method_call : std::exception {
-  [[nodiscard]] const char* what() const noexcept override {
-    return "Empty any method was called";
-  }
-};
 // utility method for basic_any
 template<typename T>
 struct size_of {
   static constexpr std::size_t do_invoke(const T&) noexcept {
     return sizeof(T);
   }
+};
+
+// Creates a Method from invocable object with given signature
+// usage example:
+// template<typename T>
+// using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
+// using any_sized_range = aa::any_with<Size>;
+template <typename Signature, auto>
+struct from_callable;
+
+template <typename R, typename... Ts, auto Foo>
+struct from_callable<R(Ts...), Foo> {
+  template <typename T>
+  struct method {
+    static R do_invoke(T& self, Ts... args) {
+      return Foo(self, static_cast<Ts&&>(args)...);
+    }
+  };
+  template <typename T>
+  struct const_method {
+    static R do_invoke(const T& self, Ts... args) {
+      return Foo(self, static_cast<Ts&&>(args)...);
+    }
+  };
 };
 
 // regardless Method is a template,
@@ -1305,6 +1324,12 @@ struct invoke_unsafe_fn<destroy, T> {
 template <TTA Method>
 constexpr invoke_unsafe_fn<Method> invoke_unsafe = {};
 
+struct empty_any_method_call : std::exception {
+  [[nodiscard]] const char* what() const noexcept override {
+    return "Empty any method was called";
+  }
+};
+
 template <TTA Method, typename = args_list<Method>>
 struct invoke_fn;
 
@@ -1400,7 +1425,7 @@ struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, 
 };
 #ifdef AA_DLL_COMPATIBLE
 template<typename Alloc, size_t SooS, TTA... Methods>
-consteval auto any_with_typeid() noexcept {
+consteval auto add_typeid_to_methods() noexcept {
   // not std::conditional because compilation may breaks if two type_id in type
   if constexpr (vtable<Methods...>::template has_method<type_id>)
     return std::type_identity<any_with_t<Alloc, SooS, size_of, destroy, Methods...>>{};
@@ -1409,7 +1434,7 @@ consteval auto any_with_typeid() noexcept {
 }
 // adds Method type_id if it was not in Methods to enable any cast
 template <typename Alloc, size_t SooS, TTA... Methods>
-using basic_any_with = typename decltype(any_with_typeid<Alloc, SooS, Methods...>())::type;
+using basic_any_with = typename decltype(add_typeid_to_methods<Alloc, SooS, Methods...>())::type;
 
 #else
 template <typename Alloc, size_t SooS, TTA... Methods>

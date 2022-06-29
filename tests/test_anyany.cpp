@@ -438,7 +438,13 @@ struct M2 {
   }
 };
 
+template<typename T>
+using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
+  using any_sized_range = aa::any_with<Size>;
+  std::vector<int> v(10, 15);
+  any_sized_range rng = v;
+  std::cout << aa::invoke<Size>(rng);
   A1 u;
   A2 u1;
   aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
@@ -471,13 +477,15 @@ int main() {
   aa::invoke<M2>(fi3, 11., 12);
   aa::invoke<M2>(*fi3p, 11., 12);
   int i = 1;
-  if (i && cfi2.has_value()) // consteval static member function of reference, true always
+  if (i && cfi2.has_value())  // consteval static member function of reference, true always
     std::cout << "works\n";
-  constexpr auto j0 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j0 =
+      noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
   constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
   constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
   constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j4 = noexport::find_subset(aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
+  constexpr auto j4 = noexport::find_subset(
+      aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
   (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
   {
     // with plugin
@@ -524,8 +532,7 @@ int main() {
     idrawable::const_ref pr5 = v0;
     idrawable::ptr pp4 = &v0;
     idrawable::const_ptr pp5 = &v0;
-    if (aa::any_cast<drawable0>(pp1) == nullptr ||
-        aa::any_cast<const drawable0>(pp1) == nullptr)
+    if (aa::any_cast<drawable0>(pp1) == nullptr || aa::any_cast<const drawable0>(pp1) == nullptr)
       return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
@@ -538,7 +545,7 @@ int main() {
     aa::invoke_unsafe<Drawi>(pr1, 150);
     aa::invoke_unsafe<Drawi>(*&pr1, 150);
     aa::invoke_unsafe<Drawi>(*pp2, 150);
-    aa::invoke_unsafe<Drawi>(*pp3,  150);
+    aa::invoke_unsafe<Drawi>(*pp3, 150);
     aa::invoke_unsafe<Drawi>(pr2, 150);
     aa::invoke_unsafe<Drawi>(*&pr2, 150);
     aa::invoke_unsafe<Drawi>(*&pr3, 150);
@@ -575,7 +582,7 @@ int main() {
       (void)aa::any_cast<const drawable1&>(pr1);
       return -1;
     } catch (...) {
-    // good
+      // good
     }
   }
   {
@@ -621,12 +628,12 @@ int main() {
       (void)aa::any_cast<Triangle&>(pr3);
       return -1;
     } catch (...) {
-        // good
+      // good
     }
   }
   drawable0 v00;
   const drawable1 v01;
-  Foobar((idrawable::ptr) & v00);
+  Foobar((idrawable::ptr)&v00);
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
