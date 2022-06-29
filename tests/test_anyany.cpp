@@ -389,7 +389,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move, aa::type_id>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -419,11 +419,6 @@ struct Drawiptr {
     return self->draw(val);
   }
 };
-// TODO method from CPO
-// Можно кстати сделать реализацию, которая с ветвлением и не self reference, а по ссылкам всё равно без ветвлений ходить(но ссылку брать сложнее будет)
-// TODO - можно приводить к меньшему подмножеству методов, но только если они идут в одном порядке, то есть ToMethods... встречаются где то в FromMethods... как строка
-// destroy / size_of перенести в конец получается(хотя не обязательно)
-// TODO creating any any from higher requirements?
 struct A1 {
   int i = 10;
 };
@@ -443,30 +438,54 @@ struct M2 {
   }
 };
 
+template<typename T>
+using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
+  using any_sized_range = aa::any_with<Size>;
+  std::vector<int> v(10, 15);
+  any_sized_range rng = v;
+  std::cout << aa::invoke<Size>(rng);
   A1 u;
   A2 u1;
   aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
   aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
   aa::invoke<M1>(cfi, -1);
   aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
+  aa::const_poly_ptr<M2, aa::move> cfi2p = &cfi;
+  aa::const_poly_ptr copy = cfi2p;
+  (void)copy;
   aa::invoke<M2>(cfi2, 3.14, -2);
+  aa::invoke<M2>(*cfi2p, 3.14, -2);
   aa::const_poly_ref<M2> cfi3 = cfi2;
+  aa::const_poly_ptr<M2> cfi3p = &cfi2;
   aa::invoke<M2>(cfi3, 134., -3);
+  aa::invoke<M2>(*cfi3p, 134., -3);
   aa::const_poly_ref<M1, M2> cfi4 = fi;
+  aa::const_poly_ptr<M1, M2> cfi4p = &fi;
   aa::invoke<M1>(cfi4, -5);
+  aa::invoke<M1>(*cfi4p, -5);
   aa::invoke<M2>(cfi4, 13400., -6);
+  aa::invoke<M2>(*cfi4p, 13400., -6);
   aa::poly_ref<M2, aa::copy> fi2 = fi;
   aa::poly_ref<M2> fi3 = fi2;
+  aa::poly_ptr<M2> fi3p = &fi2;
+  aa::poly_ptr copy2 = fi3p;
+  (void)copy2;
   aa::invoke<M1>(fi, 10);
   aa::invoke<M2>(fi, 11., 12);
   aa::invoke<M2>(fi2, 11., 12);
   aa::invoke<M2>(fi3, 11., 12);
-  constexpr auto j0 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
+  aa::invoke<M2>(*fi3p, 11., 12);
+  int i = 1;
+  if (i && cfi2.has_value())  // consteval static member function of reference, true always
+    std::cout << "works\n";
+  constexpr auto j0 =
+      noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
   constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
   constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
   constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j4 = noexport::find_subset(aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
+  constexpr auto j4 = noexport::find_subset(
+      aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
   (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
   {
     // with plugin
@@ -513,8 +532,7 @@ int main() {
     idrawable::const_ref pr5 = v0;
     idrawable::ptr pp4 = &v0;
     idrawable::const_ptr pp5 = &v0;
-    if (aa::any_cast<drawable0>(pp1) == nullptr ||
-        aa::any_cast<const drawable0>(pp1) == nullptr)
+    if (aa::any_cast<drawable0>(pp1) == nullptr || aa::any_cast<const drawable0>(pp1) == nullptr)
       return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
@@ -527,7 +545,7 @@ int main() {
     aa::invoke_unsafe<Drawi>(pr1, 150);
     aa::invoke_unsafe<Drawi>(*&pr1, 150);
     aa::invoke_unsafe<Drawi>(*pp2, 150);
-    aa::invoke_unsafe<Drawi>(*pp3,  150);
+    aa::invoke_unsafe<Drawi>(*pp3, 150);
     aa::invoke_unsafe<Drawi>(pr2, 150);
     aa::invoke_unsafe<Drawi>(*&pr2, 150);
     aa::invoke_unsafe<Drawi>(*&pr3, 150);
@@ -564,7 +582,7 @@ int main() {
       (void)aa::any_cast<const drawable1&>(pr1);
       return -1;
     } catch (...) {
-    // good
+      // good
     }
   }
   {
@@ -610,12 +628,12 @@ int main() {
       (void)aa::any_cast<Triangle&>(pr3);
       return -1;
     } catch (...) {
-        // good
+      // good
     }
   }
   drawable0 v00;
   const drawable1 v01;
-  Foobar((idrawable::ptr) & v00);
+  Foobar((idrawable::ptr)&v00);
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
