@@ -9,9 +9,6 @@
 #include <stdexcept>    // runtime_error
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
-#include <climits>      // CHAR_BIT on gcc
-#include <bit>
-#include <cstring>      // for memcpy
 // TODO remove when it will be C++20 module
 #undef AXIOM
 #undef UNREACHABLE
@@ -162,17 +159,6 @@ static consteval bool check_copy() {
     return std::is_same_v<typename Method::allocator_type, Alloc> && SooS == Method::SooS_value;
   else
     return true;
-}
-// clang-format off
-template <class To, class From>
-requires(sizeof(To) == sizeof(From)
-&& std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>)
-To bit_cast(const From& src) noexcept {
-  // clang-format on
-  // TODO replace this cast with std::bit_cast when possible(support on all compilers)
-  alignas(To) std::byte buf[sizeof(To)];
-  std::memcpy(buf, std::addressof(src), sizeof(To));
-  return std::move(*reinterpret_cast<const To*>(buf));
 }
 
 consteval bool starts_with(aa::type_list<>, auto&&) {
@@ -525,6 +511,22 @@ struct vtable {
   }
 };
 
+// casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
+// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
+// clang-format off
+template <TTA... ToMethods, TTA... FromMethods,
+    std::size_t index = ::noexport::find_subset(
+                            type_list<ToMethods<interface_t>...>{},
+                            type_list<FromMethods<interface_t>...>{})>
+requires(index != npos)
+const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
+  // clang-format on
+  assert(ptr != nullptr);
+  static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
+  return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
+                                                       sizeof(void*) * index);
+}
+
 // must be never named explicitly, use addr_vtable_for
 template <typename T, TTA... Methods>   // dont know why, but only C cast works on constexpr here
 constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}};
@@ -540,7 +542,7 @@ concept not_const_type = !std::is_const_v<T>;
 template <TTA... Methods>
 struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
  private:
-  const vtable<Methods...>* vtable_ptr;
+  const vtable<Methods...>* vtable_ptr; // unspecified value if value_ptr == nullptr
   void* value_ptr;
 
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
@@ -554,6 +556,8 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   friend struct poly_ref;
   template <TTA...>
   friend struct const_poly_ptr;
+  template <TTA...>
+  friend struct const_poly_ref;
   // uninitialized for pointer implementation
   constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
@@ -572,17 +576,12 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
       static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
   }
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
-  template<TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
-  constexpr poly_ref(poly_ref<FromMethods...> p) noexcept {
-    // clang-format on
-    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                                     type_list<FromMethods<interface_t>...>{});
-    value_ptr = p.value_ptr;
-    vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
-        reinterpret_cast<const std::byte*>(p.vtable_ptr) + (sizeof(void*) * index));
+  template <TTA... FromMethods>
+  constexpr poly_ref(poly_ref<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
+      // clang-format on
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+        value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
   static consteval bool has_value() noexcept {
@@ -597,7 +596,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
 template<TTA... Methods>
 struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>>... {
  private:
-  const vtable<Methods...>* vtable_ptr;
+  const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
   const void* value_ptr;
 
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
@@ -631,29 +630,23 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   // clang-format on
   // from non-const ref
   constexpr const_poly_ref(poly_ref<Methods...> p) noexcept
-      : const_poly_ref{::noexport::bit_cast<const_poly_ref<Methods...>>(p)} {
+      : vtable_ptr(p.vtable_ptr), value_ptr(p.value_ptr) {
   }
   // clang-format off
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
   template <TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
-  constexpr const_poly_ref(const_poly_ref<FromMethods...> p) noexcept {
-    // clang-format on
-    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                                     type_list<FromMethods<interface_t>...>{});
-    value_ptr = p.value_ptr;
-    vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
-        reinterpret_cast<const std::byte*>(p.vtable_ptr) + (sizeof(void*) * index));
-  }
-  // clang-format off
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
-  template <TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
-  constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
+  constexpr const_poly_ref(const_poly_ref<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
       // clang-format on
-      : const_poly_ref(const_poly_ref<FromMethods...>{p}) {
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+        value_ptr(p.value_ptr) {
+  }
+  // clang-format off
+  template <TTA... FromMethods>
+  constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
+      // clang-format on
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+        value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
   static consteval bool has_value() noexcept {
@@ -678,6 +671,8 @@ struct poly_ptr {
   friend struct poly_ptr;
   template<TTA...>
   friend struct const_poly_ptr;
+  template<TTA...>
+  friend struct poly_ref;
  public:
   // from nothing (empty)
   constexpr poly_ptr() = default;
@@ -685,7 +680,7 @@ struct poly_ptr {
   }
   constexpr poly_ptr& operator=(std::nullptr_t) noexcept {
     poly_.value_ptr = nullptr;
-    poly_.vtable_ptr = nullptr;
+    // value of vtable_ptr does not matter if value_ptr == nullptr
     return *this;
   }
   // from mutable pointer
@@ -693,7 +688,7 @@ struct poly_ptr {
   template <not_const_type T>
   constexpr poly_ptr(T* ptr) noexcept {
       poly_.value_ptr = ptr;
-      poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
+      poly_.vtable_ptr = addr_vtable_for<T, Methods...>;
   }
   // from mutable pointer to Any
   template <any_x Any>
@@ -706,18 +701,13 @@ struct poly_ptr {
     }
   }
   // clang-format off
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
   template <TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
   constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
   // clang-format on
   {
-    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                                     type_list<FromMethods<interface_t>...>{});
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
-        reinterpret_cast<const std::byte*>(p.poly_.vtable_ptr) + (sizeof(void*) * index));
+    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
   }
   // observers
 
@@ -757,6 +747,8 @@ struct const_poly_ptr {
   friend struct any_cast_fn;
   template<TTA...>
   friend struct const_poly_ptr;
+  template<TTA...>
+  friend struct const_poly_ref;
  public:
   // from nothing(empty)
   constexpr const_poly_ptr() = default;
@@ -771,7 +763,8 @@ struct const_poly_ptr {
   template <typename T>
   constexpr const_poly_ptr(const T* ptr) noexcept {
     poly_.value_ptr = ptr;
-    poly_.vtable_ptr = ptr != nullptr ? addr_vtable_for<T, Methods...> : nullptr;
+    // if ptr == nullptr no matter what stored in vtable_ptr and i dont want branching here
+    poly_.vtable_ptr = addr_vtable_for<T, Methods...>;
   }
   // from pointer to Any
   // clang-format off
@@ -790,25 +783,18 @@ struct const_poly_ptr {
     poly_.vtable_ptr = p.poly_.vtable_ptr;
   }
   // clang-format off
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
   template <TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
   constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
   // clang-format on
   {
-    constexpr size_t index = ::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                                     type_list<FromMethods<interface_t>...>{});
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = reinterpret_cast<const vtable<Methods...>*>(
-        reinterpret_cast<const std::byte*>(p.poly_.vtable_ptr) + (sizeof(void*) * index));
+    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
   }
   // clang-format off
-  // creating from higher requirements, if Methods are contigious subset of FromMethods
   template <TTA... FromMethods>
-  requires(::noexport::find_subset(type_list<Methods<interface_t>...>{},
-                                   type_list<FromMethods<interface_t>...>{}) != npos)
   constexpr const_poly_ptr(poly_ptr<FromMethods...> p) noexcept
+  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
       // clang-format on
       : const_poly_ptr(const_poly_ptr<FromMethods...>{p}) {
   }
@@ -842,11 +828,17 @@ const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
 template <TTA... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
-  return ::noexport::bit_cast<poly_ptr<Methods...>>(*this);
+  poly_ptr<Methods...> result;
+  result.poly_.vtable_ptr = vtable_ptr;
+  result.poly_.value_ptr = value_ptr;
+  return result;
 }
 template <TTA... Methods>
 constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
-  return ::noexport::bit_cast<const_poly_ptr<Methods...>>(*this);
+  const_poly_ptr<Methods...> result;
+  result.poly_.vtable_ptr = vtable_ptr;
+  result.poly_.value_ptr = value_ptr;
+  return result;
 }
 
 // CRTP - inheritor of basic_any
