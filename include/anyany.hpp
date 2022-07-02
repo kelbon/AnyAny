@@ -512,20 +512,26 @@ struct vtable {
 };
 
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
-// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
-// clang-format off
-template <TTA... ToMethods, TTA... FromMethods,
-    std::size_t index = ::noexport::find_subset(
-                            type_list<ToMethods<interface_t>...>{},
-                            type_list<FromMethods<interface_t>...>{})>
-requires(index != npos)
-const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
-  // clang-format on
-  assert(ptr != nullptr);
-  static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
-  return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
-                                                       sizeof(void*) * index);
-}
+// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
+// it is struct only because of gcc internal compiler error in case when it is function
+template<TTA... ToMethods>
+struct subtable_ptr_fn {
+  template <TTA... FromMethods,
+            std::size_t index = ::noexport::find_subset(type_list<ToMethods<interface_t>...>{},
+                                                        type_list<FromMethods<interface_t>...>{})>
+  // clang-format off
+  requires(index != npos)
+  const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
+    // clang-format on
+    assert(ptr != nullptr);
+    static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
+    return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
+                                                         sizeof(void*) * index);
+  }
+};
+
+template<TTA... ToMethods>
+constexpr inline subtable_ptr_fn<ToMethods...> subtable_ptr{};
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, TTA... Methods>   // dont know why, but only C cast works on constexpr here
