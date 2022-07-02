@@ -512,26 +512,21 @@ struct vtable {
 };
 
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
-// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
-// it is struct only because of gcc internal compiler error in case when it is function
-template<TTA... ToMethods>
-struct subtable_ptr_fn {
-  template <TTA... FromMethods,
-            std::size_t index = ::noexport::find_subset(type_list<ToMethods<interface_t>...>{},
-                                                        type_list<FromMethods<interface_t>...>{})>
-  // clang-format off
-  requires(index != npos)
-  const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
-    // clang-format on
-    assert(ptr != nullptr);
-    static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
-    return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
-                                                         sizeof(void*) * index);
-  }
-};
-
-template<TTA... ToMethods>
-constexpr inline subtable_ptr_fn<ToMethods...> subtable_ptr{};
+// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
+// clang-format off
+// first argument only for deducting ToMethods(or internal compiler error on gcc...)
+template <TTA... ToMethods, TTA... FromMethods,
+    std::size_t index = ::noexport::find_subset(
+                            type_list<ToMethods<interface_t>...>{},
+                            type_list<FromMethods<interface_t>...>{})>
+requires(index != npos)
+const vtable<ToMethods...>* subtable_ptr(const vtable<ToMethods...>*, const vtable<FromMethods...>* ptr) noexcept {
+  // clang-format on
+  assert(ptr != nullptr);
+  static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
+  return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
+                                                       sizeof(void*) * index);
+}
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, TTA... Methods>   // dont know why, but only C cast works on constexpr here
@@ -584,9 +579,9 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   }
   template <TTA... FromMethods>
   constexpr poly_ref(poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
+  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
       // clang-format on
-      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
         value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
@@ -641,17 +636,17 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   // clang-format off
   template <TTA... FromMethods>
   constexpr const_poly_ref(const_poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
+  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
       // clang-format on
-      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
         value_ptr(p.value_ptr) {
   }
   // clang-format off
   template <TTA... FromMethods>
   constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.vtable_ptr); }
+  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
       // clang-format on
-      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)),
+      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
         value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
@@ -709,11 +704,11 @@ struct poly_ptr {
   // clang-format off
   template <TTA... FromMethods>
   constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
+  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
   // clang-format on
   {
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
+    poly_.vtable_ptr = subtable_ptr(decltype(poly_.vtable_ptr){}, p.poly_.vtable_ptr);
   }
   // observers
 
@@ -791,16 +786,16 @@ struct const_poly_ptr {
   // clang-format off
   template <TTA... FromMethods>
   constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
+  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
   // clang-format on
   {
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
+    poly_.vtable_ptr = subtable_ptr(decltype(poly_.vtable_ptr){}, p.poly_.vtable_ptr);
   }
   // clang-format off
   template <TTA... FromMethods>
   constexpr const_poly_ptr(poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr<Methods...>(p.poly_.vtable_ptr); }
+  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
       // clang-format on
       : const_poly_ptr(const_poly_ptr<FromMethods...>{p}) {
   }
