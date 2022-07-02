@@ -515,17 +515,18 @@ struct vtable {
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
 // clang-format off
 // first argument only for deducting ToMethods(or internal compiler error on gcc...)
-template <TTA... ToMethods, TTA... FromMethods,
-    std::size_t index = ::noexport::find_subset(
+template <TTA... ToMethods, TTA... FromMethods>
+requires(::noexport::find_subset(
                             type_list<ToMethods<interface_t>...>{},
-                            type_list<FromMethods<interface_t>...>{})>
-requires(index != npos)
-const vtable<ToMethods...>* subtable_ptr(const vtable<ToMethods...>*, const vtable<FromMethods...>* ptr) noexcept {
+                            type_list<FromMethods<interface_t>...>{}) != npos)
+const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
   // clang-format on
   assert(ptr != nullptr);
+  constexpr std::size_t Index = ::noexport::find_subset(type_list<ToMethods<interface_t>...>{},
+                                                        type_list<FromMethods<interface_t>...>{});
   static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
   return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
-                                                       sizeof(void*) * index);
+                                                       sizeof(void*) * Index);
 }
 
 // must be never named explicitly, use addr_vtable_for
@@ -543,7 +544,7 @@ concept not_const_type = !std::is_const_v<T>;
 template <TTA... Methods>
 struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
  private:
-  const vtable<Methods...>* vtable_ptr; // unspecified value if value_ptr == nullptr
+  const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
   void* value_ptr;
 
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
@@ -573,16 +574,19 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   // from mutable lvalue
   template <not_const_type T> // not shadow copy ctor
   requires(!std::same_as<poly_ref<Methods...>, T>)
-  constexpr poly_ref(T& value) noexcept
-      : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
-      static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");
-  }
-  template <TTA... FromMethods>
-  constexpr poly_ref(poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
       // clang-format on
-      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
-        value_ptr(p.value_ptr) {
+      constexpr poly_ref(T& value) noexcept
+      : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
+    static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
+                  "Decay it before emplace, ambigious pointer");
+  }
+
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
+  constexpr poly_ref(poly_ref<FromMethods...> p) noexcept
+
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)), value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
   static consteval bool has_value() noexcept {
@@ -614,6 +618,7 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   // uninitialized for pointer implementation
   constexpr const_poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
+
  public:
   // cannot rebind reference
   const_poly_ref(const const_poly_ref&) = default;
@@ -633,21 +638,17 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   constexpr const_poly_ref(poly_ref<Methods...> p) noexcept
       : vtable_ptr(p.vtable_ptr), value_ptr(p.value_ptr) {
   }
-  // clang-format off
-  template <TTA... FromMethods>
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(const_poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
-      // clang-format on
-      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
-        value_ptr(p.value_ptr) {
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)), value_ptr(p.value_ptr) {
   }
-  // clang-format off
-  template <TTA... FromMethods>
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(poly_ref<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(vtable_ptr, p.vtable_ptr); }
-      // clang-format on
-      : vtable_ptr(subtable_ptr(decltype(vtable_ptr){}, p.vtable_ptr)),
-        value_ptr(p.value_ptr) {
+      : vtable_ptr(subtable_ptr<Methods...>(p.vtable_ptr)), value_ptr(p.value_ptr) {
   }
   // for same interface(in plugins for example), always returns true
   static consteval bool has_value() noexcept {
@@ -668,12 +669,13 @@ struct poly_ptr {
   // uninitialized reference by default
   poly_ref<Methods...> poly_ = nullptr;
 
-  template<TTA...>
+  template <TTA...>
   friend struct poly_ptr;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ptr;
-  template<TTA...>
+  template <TTA...>
   friend struct poly_ref;
+
  public:
   // from nothing (empty)
   constexpr poly_ptr() = default;
@@ -701,14 +703,12 @@ struct poly_ptr {
       poly_.value_ptr = ptr->value_ptr;
     }
   }
-  // clang-format off
-  template <TTA... FromMethods>
-  constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
-  // clang-format on
-  {
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
+  constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept {
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = subtable_ptr(decltype(poly_.vtable_ptr){}, p.poly_.vtable_ptr);
+    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
   }
   // observers
 
@@ -744,12 +744,13 @@ struct const_poly_ptr {
   // uninitialized reference by default
   const_poly_ref<Methods...> poly_ = nullptr;
 
-  template<typename>
+  template <typename>
   friend struct any_cast_fn;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ptr;
-  template<TTA...>
+  template <TTA...>
   friend struct const_poly_ref;
+
  public:
   // from nothing(empty)
   constexpr const_poly_ptr() = default;
@@ -783,20 +784,17 @@ struct const_poly_ptr {
     poly_.value_ptr = p.poly_.value_ptr;
     poly_.vtable_ptr = p.poly_.vtable_ptr;
   }
-  // clang-format off
-  template <TTA... FromMethods>
-  constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
-  // clang-format on
-  {
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
+  constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept {
     poly_.value_ptr = p.poly_.value_ptr;
-    poly_.vtable_ptr = subtable_ptr(decltype(poly_.vtable_ptr){}, p.poly_.vtable_ptr);
+    poly_.vtable_ptr = subtable_ptr<Methods...>(p.poly_.vtable_ptr);
   }
-  // clang-format off
-  template <TTA... FromMethods>
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ptr(poly_ptr<FromMethods...> p) noexcept
-  requires requires { subtable_ptr(poly_.vtable_ptr, p.poly_.vtable_ptr); }
-      // clang-format on
       : const_poly_ptr(const_poly_ptr<FromMethods...>{p}) {
   }
   // observers
