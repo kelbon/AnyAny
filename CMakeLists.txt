@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(anyany)
+project(anyany LANGUAGES CXX)
 
 include(CTest)
 
@@ -9,9 +9,11 @@ if(BUILD_TESTING)
 endif()
 add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp ${ANYANY_TEST} ${ANYANY_EXAMPLES})
 set_property(TARGET anyany PROPERTY CMAKE_CXX_EXTENSIONS OFF)
+set_property(TARGET anyany PROPERTY LINKER_LANGUAGE CXX)
 target_include_directories(anyany PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_library(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
+set_property(TARGET anyanylib PROPERTY LINKER_LANGUAGE CXX)
 target_include_directories(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_property(TARGET anyanylib PROPERTY CMAKE_CXX_EXTENSIONS OFF)
 source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)

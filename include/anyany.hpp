@@ -1306,11 +1306,6 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   }
 };
 
-template <typename T>
-struct invoke_unsafe_fn<destroy, T> {
-  static_assert(noexport::always_false<T>,
-                "Invoking destructor of contained value in any by hands is a bad idea");
-};
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
 template <TTA Method>
 constexpr invoke_unsafe_fn<Method> invoke_unsafe = {};
@@ -1396,11 +1391,6 @@ struct invoke_fn<Method, type_list<Args...>> {
   }
 };
 
-template <typename T>
-struct invoke_fn<destroy, T> {
-  static_assert(noexport::always_false<T>,
-                "Invoking destructor of contained value in any by hands is a bad idea");
-};
 
 template <TTA Method>
 constexpr invoke_fn<Method> invoke = {};
