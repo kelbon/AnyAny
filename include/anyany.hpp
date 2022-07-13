@@ -120,11 +120,7 @@ constexpr inline bool always_false = false;
 
 template <typename Self>
 consteval bool is_const_method() noexcept {
-  // looks like compiler bug (in msvc AND clang too) "reinterpret_cast from 'void*'
-  // to 'const char*&' casts away qualifirs" what is obviosly a lie
-  if (std::is_pointer_v<Self>)
-    return std::is_const_v<std::remove_pointer_t<Self>>;
-  else if (std::is_reference_v<Self>)
+  if (std::is_reference_v<Self>)
     return std::is_const_v<std::remove_reference_t<Self>>;
   return true;  // passing by value is a const method!
 }
@@ -290,11 +286,6 @@ struct invoker_for<T, Method, type_list<Args...>> {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
       return Method<T>::do_invoke(*std::launder(reinterpret_cast<real_self>(self)),
                                   static_cast<Args&&>(args)...);
-    } else if constexpr (std::is_pointer_v<self_sample>) {
-      using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
-      return Method<T>::do_invoke(std::launder(reinterpret_cast<real_self>(self)),
-                                  static_cast<Args&&>(args)...);
-
     } else if constexpr (std::is_copy_constructible_v<T>) {
       return Method<T>::do_invoke(*std::launder(reinterpret_cast<const T*>(self)),
                                   static_cast<Args&&>(args)...);
@@ -315,8 +306,8 @@ concept any_x = requires {
 
 template <std::destructible T>
 struct destroy {
-  static void do_invoke(const T* self) noexcept {
-    std::destroy_at(self);
+  static void do_invoke(const T& self) noexcept {
+    std::destroy_at(std::addressof(self));
   }
 };
 
@@ -324,11 +315,11 @@ template <std::destructible T>
 struct move {
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
   // constructible. Actially relocates
-  static void do_invoke(T* src, void* dest) {
+  static void do_invoke(T& src, void* dest) {
     if constexpr (std::is_nothrow_move_constructible_v<T>) {
         // TODO std::relocate ? When possible, if type is relocable
-      std::construct_at(reinterpret_cast<T*>(dest), std::move(*src));
-      std::destroy_at(src);
+      std::construct_at(reinterpret_cast<T*>(dest), std::move(src));
+      std::destroy_at(std::addressof(src));
     } else {
       // not static assert, because will be never called, but needed to compile
       UNREACHABLE();
@@ -350,9 +341,9 @@ struct copy_with {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static void* do_invoke(const T* src, void* dest) {
+    static void* do_invoke(const T& src, void* dest) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
-        std::construct_at(reinterpret_cast<T*>(dest), *src);
+        std::construct_at(reinterpret_cast<T*>(dest), src);
         return dest;
       } else {
         using alloc_traits = std::allocator_traits<Alloc>;
@@ -361,10 +352,10 @@ struct copy_with {
         // no fancy pointers supported
         void* ptr = Alloc{}.allocate(alloc_sz);
         if constexpr (std::is_nothrow_copy_constructible_v<T>) {
-          std::construct_at(reinterpret_cast<T*>(ptr), *src);
+          std::construct_at(reinterpret_cast<T*>(ptr), src);
         } else {
           try {
-            std::construct_at(reinterpret_cast<T*>(ptr), *src);
+            std::construct_at(reinterpret_cast<T*>(ptr), src);
           } catch (...) {
             Alloc{}.deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
             throw;
@@ -387,9 +378,9 @@ struct copy_with<Alloc, SooS> {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static void* do_invoke(const T* src, void* dest, Alloc* alloc) {
+    static void* do_invoke(const T& src, void* dest, Alloc* alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
-        std::construct_at(reinterpret_cast<T*>(dest), *src);
+        std::construct_at(reinterpret_cast<T*>(dest), src);
         return dest;
       } else {
         using alloc_traits = std::allocator_traits<Alloc>;
@@ -398,10 +389,10 @@ struct copy_with<Alloc, SooS> {
         // no fancy pointers supported
         void* ptr = alloc->allocate(alloc_sz);
         if constexpr (std::is_nothrow_copy_constructible_v<T>) {
-          std::construct_at(reinterpret_cast<T*>(ptr), *src);
+          std::construct_at(reinterpret_cast<T*>(ptr), src);
         } else {
           try {
-            std::construct_at(reinterpret_cast<T*>(ptr), *src);
+            std::construct_at(reinterpret_cast<T*>(ptr), src);
           } catch (...) {
             alloc->deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
             throw;
@@ -444,8 +435,8 @@ struct type_id {
 // since C++20 operator== it is a != too
 template <typename T>
 struct equal_to {
-  static bool do_invoke(const T* first, const void* second) {
-    return *first == *reinterpret_cast<const T*>(second);
+  static bool do_invoke(const T& first, const void* second) {
+    return first == *reinterpret_cast<const T*>(second);
   }
 };
 
@@ -453,8 +444,8 @@ template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static std::partial_ordering do_invoke(const T* first, const void* second) {
-    return *first <=> *reinterpret_cast<const T*>(second);
+  static std::partial_ordering do_invoke(const T& first, const void* second) {
+    return first <=> *reinterpret_cast<const T*>(second);
   }
 };
 
@@ -734,6 +725,12 @@ struct poly_ptr {
   constexpr const poly_ref<Methods...>* operator->() const noexcept {
     return std::addressof(poly_);
   }
+
+  // compare
+
+  constexpr bool operator==(const poly_ptr& other) const noexcept {
+    return raw() == other.raw();
+  }
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
@@ -819,6 +816,12 @@ struct const_poly_ptr {
   }
   constexpr const const_poly_ref<Methods...>* operator->() const noexcept {
     return std::addressof(poly_);
+  }
+
+  // compare
+
+  constexpr bool operator==(const const_poly_ptr& other) const noexcept {
+    return raw() == other.raw();
   }
 };
 
@@ -1285,11 +1288,7 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   requires (!any_x<T>)
   result_t<Method> operator()(T&& value, Args... args) const {
     // clang-format on
-    if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
-      return Method<std::decay_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
-    } else {
-      return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
-    }
+    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
   }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
   // (result can create useless copies of args, because assumes to be invoked more then one time)
@@ -1371,11 +1370,7 @@ struct invoke_fn<Method, type_list<Args...>> {
   requires (!any_x<T>)
   result_t<Method> operator()(T&& value, Args... args) const {
     // clang-format on
-    if constexpr (std::is_pointer_v<self_sample_t<Method>>) {
-      return Method<std::decay_t<T>>::do_invoke(std::addressof(value), static_cast<Args&&>(args)...);
-    } else {
-      return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
-    }
+    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
   }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
   // (result can create useless copies of args, because assumes to be invoked more then one time)

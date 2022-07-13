@@ -294,8 +294,8 @@ struct foox {
 
 template<typename T>
 struct barx {
-  static std::string do_invoke(T* self, int&& f, std::string&& s) {
-    return self->bar(f, s);
+  static std::string do_invoke(T& self, int&& f, std::string&& s) {
+    return self.bar(f, s);
   }
 };
 
@@ -413,12 +413,6 @@ void Foobar(idrawable::const_ptr v) {
   std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
 }
 
-template <typename T>
-struct Drawiptr {
-  static int do_invoke(const T* self, int val) {
-    return self->draw(val);
-  }
-};
 struct A1 {
   int i = 10;
 };
@@ -495,9 +489,7 @@ int main() {
     aa::invoke<Drawi>(v0, 1);
     aa::invoke_unsafe<Drawi>(v0, 2);
     aa::invoke<Drawi>(v1, 3);
-    aa::invoke<Drawiptr>(v1, 3);
     aa::invoke_unsafe<Drawi>(v1, 4);
-    aa::invoke_unsafe<Drawiptr>(v1, 4);
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;
