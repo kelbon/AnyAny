@@ -1355,23 +1355,23 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  result_t<Method> operator()(const poly_ref<Methods...>& p, Args... args) const {
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  result_t<Method> operator()(const const_poly_ref<Methods...>& p, Args... args) const {
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
 
   // FOR NON POLYMORPHIC VALUE (common interface with all types)
   // clang-format off
-  //template<typename T>
-  //requires (!any_x<T>)
-  //result_t<Method> operator()(T&& value, Args... args) const {
-  //  // clang-format on
-  //  return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
-  //}
+  template<typename T>
+  requires (!any_x<T>)
+  result_t<Method> operator()(T&& value, Args... args) const {
+    // clang-format on
+    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+  }
   // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
   // (result can create useless copies of args, because assumes to be invoked more then one time)
   constexpr auto with(Args... args) const {

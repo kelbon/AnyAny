@@ -435,212 +435,212 @@ struct M2 {
 template<typename T>
 using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
-// using any_sized_range = aa::any_with<Size>;
-// std::vector<int> v(10, 15);
-// any_sized_range rng = v;
-// std::cout << aa::invoke<Size>(rng);
-// A1 u;
-// A2 u1;
-// aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
-// aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
-// aa::invoke<M1>(cfi, -1);
-// aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
-// aa::const_poly_ptr<M2, aa::move> cfi2p = &cfi;
-// aa::const_poly_ptr copy = cfi2p;
-// (void)copy;
-// aa::invoke<M2>(cfi2, 3.14, -2);
-// aa::invoke<M2>(*cfi2p, 3.14, -2);
-// aa::const_poly_ref<M2> cfi3 = cfi2;
-// aa::const_poly_ptr<M2> cfi3p = &cfi2;
-// aa::invoke<M2>(cfi3, 134., -3);
-// aa::invoke<M2>(*cfi3p, 134., -3);
-// aa::const_poly_ref<M1, M2> cfi4 = fi;
-// aa::const_poly_ptr<M1, M2> cfi4p = &fi;
-// aa::invoke<M1>(cfi4, -5);
-// aa::invoke<M1>(*cfi4p, -5);
-// aa::invoke<M2>(cfi4, 13400., -6);
-// aa::invoke<M2>(*cfi4p, 13400., -6);
-// aa::poly_ref<M2, aa::copy> fi2 = fi;
-// aa::poly_ref<M2> fi3 = fi2;
-// aa::poly_ptr<M2> fi3p = &fi2;
-// aa::poly_ptr copy2 = fi3p;
-// (void)copy2;
-// aa::invoke<M1>(fi, 10);
-// aa::invoke<M2>(fi, 11., 12);
-// aa::invoke<M2>(fi2, 11., 12);
-// aa::invoke<M2>(fi3, 11., 12);
-// aa::invoke<M2>(*fi3p, 11., 12);
-// int i = 1;
-// if (i && cfi2.has_value())  // consteval static member function of reference, true always
-//   std::cout << "works\n";
-// constexpr auto j0 =
-//     noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
-// constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
-// constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
-// constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
-// constexpr auto j4 = noexport::find_subset(
-//     aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
-// (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
-// {
-//   // with plugin
-//   drawable0 v0;
-//   const drawable1 v1;
-//   // invoke on non polymorphic values for same interface
-//   aa::invoke<Drawi>(v0, 1);
-//   aa::invoke_unsafe<Drawi>(v0, 2);
-//   aa::invoke<Drawi>(v1, 3);
-//   aa::invoke_unsafe<Drawi>(v1, 4);
-//   // create
-//   idrawable::ptr pp1 = &v0;
-//   idrawable::const_ptr pp2 = &v0;
-//   idrawable::ref pr1 = v0;
-//   idrawable::const_ref pr2 = v0;
-//   idrawable::const_ptr pp3 = &v1;
-//   idrawable::const_ref pr3 = v1;
-//   (void)aa::any_cast<const drawable1>(pr3);
-//   (void)aa::any_cast<drawable1>(pr3);
-//   (void)aa::any_cast<const drawable1&>(pr3);
-//   (void)aa::any_cast<drawable1&>(pr3);
-//   (void)aa::any_cast<const drawable0>(pr1);
-//   (void)aa::any_cast<drawable0>(pr1);
-//   (void)aa::any_cast<const drawable0&>(pr1);
-//   (void)aa::any_cast<drawable0&>(pr1);
-//   idrawable pval = v0;
-//   auto pip1 = &pval;
-//   if (aa::any_cast<drawable0>(pip1) == nullptr)
-//     return -1;
-//   (void)aa::any_cast<drawable0&>(*pip1);
-//   const idrawable cpval = v1;
-//   // same rules for poly ptr/poly ref/ poly value
-//   aa::any_cast<drawable1>(*&cpval).draw(5);  // without addressof, same rules - same result
-//   aa::any_cast<drawable1>(&cpval)->draw(5);
-//   aa::any_cast<drawable1>(std::addressof(cpval))->draw(5);
-//   aa::any_cast<const drawable1>(std::addressof(cpval))->draw(5);
-//   if (cpval.sizeof_now() != sizeof(drawable1))
-//     return -1;
-//   auto pip2 = &cpval;
-//   (void)pip1, (void)pip2;
-//   idrawable::ref pr4 = v0;
-//   idrawable::const_ref pr5 = v0;
-//   idrawable::ptr pp4 = &v0;
-//   idrawable::const_ptr pp5 = &v0;
-//   if (aa::any_cast<drawable0>(pp1) == nullptr || aa::any_cast<const drawable0>(pp1) == nullptr)
-//     return -1;
-//   (void)pr4, (void)pr5, (void)pp4, (void)pp5;
-//   // deduction guides
-//   aa::poly_ptr p_1 = pp1;
-//   aa::const_poly_ptr p_2 = pp1;
-//   aa::const_poly_ptr p_3 = pp2;
-//   (void)p_1, (void)p_2, (void)p_3;
-//   // invoke
-//   aa::invoke_unsafe<Drawi>(*pp1, 150);
-//   aa::invoke_unsafe<Drawi>(pr1, 150);
-//   aa::invoke_unsafe<Drawi>(*&pr1, 150);
-//   aa::invoke_unsafe<Drawi>(*pp2, 150);
-//   aa::invoke_unsafe<Drawi>(*pp3, 150);
-//   aa::invoke_unsafe<Drawi>(pr2, 150);
-//   aa::invoke_unsafe<Drawi>(*&pr2, 150);
-//   aa::invoke_unsafe<Drawi>(*&pr3, 150);
-//   aa::invoke<Drawi>(*pp1, 150);
-//   aa::invoke<Drawi>(pr1, 150);
-//   aa::invoke<Drawi>(*&pr1, 150);
-//   aa::invoke<Drawi>(*pp2, 150);
-//   aa::invoke<Drawi>(*pp3, 150);
-//   aa::invoke<Drawi>(pr2, 150);
-//   aa::invoke<Drawi>(*&pr2, 150);
-//   aa::invoke<Drawi>(*&pr3, 150);
-//   pp1->draw(150);
-//   pp2->draw(150);
-//   pp3->draw(150);
-//   pr1.draw(150);
-//   pr2.draw(150);
-//   pr3.draw(150);
-//   (*&pr1).draw(150);
-//   (*&pr2).draw(150);
-//   (*&pr3).draw(150);
-//   // casts
-//   aa::any_cast<drawable0>(pp1)->draw(150);
-//   aa::any_cast<drawable0>(pp2)->draw(150);
-//   aa::any_cast<drawable1>(pp3)->draw(150);
-//   aa::any_cast<drawable0&>(pr1).draw(150);
-//   aa::any_cast<drawable0&>(pr2).draw(150);
-//   aa::any_cast<drawable1&>(pr3).draw(150);
-//   aa::any_cast<const drawable0&>(pr1).draw(150);
-//   aa::any_cast<const drawable0&>(pr2).draw(150);
-//   aa::any_cast<const drawable1&>(pr3).draw(150);
-//   if (aa::any_cast<drawable1>(pp1) != nullptr)
-//     return -1;
-//   try {
-//     (void)aa::any_cast<const drawable1&>(pr1);
-//     return -1;
-//   } catch (...) {
-//     // good
-//   }
-// }
-// {
-//   // without plugin
-//   Circle v0;
-//   const Circle v1{5, "hello world"};
-//   // create
-//   any_drawable::ptr pp1 = &v0;
-//   any_drawable::const_ptr pp2 = &v0;
-//   any_drawable::ref pr1 = v0;
-//   any_drawable::const_ref pr2 = v0;
-//   any_drawable::const_ptr pp3 = &v1;
-//   any_drawable::const_ref pr3 = v1;
-//   // invoke
-//   aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
-//   aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
-//   aa::invoke<Draw>(*pp1, std::cout, 150);
-//   aa::invoke<Draw>(pr1, std::cout, 150);
-//   aa::invoke<Draw>(*&pr1, std::cout, 150);
-//   aa::invoke<Draw>(*pp2, std::cout, 150);
-//   aa::invoke<Draw>(*pp3, std::cout, 150);
-//   aa::invoke<Draw>(pr2, std::cout, 150);
-//   aa::invoke<Draw>(*&pr2, std::cout, 150);
-//   aa::invoke<Draw>(*&pr3, std::cout, 150);
-//   // casts
-//   aa::any_cast<const Circle>(pp1)->draw(std::cout, 150);
-//   aa::any_cast<Circle>(pp2)->draw(std::cout, 150);
-//   aa::any_cast<const Circle>(pp3)->draw(std::cout, 150);
-//   aa::any_cast<Circle&>(pr1).draw(std::cout, 150);
-//   aa::any_cast<const Circle&>(pr1).draw(std::cout, 150);
-//   aa::any_cast<Circle&>(pr2).draw(std::cout, 150);
-//   aa::any_cast<const Circle&>(pr3).draw(std::cout, 150);
-//   aa::any_cast<Circle&>(pr3).draw(std::cout, 150);
-//   if (aa::any_cast<Triangle>(pp1) != nullptr)
-//     return -1;
-//   try {
-//     (void)aa::any_cast<Triangle&>(pr3);
-//     return -1;
-//   } catch (...) {
-//     // good
-//   }
-// }
-// drawable0 v00;
-// const drawable1 v01;
-// Foobar((idrawable::ptr)&v00);
-// Foobar(&v01);
-// xyz val = 5;
-// std::cout << sizeof(val);
-// (void)(val == 5);
-// val = std::string{"hello world"};
-// val = 0.f;
-// val = std::vector<int>{1, 2, 3, 4};
-// example1();
-// example_draw();
-// example_draw_explicit();
-// example_polyref();
-// std::unordered_set<any_hashable> set;
-// set.insert(std::string{"hello world"});
-// set.emplace(5);
-// set.emplace(5.);
-// srand(time(0));
-// return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
+  using any_sized_range = aa::any_with<Size>;
+  std::vector<int> v(10, 15);
+  any_sized_range rng = v;
+  std::cout << aa::invoke<Size>(rng);
+  A1 u;
+  A2 u1;
+  aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
+  aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
+  aa::invoke<M1>(cfi, -1);
+  aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
+  aa::const_poly_ptr<M2, aa::move> cfi2p = &cfi;
+  aa::const_poly_ptr copy = cfi2p;
+  (void)copy;
+  aa::invoke<M2>(cfi2, 3.14, -2);
+  aa::invoke<M2>(*cfi2p, 3.14, -2);
+  aa::const_poly_ref<M2> cfi3 = cfi2;
+  aa::const_poly_ptr<M2> cfi3p = &cfi2;
+  aa::invoke<M2>(cfi3, 134., -3);
+  aa::invoke<M2>(*cfi3p, 134., -3);
+  aa::const_poly_ref<M1, M2> cfi4 = fi;
+  aa::const_poly_ptr<M1, M2> cfi4p = &fi;
+  aa::invoke<M1>(cfi4, -5);
+  aa::invoke<M1>(*cfi4p, -5);
+  aa::invoke<M2>(cfi4, 13400., -6);
+  aa::invoke<M2>(*cfi4p, 13400., -6);
+  aa::poly_ref<M2, aa::copy> fi2 = fi;
+  aa::poly_ref<M2> fi3 = fi2;
+  aa::poly_ptr<M2> fi3p = &fi2;
+  aa::poly_ptr copy2 = fi3p;
+  (void)copy2;
+  aa::invoke<M1>(fi, 10);
+  aa::invoke<M2>(fi, 11., 12);
+  aa::invoke<M2>(fi2, 11., 12);
+  aa::invoke<M2>(fi3, 11., 12);
+  aa::invoke<M2>(*fi3p, 11., 12);
+  int i = 1;
+  if (i && cfi2.has_value())  // consteval static member function of reference, true always
+    std::cout << "works\n";
+  constexpr auto j0 =
+      noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
+  constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
+  constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j4 = noexport::find_subset(
+      aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
+  (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
+  {
+    // with plugin
+    drawable0 v0;
+    const drawable1 v1;
+    // invoke on non polymorphic values for same interface
+    aa::invoke<Drawi>(v0, 1);
+    aa::invoke_unsafe<Drawi>(v0, 2);
+    aa::invoke<Drawi>(v1, 3);
+    aa::invoke_unsafe<Drawi>(v1, 4);
+    // create
+    idrawable::ptr pp1 = &v0;
+    idrawable::const_ptr pp2 = &v0;
+    idrawable::ref pr1 = v0;
+    idrawable::const_ref pr2 = v0;
+    idrawable::const_ptr pp3 = &v1;
+    idrawable::const_ref pr3 = v1;
+    (void)aa::any_cast<const drawable1>(pr3);
+    (void)aa::any_cast<drawable1>(pr3);
+    (void)aa::any_cast<const drawable1&>(pr3);
+    (void)aa::any_cast<drawable1&>(pr3);
+    (void)aa::any_cast<const drawable0>(pr1);
+    (void)aa::any_cast<drawable0>(pr1);
+    (void)aa::any_cast<const drawable0&>(pr1);
+    (void)aa::any_cast<drawable0&>(pr1);
+    idrawable pval = v0;
+    auto pip1 = &pval;
+    if (aa::any_cast<drawable0>(pip1) == nullptr)
+      return -1;
+    (void)aa::any_cast<drawable0&>(*pip1);
+    const idrawable cpval = v1;
+    // same rules for poly ptr/poly ref/ poly value
+    aa::any_cast<drawable1>(*&cpval).draw(5);  // without addressof, same rules - same result
+    aa::any_cast<drawable1>(&cpval)->draw(5);
+    aa::any_cast<drawable1>(std::addressof(cpval))->draw(5);
+    aa::any_cast<const drawable1>(std::addressof(cpval))->draw(5);
+    if (cpval.sizeof_now() != sizeof(drawable1))
+      return -1;
+    auto pip2 = &cpval;
+    (void)pip1, (void)pip2;
+    idrawable::ref pr4 = v0;
+    idrawable::const_ref pr5 = v0;
+    idrawable::ptr pp4 = &v0;
+    idrawable::const_ptr pp5 = &v0;
+    if (aa::any_cast<drawable0>(pp1) == nullptr || aa::any_cast<const drawable0>(pp1) == nullptr)
+      return -1;
+    (void)pr4, (void)pr5, (void)pp4, (void)pp5;
+    // deduction guides
+    aa::poly_ptr p_1 = pp1;
+    aa::const_poly_ptr p_2 = pp1;
+    aa::const_poly_ptr p_3 = pp2;
+    (void)p_1, (void)p_2, (void)p_3;
+    // invoke
+    aa::invoke_unsafe<Drawi>(*pp1, 150);
+    aa::invoke_unsafe<Drawi>(pr1, 150);
+    aa::invoke_unsafe<Drawi>(*&pr1, 150);
+    aa::invoke_unsafe<Drawi>(*pp2, 150);
+    aa::invoke_unsafe<Drawi>(*pp3, 150);
+    aa::invoke_unsafe<Drawi>(pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr2, 150);
+    aa::invoke_unsafe<Drawi>(*&pr3, 150);
+    aa::invoke<Drawi>(*pp1, 150);
+    aa::invoke<Drawi>(pr1, 150);
+    aa::invoke<Drawi>(*&pr1, 150);
+    aa::invoke<Drawi>(*pp2, 150);
+    aa::invoke<Drawi>(*pp3, 150);
+    aa::invoke<Drawi>(pr2, 150);
+    aa::invoke<Drawi>(*&pr2, 150);
+    aa::invoke<Drawi>(*&pr3, 150);
+    pp1->draw(150);
+    pp2->draw(150);
+    pp3->draw(150);
+    pr1.draw(150);
+    pr2.draw(150);
+    pr3.draw(150);
+    (*&pr1).draw(150);
+    (*&pr2).draw(150);
+    (*&pr3).draw(150);
+    // casts
+    aa::any_cast<drawable0>(pp1)->draw(150);
+    aa::any_cast<drawable0>(pp2)->draw(150);
+    aa::any_cast<drawable1>(pp3)->draw(150);
+    aa::any_cast<drawable0&>(pr1).draw(150);
+    aa::any_cast<drawable0&>(pr2).draw(150);
+    aa::any_cast<drawable1&>(pr3).draw(150);
+    aa::any_cast<const drawable0&>(pr1).draw(150);
+    aa::any_cast<const drawable0&>(pr2).draw(150);
+    aa::any_cast<const drawable1&>(pr3).draw(150);
+    if (aa::any_cast<drawable1>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<const drawable1&>(pr1);
+      return -1;
+    } catch (...) {
+      // good
+    }
+  }
+  {
+    // without plugin
+    Circle v0;
+    const Circle v1{5, "hello world"};
+    // create
+    any_drawable::ptr pp1 = &v0;
+    any_drawable::const_ptr pp2 = &v0;
+    any_drawable::ref pr1 = v0;
+    any_drawable::const_ref pr2 = v0;
+    any_drawable::const_ptr pp3 = &v1;
+    any_drawable::const_ref pr3 = v1;
+    // invoke
+    aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
+    aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
+    aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
+    aa::invoke<Draw>(*pp1, std::cout, 150);
+    aa::invoke<Draw>(pr1, std::cout, 150);
+    aa::invoke<Draw>(*&pr1, std::cout, 150);
+    aa::invoke<Draw>(*pp2, std::cout, 150);
+    aa::invoke<Draw>(*pp3, std::cout, 150);
+    aa::invoke<Draw>(pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr2, std::cout, 150);
+    aa::invoke<Draw>(*&pr3, std::cout, 150);
+    // casts
+    aa::any_cast<const Circle>(pp1)->draw(std::cout, 150);
+    aa::any_cast<Circle>(pp2)->draw(std::cout, 150);
+    aa::any_cast<const Circle>(pp3)->draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr1).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr2).draw(std::cout, 150);
+    aa::any_cast<const Circle&>(pr3).draw(std::cout, 150);
+    aa::any_cast<Circle&>(pr3).draw(std::cout, 150);
+    if (aa::any_cast<Triangle>(pp1) != nullptr)
+      return -1;
+    try {
+      (void)aa::any_cast<Triangle&>(pr3);
+      return -1;
+    } catch (...) {
+      // good
+    }
+  }
+  drawable0 v00;
+  const drawable1 v01;
+  Foobar((idrawable::ptr)&v00);
+  Foobar(&v01);
+  xyz val = 5;
+  std::cout << sizeof(val);
+  (void)(val == 5);
+  val = std::string{"hello world"};
+  val = 0.f;
+  val = std::vector<int>{1, 2, 3, 4};
+  example1();
+  example_draw();
+  example_draw_explicit();
+  example_polyref();
+  std::unordered_set<any_hashable> set;
+  set.insert(std::string{"hello world"});
+  set.emplace(5);
+  set.emplace(5.);
+  srand(time(0));
+  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
 }
