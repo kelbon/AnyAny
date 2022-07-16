@@ -10,7 +10,6 @@
 #include <compare>      // partical_ordering
 #include <cstddef>      // max_align_t on gcc
 // TODO remove when it will be C++20 module
-#undef AXIOM
 #undef UNREACHABLE
 
 // No prefix because it will be C++20 module when it will be possible on all compilers
@@ -19,15 +18,9 @@
 #define AXIOM(cond) __builtin_assume((cond))
 #define UNREACHABLE() __builtin_unreachable()
 #else
-#define AXIOM(cond)         \
-  do {                         \
-    if (!(cond))               \
-      __builtin_unreachable(); \
-  } while (0)
 #define UNREACHABLE() __builtin_unreachable()
 #endif
 #else
-#define AXIOM(cond) __assume((cond))
 #define UNREACHABLE() __assume(false)
 #endif
 
@@ -378,7 +371,7 @@ struct copy_with<Alloc, SooS> {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static void* do_invoke(const T& src, void* dest, Alloc* alloc) {
+    static void* do_invoke(const T& src, void* dest, Alloc& alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), src);
         return dest;
@@ -387,14 +380,14 @@ struct copy_with<Alloc, SooS> {
         // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
         constexpr typename alloc_traits::size_type alloc_sz = std::max(SooS, sizeof(T));
         // no fancy pointers supported
-        void* ptr = alloc->allocate(alloc_sz);
+        void* ptr = alloc.allocate(alloc_sz);
         if constexpr (std::is_nothrow_copy_constructible_v<T>) {
           std::construct_at(reinterpret_cast<T*>(ptr), src);
         } else {
           try {
             std::construct_at(reinterpret_cast<T*>(ptr), src);
           } catch (...) {
-            alloc->deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
+            alloc.deallocate(reinterpret_cast<typename alloc_traits::pointer>(ptr), alloc_sz);
             throw;
           }
         }
@@ -843,6 +836,65 @@ constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   return result;
 }
 
+template <TTA Method, typename = args_list<Method>>
+struct invoke_unsafe_fn;
+
+template <TTA Method, typename... Args>
+struct invoke_unsafe_fn<Method, type_list<Args...>> {
+  // FOR ANY
+
+  template <any_x U>
+  result_t<Method> operator()(U&& any, Args... args) const {
+    assert(any.vtable_ptr != nullptr);
+    return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
+  }
+  // clang-format off
+  template <any_x U>
+  result_t<Method> operator()(const U& any, Args... args) const {
+    // clang-format on
+    static_assert(const_method<Method>);
+    assert(any.vtable_ptr != nullptr);
+    return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
+  }
+
+  // FOR POLYMORPHIC REF
+
+  template <TTA... Methods>
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
+  }
+  template <TTA... Methods>
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+    static_assert(const_method<Method>);
+    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
+  }
+  // FOR NON POLYMORPHIC VALUE (common interface with all types)
+  // clang-format off
+  template<typename T>
+  requires (!any_x<T>)
+  result_t<Method> operator()(T&& value, Args... args) const {
+    // clang-format on
+    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+  }
+  // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
+  // (result can create useless copies of args, because assumes to be invoked more then one time)
+  constexpr auto with(Args... args) const {
+    return [tpl = std::make_tuple(static_cast<Args&&>(args)...)](auto&& self) mutable -> result_t<Method> {
+      return std::apply(
+          [&](Args&... args_) mutable
+          -> result_t<Method> {  // cast to Args, so its move only if Args is rvalue reference
+            return aa::invoke_unsafe_fn<Method>{}(std::forward<decltype(self)>(self),
+                                                  static_cast<Args>(args_)...);
+          },
+          tpl);
+    };
+  }
+};
+
+// for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
+template <TTA Method>
+constexpr invoke_unsafe_fn<Method> invoke_unsafe = {};
+
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
@@ -867,17 +919,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   static inline constexpr bool any_is_small_for =
       alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
 
-  template <TTA Method, typename... Args>
-  decltype(auto) vtable_invoke(Args&&... args) {
-    AXIOM(vtable_ptr != nullptr);
-    return vtable_ptr->template invoke<Method>(static_cast<void*>(value_ptr), std::forward<Args>(args)...);
-  }
-  // clang-format off
-  template <TTA Method, typename... Args> requires const_method<Method>
-  decltype(auto) vtable_invoke(Args&&... args) const {
-    AXIOM(vtable_ptr != nullptr);
-    return vtable_ptr->template invoke<Method>(static_cast<const void*>(value_ptr), std::forward<Args>(args)...);
-  }
   // clang-format on
   template <typename T, typename... Args>
   void emplace_in_empty(Args&&... args) {
@@ -910,7 +951,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 #ifdef AA_DLL_COMPATIBLE
     if (a.vtable_ptr == nullptr || b.vtable_ptr == nullptr)
       return a.vtable_ptr == b.vtable_ptr;
-    return a.vtable_invoke<type_id>() == b.vtable_invoke<type_id>();
+    return invoke_unsafe<type_id>(a) == invoke_unsafe<type_id>(b);
 #else
     return a.vtable_ptr == b.vtable_ptr;
 #endif
@@ -974,11 +1015,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (other.has_value()) {
       if constexpr (std::is_empty_v<Alloc>)
-        value_ptr =
-            other.vtable_invoke<copy_with<Alloc, SooS>::template method>(static_cast<void*>(value_ptr));
+        value_ptr = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr);
       else
-        value_ptr = other.vtable_invoke<copy_with<Alloc, SooS>::template method>(
-            static_cast<void*>(value_ptr), &alloc);
+        value_ptr = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr, alloc);
     }
     vtable_ptr = other.vtable_ptr;
   }
@@ -1075,7 +1114,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     return vtable_ptr != nullptr;
   }
   std::size_t sizeof_now() const noexcept {
-    return has_value() ? vtable_invoke<size_of>() : 0;
+    return has_value() ? invoke_unsafe<size_of>(*this) : 0;
   }
   // COMPARE
 
@@ -1093,10 +1132,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return true;
     if constexpr (has_method<spaceship>)
-      return vtable_invoke<spaceship>(static_cast<const void*>(other.value_ptr)) ==
+      return invoke_unsafe<spaceship>(*this, other.value_ptr) ==
              std::partial_ordering::equivalent;
     else
-      return vtable_invoke<equal_to>(static_cast<const void*>(other.value_ptr));
+      return invoke_unsafe<equal_to>(*this, other.value_ptr);
   }
 
   std::partial_ordering operator<=>(const basic_any& other) const requires(has_method<spaceship>) {
@@ -1104,7 +1143,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       return std::partial_ordering::unordered;
     if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
       return std::partial_ordering::equivalent;
-    return vtable_invoke<spaceship>(static_cast<const void*>(other.value_ptr));
+    return invoke_unsafe<spaceship>(*this, other.value_ptr);
   }
 
  private :
@@ -1116,9 +1155,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     if (!other.has_value())
       return;
     // `move` is noexcept (invariant of small state)
-    // `move` also 'relocate' i.e. calls dctor of value(for remove vtable_invoke<destroy> call in future)
+    // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated())
-      other.vtable_invoke<move>(static_cast<void*>(value_ptr));
+      invoke_unsafe<move>(other, value_ptr);
     else
       value_ptr = std::exchange(other.value_ptr, &other.data);
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
@@ -1129,10 +1168,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   }
   size_t allocated_size() const {
     assert(has_value() && memory_allocated());
-    return std::max(SooS, vtable_invoke<size_of>());
+    return std::max(SooS, invoke_unsafe<size_of>(*this));
   }
   void destroy_value() {
-    vtable_invoke<destroy>();
+    invoke_unsafe<destroy>(*this);
     if (memory_allocated()) {
       alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
       value_ptr = &data;
@@ -1153,7 +1192,7 @@ struct any_cast_fn {
 // U already remove_cv
 #ifdef AA_DLL_COMPATIBLE
     if (any == nullptr || !any->has_value() ||
-        any->template vtable_invoke<type_id>() != ::noexport::type_name<U>)
+        invoke_unsafe<type_id>(*any) != ::noexport::type_name<U>)
       return nullptr;
 #else
     if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
@@ -1165,7 +1204,7 @@ struct any_cast_fn {
   static U* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
 #ifdef AA_DLL_COMPATIBLE
     if (any == nullptr || !any->has_value() ||
-        any->template vtable_invoke<type_id>() != ::noexport::type_name<U>)
+        invoke_unsafe<type_id>(*any) != ::noexport::type_name<U>)
       return nullptr;
 #else
     if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
@@ -1250,65 +1289,6 @@ constexpr inline any_cast_fn<T> any_cast = {};
 // hack for compilation time / obj size reduce + accept exactly user args
 // (for example i can write invoke<Foo>(Any, {}, {1, 2, 3}) because compiler knows what types in must be
 
-template <TTA Method, typename = args_list<Method>>
-struct invoke_unsafe_fn;
-
-template <TTA Method, typename... Args>
-struct invoke_unsafe_fn<Method, type_list<Args...>> {
-  // FOR ANY
-
-  template <any_x U>
-  result_t<Method> operator()(U&& any, Args... args) const {
-    AXIOM(any.vtable_ptr != nullptr);
-    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-  }
-  // clang-format off
-  template <any_x U>
-  result_t<Method> operator()(const U& any, Args... args) const {
-    // clang-format on
-    static_assert(const_method<Method>);
-    AXIOM(any.vtable_ptr != nullptr);
-    return any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-  }
-
-  // FOR POLYMORPHIC REF
-
-  template <TTA... Methods>
-  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
-    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
-  }
-  template <TTA... Methods>
-  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
-    static_assert(const_method<Method>);
-    return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
-  }
-  // FOR NON POLYMORPHIC VALUE (common interface with all types)
-  // clang-format off
-  template<typename T>
-  requires (!any_x<T>)
-  result_t<Method> operator()(T&& value, Args... args) const {
-    // clang-format on
-    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
-  }
-  // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
-  // (result can create useless copies of args, because assumes to be invoked more then one time)
-  constexpr auto with(Args... args) const {
-    return [tpl = std::make_tuple(static_cast<Args&&>(args)...)](auto&& self) mutable -> result_t<Method> {
-      return std::apply(
-          [&](Args&... args_) mutable
-          -> result_t<Method> {  // cast to Args, so its move only if Args is rvalue reference
-            return aa::invoke_unsafe_fn<Method>{}(std::forward<decltype(self)>(self),
-                                                  static_cast<Args>(args_)...);
-          },
-          tpl);
-    };
-  }
-};
-
-// for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
-template <TTA Method>
-constexpr invoke_unsafe_fn<Method> invoke_unsafe = {};
-
 struct empty_any_method_call : std::exception {
   [[nodiscard]] const char* what() const noexcept override {
     return "Empty any method was called";
@@ -1326,30 +1306,14 @@ struct invoke_fn<Method, type_list<Args...>> {
   result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
-    if constexpr (std::is_void_v<result_t<Method>>) {
-      any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.vtable_ptr != nullptr);
-    } else {
-      result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
-      AXIOM(any.vtable_ptr != nullptr);
-      return result;
-    }
+    return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
   template <any_x U>
   result_t<Method> operator()(const U& any, Args... args) const {
     static_assert(const_method<Method>);
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
-    if constexpr (std::is_void_v<result_t<Method>>) {
-      any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.vtable_ptr != nullptr);
-    } else {
-      // at this point compiler do not know, that 'any' state is not changed after vtable_invoke
-      result_t<Method> result = any.template vtable_invoke<Method>(static_cast<Args&&>(args)...);
-      AXIOM(any.vtable_ptr != nullptr);
-      return result;
-    }
+    return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
 
   // FOR POLYMORPHIC REF
@@ -1457,7 +1421,5 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 // clang-format on
 
 }  // namespace std
-
-#undef AXIOM
 
 #undef UNREACHABLE
