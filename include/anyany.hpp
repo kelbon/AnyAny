@@ -2,43 +2,18 @@
 #pragma once
 
 #include <array>
-#include <new>          // hardware_constructive_interference_size on gcc
 #include <utility>      // std::exchange
 #include <cassert>      // assert
 #include <memory>       // construct_at / destroy_at
-#include <stdexcept>    // runtime_error
-#include <compare>      // partical_ordering
-#include <cstddef>      // max_align_t on gcc
-// TODO remove when it will be C++20 module
-#undef UNREACHABLE
-
-// No prefix because it will be C++20 module when it will be possible on all compilers
-#ifndef _MSC_VER
-#ifdef __clang__
-#define AXIOM(cond) __builtin_assume((cond))
-#define UNREACHABLE() __builtin_unreachable()
-#else
-#define UNREACHABLE() __builtin_unreachable()
-#endif
-#else
-#define UNREACHABLE() __assume(false)
-#endif
+#include <stdexcept>    // bad_cast/exception
+#include <compare>      // partial_ordering
+#include <cstddef>      // max_align_t
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)
 #define AA_MSVC_EBO __declspec(empty_bases)
 #else
 #define AA_MSVC_EBO
-#endif
-
-// C++ features is not supported in clang ...
-#ifdef __cpp_lib_hardware_interference_size
-using std::hardware_constructive_interference_size;
-using std::hardware_destructive_interference_size;
-#else
-// 64 bytes on x86-64 │ L1_CACHE_BYTES │ L1_CACHE_SHIFT │ __cacheline_aligned │ ...
-constexpr inline std::size_t hardware_constructive_interference_size = 64;
-constexpr inline std::size_t hardware_destructive_interference_size = 64;
 #endif
 
 // TTA == template template argument (just for better reading)
@@ -49,7 +24,7 @@ namespace aa {
 template <typename...>
 struct type_list {};
 
-inline constexpr size_t npos = size_t(-1);
+constexpr inline size_t npos = size_t(-1);
 
 // Method must have same signature for all types(except self),
 // so this type used to check what signature Method have
@@ -315,7 +290,7 @@ struct move {
       std::destroy_at(std::addressof(src));
     } else {
       // not static assert, because will be never called, but needed to compile
-      UNREACHABLE();
+      assert(false);
     }
   }
 };
@@ -397,7 +372,7 @@ struct copy_with<Alloc, SooS> {
   };
 };
 
-constexpr inline auto default_any_soos = hardware_constructive_interference_size - 3 * sizeof(void*);
+constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 
 template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
@@ -1421,5 +1396,3 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 // clang-format on
 
 }  // namespace std
-
-#undef UNREACHABLE
