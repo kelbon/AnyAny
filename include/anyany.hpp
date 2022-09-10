@@ -209,6 +209,10 @@ struct satisfies : satisfy<Methods>... {
 };
 template <typename T, TTA... Methods>
 constexpr inline bool satisfies_v = false;
+
+template<TTA... Methods>
+constexpr inline bool satisfies_v<interface_t, Methods...> = true;
+
 // clang-format off
 template<typename T, TTA Method>
 concept is_satisfies = satisfies_v<T, Method> || std::is_base_of_v<satisfy<Method>, typename T::satisfies>;
@@ -524,18 +528,19 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   }
 
  public:
-  // cannot rebind reference
   poly_ref(const poly_ref&) = default;
   poly_ref(poly_ref&&) = default;
+  // cannot rebind reference
   void operator=(poly_ref&&) = delete;
   void operator=(const poly_ref&) = delete;
+
   // clang-format off
   // from mutable lvalue
   template <not_const_type T> // not shadow copy ctor
-  requires(!std::same_as<poly_ref<Methods...>, T>)
-      // clang-format on
-      constexpr poly_ref(T& value) noexcept
+  requires(!std::same_as<poly_ref<Methods...>, T> && !any_x<T>)
+  constexpr poly_ref(T& value) noexcept
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
+    // clang-format on
     static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
                   "Decay it before emplace, ambigious pointer");
   }
@@ -579,15 +584,17 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   }
 
  public:
-  // cannot rebind reference
+
   const_poly_ref(const const_poly_ref&) = default;
   const_poly_ref(const_poly_ref&&) = default;
+  // cannot rebind reference
   void operator=(const_poly_ref&&) = delete;
   void operator=(const const_poly_ref&) = delete;
+
   // clang-format off
   // from value
   template <typename T> // not shadow copy ctor
-  requires(!std::same_as<const_poly_ref<Methods...>, T>)
+  requires(!std::same_as<const_poly_ref<Methods...>, T> && !any_x<T>)
   constexpr const_poly_ref(const T& value) noexcept
       : vtable_ptr{addr_vtable_for<T, Methods...>}, value_ptr{std::addressof(value)} {
       static_assert(!std::is_array_v<T> && !std::is_function_v<T>, "Decay it before emplace, ambigious pointer");

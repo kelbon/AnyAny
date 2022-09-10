@@ -377,9 +377,14 @@ using xyz = aa::basic_any_with<std::allocator<std::byte>, 0, aa::copy_with<std::
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
 struct Drawi {
-  static int do_invoke(const T& self, int val) {
+  static constexpr bool good = requires(T value, int out) {
+    value.draw(out);
+  };
+  static auto do_invoke(const T& self, int val) requires(good)
+  {
     return self.draw(val);
   }
+  static int do_invoke(aa::interface_t, int) requires(!good);
 
   template<typename CRTP>
   struct plugin {
@@ -435,6 +440,9 @@ struct M2 {
 template<typename T>
 using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
+  std::vector<aa::poly_ref<foox>> vec;
+  FooAble fef{};
+  vec.emplace_back(fef);
   using any_sized_range = aa::any_with<Size>;
   std::vector<int> v(10, 15);
   any_sized_range rng = v;
