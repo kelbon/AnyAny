@@ -377,14 +377,10 @@ using xyz = aa::basic_any_with<std::allocator<std::byte>, 0, aa::copy_with<std::
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
 struct Drawi {
-  static constexpr bool good = requires(T value, int out) {
-    value.draw(out);
-  };
-  static auto do_invoke(const T& self, int val) requires(good)
+  static int do_invoke(const T& self, int val)
   {
     return self.draw(val);
   }
-  static int do_invoke(aa::interface_t, int) requires(!good);
 
   template<typename CRTP>
   struct plugin {

@@ -875,7 +875,7 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
 
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
 template <TTA Method>
-constexpr inline invoke_unsafe_fn<Method, args_list<Method>> invoke_unsafe{};
+constexpr inline invoke_unsafe_fn<Method> invoke_unsafe = {};
 
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
@@ -1333,7 +1333,7 @@ struct invoke_fn<Method, type_list<Args...>> {
 };
 
 template <TTA Method>
-constexpr inline invoke_fn<Method, args_list<Method>> invoke{};
+constexpr inline invoke_fn<Method> invoke = {};
 
 // Strong alias to basic_any with Alloc, SooS and Methods..., used to cover CRTP
 template <typename Alloc, size_t SooS, TTA... Methods>
