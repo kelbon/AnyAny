@@ -9,6 +9,7 @@
 #include <compare>      // partial_ordering
 #include <cstddef>      // max_align_t
 #include <optional>     // for type_switch
+#include <functional>   // std::invoke
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)
