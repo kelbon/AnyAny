@@ -8,6 +8,8 @@
 #include <stdexcept>    // bad_cast/exception
 #include <compare>      // partial_ordering
 #include <cstddef>      // max_align_t
+#include <optional>     // for type_switch
+#include <functional>   // std::invoke
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)
@@ -1363,6 +1365,76 @@ using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 #endif
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
+
+template <typename PolyPtr, typename Result = void>
+struct type_switch_impl {
+  constexpr explicit type_switch_impl(PolyPtr value) noexcept : value(std::move(value)) {
+  }
+
+  template <typename T, typename Fn>
+  type_switch_impl& Case(Fn&& f) {
+    if (result)
+      return *this;
+    if (auto* v = ::aa::any_cast<T>(value)) {
+      if constexpr (std::is_void_v<Result>) {
+        std::invoke(std::forward<Fn>(f), *v);
+        result = true;
+      } else {
+        result = std::invoke(std::forward<Fn>(f), *v);
+      }
+    }
+    return *this;
+  }
+  // If value is one of Ts... F invoked (invokes count <= 1)
+  template<typename... Ts, typename Fn>
+  type_switch_impl& Cases(Fn&& f) {
+    struct assert_ : std::type_identity<Ts>... {
+    } assert_unique_types;
+    (void)assert_unique_types;
+    (Case<Ts>(std::forward<Fn>(f)), ...);
+    return *this;
+  }
+  // As a default, invoke the given callable within the root value.
+  template <typename Fn>
+  [[nodiscard]] Result Default(Fn&& f) {
+    if (result)
+      return std::move(*result);
+    return std::forward<Fn>(f)(*value);
+  }
+  // As a default, return the given value.
+  [[nodiscard]] Result Default(Result v) {
+    if (result)
+      return std::move(*result);
+    return v;
+  }
+
+ private:
+  // value for which switch created
+  // invariant - initially always not null.
+  PolyPtr value;
+  // stored result and if it exist
+  std::conditional_t<std::is_void_v<Result>, bool, std::optional<Result>> result;
+};
+
+// Returns instance of type which
+// implements a switch-like dispatch statement for poly_ptr/const_poly_ptr
+// using any_cast.
+// Each `Case<T>` takes a callable to be invoked
+// if the root value is a <T>, the callable is invoked with any_cast<T>(ValueInSwitch)
+//
+// usage example:
+//  any_operation<Methods...> op = ...;
+//  ResultType result = type_switch<ResultType>(op)
+//    .Case<ConstantOp>([](ConstantOp op) { ... })
+//    .Default([](const_poly_ref<Methods...> ref) { ... });
+template<typename Result = void, TTA... Methods>
+constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
+  return type_switch_impl<poly_ptr<Methods...>, Result>{&p};
+}
+template <typename Result = void, TTA... Methods>
+constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
+  return type_switch_impl<const_poly_ptr<Methods...>, Result>{&p};
+}
 
 }  // namespace aa
 

@@ -436,6 +436,30 @@ struct M2 {
 template<typename T>
 using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
+  static constexpr int for_r = 0;
+  constexpr aa::const_poly_ref<aa::type_id> r = for_r;
+  constexpr auto visitor = []<typename T>(T v) {
+    std::cout << typeid(T).name();
+    return sizeof(T);
+  };
+  auto switch_result = aa::type_switch<int>(r)
+                           .Case<float>(visitor)
+                           .Case<bool>(visitor)
+                           .Cases<char, unsigned char, double>(visitor)
+                           .Case<int>(visitor)
+                           .Default(-1);
+  if (switch_result != sizeof(int))
+    return -11;
+  std::string fifa;
+  aa::poly_ref<aa::type_id> rr = fifa;
+  auto switch_result1 = aa::type_switch<int>(rr)
+                            .Case<float>(visitor)
+                            .Case<bool>(visitor)
+                            .Cases<char, unsigned char, double>(visitor)
+                            .Case<int>(visitor)
+                            .Default(-1);
+  if (switch_result1 != -1)
+    return -12;
   std::vector<aa::poly_ref<foox>> vec;
   FooAble fef{};
   vec.emplace_back(fef);
