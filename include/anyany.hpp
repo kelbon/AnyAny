@@ -1366,11 +1366,10 @@ using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
-template <typename PolyRef, typename Result = void>
+template <typename PolyPtr, typename Result = void>
 struct type_switch_impl {
-  constexpr type_switch_impl(PolyRef value) noexcept : value(std::move(value)) {
+  constexpr explicit type_switch_impl(PolyPtr value) noexcept : value(std::move(value)) {
   }
-  type_switch_impl(type_switch_impl&& other) = default;
 
   template <typename T, typename Fn>
   type_switch_impl& Case(Fn&& f) {
@@ -1412,7 +1411,7 @@ struct type_switch_impl {
  private:
   // value for which switch created
   // invariant - initially always not null.
-  PolyRef value;
+  PolyPtr value;
   // stored result and if it exist
   std::conditional_t<std::is_void_v<Result>, bool, std::optional<Result>> result;
 };
