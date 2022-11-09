@@ -7,7 +7,7 @@ https://github.com/kelbon/AnyAny/actions/workflows/clang.yml)
 [![GCC](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml/badge.svg?branch=main)](
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
-(MSVC have bugs, which are already reported, you can use Visual Studio 2022 clang-cl now)
+(MSVC works too)
 
 This is a library for dynamic polymorphism through type erasure with better code readability and reusage, performance, far less boilerplate then with usual way (virtual functions).
 * [`Design and understanding`](#design)
@@ -90,8 +90,9 @@ Interface plugins and interface requirement:
 
 * [`destroy`](#destroy)
 * [`copy`](#copy)
+* ['copy_with'](#copy_with)
 * [`move`](#move)
-* [`RTTI`](#rtti)
+* [`type_id`](#type_id)
 * [`hash`](#hash)
 * [`equal_to`](#equal_to)
 * [`spaceship`](#spaceship)
@@ -310,11 +311,17 @@ Same as `invoke`, but more effective and if any has no value -> undefined behavi
 ### `copy`
 enables copy = )
 
+### `copy_with`
+  used for creation basic_any_with with custom Allocator, for example:
+  ```C++
+  using my_any_with_alloc = aa::basic_any_with<MyAlloc, 16, aa::copy_with<MyAlloc, 16>::template method>;
+  ```
+
 ### `move`
   enables move AND copy assignment operator (if you have copy). If inserted types have noexcept move constructor any will be more effective.
   
-### `rtti`
-  enables `.type()` method in basic_any, forces to store additional info about type
+### `type_id`
+  enables aa::any_cast for poly_ref and poly_ptr
 
 ### `hash`
  enables specialization of std::hash, Hash for polymorphic value returns std::hash<T>{}(stored_value) or 0, if any is empty
