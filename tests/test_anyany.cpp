@@ -442,22 +442,22 @@ int main() {
     std::cout << typeid(T).name();
     return sizeof(T);
   };
-  auto switch_result = aa::type_switch<int>(r)
+  auto switch_result = aa::type_switch<std::size_t>(r)
                            .Case<float>(visitor)
                            .Case<bool>(visitor)
                            .Cases<char, unsigned char, double>(visitor)
                            .Case<int>(visitor)
-                           .Default(-1);
+                           .Default(std::size_t(-1));
   if (switch_result != sizeof(int))
     return -11;
   std::string fifa;
   aa::poly_ref<aa::type_id> rr = fifa;
-  auto switch_result1 = aa::type_switch<int>(rr)
+  auto switch_result1 = aa::type_switch<std::size_t>(rr)
                             .Case<float>(visitor)
                             .Case<bool>(visitor)
                             .Cases<char, unsigned char, double>(visitor)
                             .Case<int>(visitor)
-                            .Default(-1);
+                            .Default(std::size_t(-1));
   if (switch_result1 != -1)
     return -12;
   std::vector<aa::poly_ref<foox>> vec;

@@ -971,7 +971,8 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
 
   using base_any_type = basic_any;
-  using methods_list = type_list<Methods<interface_t>...>;
+  // typedef only because msvc parser is ****
+  typedef type_list<Methods<interface_t>...> methods_list;
 
   using ptr = poly_ptr<Methods...>;
   using const_ptr = const_poly_ptr<Methods...>;
