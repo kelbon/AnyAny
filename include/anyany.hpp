@@ -663,11 +663,11 @@ struct poly_ptr {
   }
   // from mutable pointer to Any
   template <any_x Any>
-  requires(not_const_type<Any> && std::same_as<typename Any::methods_list, type_list<Methods<interface_t>...>>)
+  requires(not_const_type<Any> && noexport::find_subset(type_list<Methods<interface_t>...>{}, typename Any::methods_list{}) != npos)
   constexpr poly_ptr(Any* ptr) noexcept {
     // clang-format on
     if (ptr != nullptr) [[likely]] {
-      poly_.vtable_ptr = ptr->vtable_ptr;
+      poly_.vtable_ptr = subtable_ptr<Methods...>(ptr->vtable_ptr);
       poly_.value_ptr = ptr->value_ptr;
     }
   }
@@ -745,11 +745,11 @@ struct const_poly_ptr {
   // from pointer to Any
   // clang-format off
   template <any_x Any>
-  requires(std::same_as<typename Any::methods_list, type_list<Methods<interface_t>...>>)
+  requires(noexport::find_subset(type_list<Methods<interface_t>...>{}, typename Any::methods_list{}) != npos)
   constexpr const_poly_ptr(const Any* p) noexcept {
     // clang-format on
     if (p != nullptr) [[likely]] {
-      poly_.vtable_ptr = p->vtable_ptr;
+      poly_.vtable_ptr = subtable_ptr<Methods...>(p->vtable_ptr);
       poly_.value_ptr = p->value_ptr;
     }
   }
@@ -974,10 +974,32 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   // typedef only because msvc parser is ****
   typedef type_list<Methods<interface_t>...> methods_list;
 
-  using ptr = poly_ptr<Methods...>;
-  using const_ptr = const_poly_ptr<Methods...>;
-  using ref = poly_ref<Methods...>;
-  using const_ref = const_poly_ref<Methods...>;
+  private:
+  template <TTA...>
+   struct remove_utility_methods {};
+#ifdef AA_DLL_COMPATIBLE
+  template <TTA... Methods1>
+  struct remove_utility_methods<size_of, destroy, type_id, Methods1...> {
+    using ptr = poly_ptr<Methods1...>;
+    using const_ptr = const_poly_ptr<Methods1...>;
+    using ref = poly_ref<Methods1...>;
+    using const_ref = const_poly_ref<Methods1...>;
+  };
+#endif // in case when Methods... contains 'type_id', it will not be removed
+  template <TTA... Methods1>
+  struct remove_utility_methods<size_of, destroy, Methods1...> {
+    using ptr = poly_ptr<Methods1...>;
+    using const_ptr = const_poly_ptr<Methods1...>;
+    using ref = poly_ref<Methods1...>;
+    using const_ref = const_poly_ref<Methods1...>;
+  };
+
+  using purified = remove_utility_methods<Methods...>;
+ public:
+  using ptr = typename purified::ptr;
+  using const_ptr = typename purified::const_ptr;
+  using ref = typename purified::ref;
+  using const_ref = typename purified::const_ref;
 
   constexpr ptr operator&() noexcept {
     return {this};
