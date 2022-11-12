@@ -985,7 +985,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     using ref = poly_ref<Methods1...>;
     using const_ref = const_poly_ref<Methods1...>;
   };
-#else
+#endif // in case when Methods... contains 'type_id', it will not be removed
   template <TTA... Methods1>
   struct remove_utility_methods<size_of, destroy, Methods1...> {
     using ptr = poly_ptr<Methods1...>;
@@ -993,7 +993,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     using ref = poly_ref<Methods1...>;
     using const_ref = const_poly_ref<Methods1...>;
   };
-#endif
+
   using purified = remove_utility_methods<Methods...>;
  public:
   using ptr = typename purified::ptr;
