@@ -1,5 +1,4 @@
-﻿
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <utility>      // std::exchange
@@ -17,7 +16,15 @@
 #else
 #define AA_MSVC_EBO
 #endif
-
+#ifndef _MSC_VER
+#ifdef __clang__
+#define PLEASE_INLINE __attribute__((always_inline))
+#else
+#define PLEASE_INLINE __attribute__((always_inline))
+#endif
+#else
+#define PLEASE_INLINE __forceinline
+#endif
 // TTA == template template argument (just for better reading)
 #define TTA template <typename> typename
 
@@ -249,7 +256,7 @@ struct invoker_for;
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  PLEASE_INLINE static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
     if constexpr (has_explicit_interface<Method>)
       static_assert(is_satisfies<T, Method>,
@@ -470,7 +477,7 @@ struct vtable {
   // clang-format off
   template <TTA Method, typename... Args>
   requires(has_method<Method>)
-  constexpr decltype(auto) invoke(Args&&... args) const {
+  PLEASE_INLINE constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
     return ::noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
@@ -828,13 +835,13 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  result_t<Method> operator()(U&& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     assert(any.vtable_ptr != nullptr);
     return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
   // clang-format off
   template <any_x U>
-  result_t<Method> operator()(const U& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     assert(any.vtable_ptr != nullptr);
@@ -844,11 +851,11 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
@@ -1310,13 +1317,13 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  result_t<Method> operator()(U&& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
     return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
   template <any_x U>
-  result_t<Method> operator()(const U& any, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
     static_assert(const_method<Method>);
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
@@ -1326,11 +1333,11 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
@@ -1399,19 +1406,28 @@ using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
-template <typename PolyPtr, typename Result = void>
+template <typename PolyPtr, typename ResultT = void>
 struct type_switch_impl {
+ private:
+  struct non_void {
+    // no way to create it for user
+    explicit non_void() = default;
+  };
+  using Result = std::conditional_t<std::is_void_v<ResultT>, non_void, ResultT>;
+
+ public:
   constexpr explicit type_switch_impl(PolyPtr value) noexcept : value(std::move(value)) {
+    assert(value != nullptr);
   }
 
   template <typename T, typename Fn>
-  type_switch_impl& Case(Fn&& f) {
+  type_switch_impl& case_(Fn&& f) {
     if (result)
       return *this;
     if (auto* v = ::aa::any_cast<T>(value)) {
-      if constexpr (std::is_void_v<Result>) {
+      if constexpr (std::is_void_v<ResultT>) {
         std::invoke(std::forward<Fn>(f), *v);
-        result = true;
+        result.emplace();
       } else {
         result = std::invoke(std::forward<Fn>(f), *v);
       }
@@ -1419,26 +1435,31 @@ struct type_switch_impl {
     return *this;
   }
   // If value is one of Ts... F invoked (invokes count <= 1)
-  template<typename... Ts, typename Fn>
-  type_switch_impl& Cases(Fn&& f) {
+  template <typename... Ts, typename Fn>
+  type_switch_impl& cases(Fn&& f) {
     struct assert_ : std::type_identity<Ts>... {
     } assert_unique_types;
     (void)assert_unique_types;
-    (Case<Ts>(std::forward<Fn>(f)), ...);
+    (case_<Ts>(std::forward<Fn>(f)), ...);
     return *this;
   }
   // As a default, invoke the given callable within the root value.
   template <typename Fn>
-  [[nodiscard]] Result Default(Fn&& f) {
+  [[nodiscard]] Result default_(Fn&& f) {
     if (result)
       return std::move(*result);
     return std::forward<Fn>(f)(*value);
   }
   // As a default, return the given value.
-  [[nodiscard]] Result Default(Result v) {
+  [[nodiscard]] Result default_(Result v) {
     if (result)
       return std::move(*result);
     return v;
+  }
+  // explicitly says there are no default value
+  // postcondition: return value setted if some 'case_' succeeded
+  std::optional<Result> no_default() {
+    return std::move(result);
   }
 
  private:
@@ -1446,7 +1467,7 @@ struct type_switch_impl {
   // invariant - initially always not null.
   PolyPtr value;
   // stored result and if it exist
-  std::conditional_t<std::is_void_v<Result>, bool, std::optional<Result>> result;
+  std::optional<Result> result = std::nullopt;
 };
 
 // Returns instance of type which

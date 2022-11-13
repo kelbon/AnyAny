@@ -439,28 +439,42 @@ struct M2 {
 template<typename T>
 using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 int main() {
+  aa::any_with<example::Print, aa::type_id> p = "hello world";
+  auto* ptr = aa::any_cast<const char*>(&p);
+  if (!ptr)
+    throw 1;
+  aa::invoke<example::Print>(p, 4);
   static constexpr int for_r = 0;
   constexpr aa::const_poly_ref<aa::type_id> r = for_r;
-  constexpr auto visitor = []<typename T>(T v) {
+  std::string X;
+  auto visitor = [&]<typename T>(T v) {
     std::cout << typeid(T).name();
+    X = typeid(T).name();
     return sizeof(T);
   };
+  aa::type_switch(r)
+      .case_<float>(visitor)
+      .case_<bool>(visitor)
+      .cases<char, int, unsigned char, double>(visitor)
+      .no_default();
+  if (X != typeid(int).name())
+    return -10;
   auto switch_result = aa::type_switch<std::size_t>(r)
-                           .Case<float>(visitor)
-                           .Case<bool>(visitor)
-                           .Cases<char, unsigned char, double>(visitor)
-                           .Case<int>(visitor)
-                           .Default(std::size_t(-1));
+                           .case_<float>(visitor)
+                           .case_<bool>(visitor)
+                           .cases<char, unsigned char, double>(visitor)
+                           .case_<int>(visitor)
+                           .default_(std::size_t(-1));
   if (switch_result != sizeof(int))
     return -11;
   std::string fifa;
   aa::poly_ref<aa::type_id> rr = fifa;
   auto switch_result1 = aa::type_switch<std::size_t>(rr)
-                            .Case<float>(visitor)
-                            .Case<bool>(visitor)
-                            .Cases<char, unsigned char, double>(visitor)
-                            .Case<int>(visitor)
-                            .Default(std::size_t(-1));
+                            .case_<float>(visitor)
+                            .case_<bool>(visitor)
+                            .cases<char, unsigned char, double>(visitor)
+                            .case_<int>(visitor)
+                            .default_(std::size_t(-1));
   if (switch_result1 != -1)
     return -12;
   std::vector<aa::poly_ref<foox>> vec;
