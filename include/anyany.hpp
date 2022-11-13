@@ -16,15 +16,6 @@
 #else
 #define AA_MSVC_EBO
 #endif
-#ifndef _MSC_VER
-#ifdef __clang__
-#define PLEASE_INLINE __attribute__((always_inline))
-#else
-#define PLEASE_INLINE __attribute__((always_inline))
-#endif
-#else
-#define PLEASE_INLINE __forceinline
-#endif
 // TTA == template template argument (just for better reading)
 #define TTA template <typename> typename
 
@@ -256,7 +247,7 @@ struct invoker_for;
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  PLEASE_INLINE static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
     if constexpr (has_explicit_interface<Method>)
       static_assert(is_satisfies<T, Method>,
@@ -477,7 +468,7 @@ struct vtable {
   // clang-format off
   template <TTA Method, typename... Args>
   requires(has_method<Method>)
-  PLEASE_INLINE constexpr decltype(auto) invoke(Args&&... args) const {
+  constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
     return ::noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
@@ -835,13 +826,13 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  result_t<Method> operator()(U&& any, Args... args) const {
     assert(any.vtable_ptr != nullptr);
     return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
   // clang-format off
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  result_t<Method> operator()(const U& any, Args... args) const {
     // clang-format on
     static_assert(const_method<Method>);
     assert(any.vtable_ptr != nullptr);
@@ -851,11 +842,11 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
@@ -1317,13 +1308,13 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR ANY
 
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(U&& any, Args... args) const {
+  result_t<Method> operator()(U&& any, Args... args) const {
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
     return any.vtable_ptr->template invoke<Method>(any.value_ptr, static_cast<Args&&>(args)...);
   }
   template <any_x U>
-  PLEASE_INLINE result_t<Method> operator()(const U& any, Args... args) const {
+  result_t<Method> operator()(const U& any, Args... args) const {
     static_assert(const_method<Method>);
     if (!any.has_value()) [[unlikely]]
       throw empty_any_method_call{};
@@ -1333,11 +1324,11 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(poly_ref<Methods...> p, Args... args) const {
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
-  PLEASE_INLINE result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
+  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
