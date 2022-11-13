@@ -16,6 +16,7 @@
 #else
 #define AA_MSVC_EBO
 #endif
+
 // TTA == template template argument (just for better reading)
 #define TTA template <typename> typename
 
