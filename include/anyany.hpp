@@ -1369,6 +1369,14 @@ struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, 
  public:
   using base_t::base_t;
 };
+template<TTA... Methods>
+consteval bool first_is_not_type_id() {
+  // Method 'type_id' must not be first in any_with<Methods...>! Shift it to the right.
+  // Don't ask why =)
+  // (If type_id is first Method, then behavior may change when AA_DLL_COMPATIBLE enabled)
+  return vtable<Methods...>::template number_of_method<type_id> != 0;
+
+}
 #ifdef AA_DLL_COMPATIBLE
 template<typename Alloc, size_t SooS, TTA... Methods>
 consteval auto add_typeid_to_methods() noexcept {
@@ -1380,10 +1388,12 @@ consteval auto add_typeid_to_methods() noexcept {
 }
 // adds Method type_id if it was not in Methods to enable any cast
 template <typename Alloc, size_t SooS, TTA... Methods>
+  requires(first_is_not_type_id<Methods...>())
 using basic_any_with = typename decltype(add_typeid_to_methods<Alloc, SooS, Methods...>())::type;
 
 #else
 template <typename Alloc, size_t SooS, TTA... Methods>
+  requires(first_is_not_type_id<Methods...>())
 using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 #endif
 template<TTA... Methods>

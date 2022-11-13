@@ -249,7 +249,10 @@ size_t TestConstructors() {
 }
 
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
-
+static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
+              std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
+              std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::spaceship, aa::move>> &&
+              std::is_same_v<any_compare::const_ptr, aa::const_poly_ptr<aa::copy, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::move>;
 
 size_t TestCompare() {
