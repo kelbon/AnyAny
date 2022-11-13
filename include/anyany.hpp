@@ -1,5 +1,4 @@
-﻿
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <utility>      // std::exchange
@@ -1399,19 +1398,28 @@ using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
-template <typename PolyPtr, typename Result = void>
+template <typename PolyPtr, typename ResultT = void>
 struct type_switch_impl {
+ private:
+  struct non_void {
+    // no way to create it for user
+    explicit non_void() = default;
+  };
+  using Result = std::conditional_t<std::is_void_v<ResultT>, non_void, ResultT>;
+
+ public:
   constexpr explicit type_switch_impl(PolyPtr value) noexcept : value(std::move(value)) {
+    assert(value != nullptr);
   }
 
   template <typename T, typename Fn>
-  type_switch_impl& Case(Fn&& f) {
+  type_switch_impl& case_(Fn&& f) {
     if (result)
       return *this;
     if (auto* v = ::aa::any_cast<T>(value)) {
-      if constexpr (std::is_void_v<Result>) {
+      if constexpr (std::is_void_v<ResultT>) {
         std::invoke(std::forward<Fn>(f), *v);
-        result = true;
+        result.emplace();
       } else {
         result = std::invoke(std::forward<Fn>(f), *v);
       }
@@ -1419,26 +1427,31 @@ struct type_switch_impl {
     return *this;
   }
   // If value is one of Ts... F invoked (invokes count <= 1)
-  template<typename... Ts, typename Fn>
-  type_switch_impl& Cases(Fn&& f) {
+  template <typename... Ts, typename Fn>
+  type_switch_impl& cases(Fn&& f) {
     struct assert_ : std::type_identity<Ts>... {
     } assert_unique_types;
     (void)assert_unique_types;
-    (Case<Ts>(std::forward<Fn>(f)), ...);
+    (case_<Ts>(std::forward<Fn>(f)), ...);
     return *this;
   }
   // As a default, invoke the given callable within the root value.
   template <typename Fn>
-  [[nodiscard]] Result Default(Fn&& f) {
+  [[nodiscard]] Result default_(Fn&& f) {
     if (result)
       return std::move(*result);
     return std::forward<Fn>(f)(*value);
   }
   // As a default, return the given value.
-  [[nodiscard]] Result Default(Result v) {
+  [[nodiscard]] Result default_(Result v) {
     if (result)
       return std::move(*result);
     return v;
+  }
+  // explicitly says there are no default value
+  // postcondition: return value setted if some 'case_' succeeded
+  std::optional<Result> no_default() {
+    return std::move(result);
   }
 
  private:
@@ -1446,7 +1459,7 @@ struct type_switch_impl {
   // invariant - initially always not null.
   PolyPtr value;
   // stored result and if it exist
-  std::conditional_t<std::is_void_v<Result>, bool, std::optional<Result>> result;
+  std::optional<Result> result = std::nullopt;
 };
 
 // Returns instance of type which
