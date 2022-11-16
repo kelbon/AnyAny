@@ -382,7 +382,7 @@ constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 template <typename T>
 using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template method<T>;
 
-// enables std::hash specialization for polymorphic value, and reference
+// enables std::hash specialization for polymorphic value and reference
 template <typename T>
 struct hash {
   static size_t do_invoke(const T& self) {
@@ -1505,13 +1505,13 @@ struct hash<::aa::const_poly_ref<Methods...>> {
       return aa::invoke_unsafe<::aa::hash>(r);
   }
 };
-template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+template<TTA... Methods>
 struct hash<::aa::poly_ptr<Methods...>> {
   size_t operator()(const ::aa::poly_ptr<Methods...>& p) const noexcept {
       return ::std::hash<void*>{}(p.raw());
   }
 };
-template<TTA... Methods> requires (::aa::vtable<Methods...>::template has_method<::aa::hash>)
+template<TTA... Methods>
 struct hash<::aa::const_poly_ptr<Methods...>> {
   size_t operator()(const ::aa::const_poly_ptr<Methods...>& p) const noexcept {
       return ::std::hash<void*>{}(p.raw());
