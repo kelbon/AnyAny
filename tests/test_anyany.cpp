@@ -438,7 +438,26 @@ struct M2 {
 
 template<typename T>
 using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
+
+struct base {
+  int i;
+};
+struct deriv : base {
+  int j;
+};
 int main() {
+  deriv d;
+  aa::poly_ptr<> pdd = &d;
+  aa::poly_ptr<> pdd1 = (base*)(&d);
+  if (pdd.raw() != pdd1.raw() || pdd == pdd1 || pdd != pdd || pdd1 != pdd1)
+    return -15;
+  aa::const_poly_ptr<> cpdd = &d;
+  aa::const_poly_ptr<> cpdd1 = (base*)(&d);
+  if (cpdd.raw() != cpdd1.raw() || cpdd == cpdd1 || cpdd != cpdd || cpdd1 != cpdd1)
+    return -16;
+  if (cpdd != pdd || cpdd1 != pdd1 || cpdd1 == pdd || cpdd == pdd1)
+    return -17;
+  auto x = std::bit_cast<std::array<void*, 2>>(cpdd);
   aa::any_with<example::Print, aa::type_id> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)

@@ -705,7 +705,7 @@ struct poly_ptr {
   // compare
 
   constexpr bool operator==(const poly_ptr& other) const noexcept {
-    return raw() == other.raw();
+    return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
   }
 };
 
@@ -797,7 +797,7 @@ struct const_poly_ptr {
   // compare
 
   constexpr bool operator==(const const_poly_ptr& other) const noexcept {
-    return raw() == other.raw();
+    return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
   }
 };
 
