@@ -878,6 +878,13 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
 template <TTA Method>
 constexpr inline invoke_unsafe_fn<Method> invoke_unsafe = {};
 
+// when used in ctor this tag forces anyany allocate memory, so pointers to value(poly_ptr/ref)
+// will not invalidated after anyany move
+struct force_stable_pointers_t {
+  explicit force_stable_pointers_t() = default;
+};
+constexpr inline force_stable_pointers_t force_stable_pointers{};
+
 // CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
@@ -903,9 +910,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
 
   // clang-format on
-  template <typename T, typename... Args>
+  template <typename T, typename ForceAllocate = void, typename... Args>
   void emplace_in_empty(Args&&... args) {
-    if constexpr (any_is_small_for<T>) {
+    if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
       std::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
     } else {
       // invariant of big - allocated_size >= SooS
@@ -1106,6 +1113,27 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   }
   // clang-format on
 
+  // force allocate versions
+
+  template <typename T, typename... Args>
+  basic_any(force_stable_pointers_t, std::in_place_type_t<T>, Args&&... args) noexcept(
+      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
+    emplace_in_empty<std::decay_t<T>, force_stable_pointers_t>(std::forward<Args>(args)...);
+  }
+  template <typename T, typename U, typename... Args>
+  basic_any(force_stable_pointers_t, std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
+      std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
+          any_is_small_for<std::decay_t<T>>) {
+    emplace_in_empty<std::decay_t<T>, force_stable_pointers_t>(list, std::forward<Args>(args)...);
+  }
+  // clang-format off
+  template <typename T>
+  requires(!any_x<T>)
+  basic_any(force_stable_pointers_t, T&& value) noexcept(
+      std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
+      : basic_any(force_stable_pointers, std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
+  }
+
   // postconditions : has_value() == false
   void reset() noexcept {
     if (!has_value())
@@ -1116,6 +1144,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 
   // observe
 
+  // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
+  bool is_stable_pointers() const noexcept {
+    return memory_allocated();
+  }
   constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }

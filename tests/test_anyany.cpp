@@ -446,6 +446,13 @@ struct deriv : base {
   int j;
 };
 int main() {
+  aa::any_with<aa::move, aa::type_id> kekv = {aa::force_stable_pointers, 5};
+  auto kekv_ptr = &kekv;
+  void* kekv_raw_ptr = kekv_ptr.raw();
+  auto kekv_move = std::move(kekv);
+  if (kekv_raw_ptr != (&kekv_move).raw() || !kekv_move.is_stable_pointers())
+    return -20;
+  *aa::any_cast<int>(kekv_ptr) = 150; // must not segfault ))
   deriv d;
   aa::poly_ptr<> pdd = &d;
   aa::poly_ptr<> pdd1 = (base*)(&d);
@@ -458,6 +465,7 @@ int main() {
   if (cpdd != pdd || cpdd1 != pdd1 || cpdd1 == pdd || cpdd == pdd1)
     return -17;
   auto x = std::bit_cast<std::array<void*, 2>>(cpdd);
+  (void)x;
   aa::any_with<example::Print, aa::type_id> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
