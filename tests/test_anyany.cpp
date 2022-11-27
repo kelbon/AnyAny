@@ -446,6 +446,7 @@ struct deriv : base {
 };
 int main() {
   aa::any_with<aa::move> kekv = {aa::force_stable_pointers, 5};
+  static_assert(std::is_same_v<decltype(kekv = decltype(kekv){}), decltype(kekv)&>);
   auto kekv_ptr = &kekv;
   void* kekv_raw_ptr = kekv_ptr.raw();
   auto kekv_move = std::move(kekv);
