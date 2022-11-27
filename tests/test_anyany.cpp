@@ -374,8 +374,7 @@ size_t TestCasts() {
 
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 
-// allocates every time (SOO == 0)
-using xyz = aa::basic_any_with<std::allocator<std::byte>, 0, aa::copy_with<std::allocator<std::byte>,0>::method, aa::move, aa::equal_to>;
+using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy_with<std::allocator<std::byte>, 8>::method, aa::move, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
@@ -444,7 +443,7 @@ struct base {
 };
 struct deriv : base {
   int j;
-};// TODO избавиться от метода size_of
+};
 int main() {
   aa::any_with<aa::move> kekv = {aa::force_stable_pointers, 5};
   auto kekv_ptr = &kekv;
@@ -588,8 +587,6 @@ int main() {
     aa::any_cast<drawable1>(&cpval)->draw(5);
     aa::any_cast<drawable1>(std::addressof(cpval))->draw(5);
     aa::any_cast<const drawable1>(std::addressof(cpval))->draw(5);
-    if (cpval.sizeof_now() != sizeof(drawable1))
-      return -1;
     auto pip2 = &cpval;
     (void)pip1, (void)pip2;
     idrawable::ref pr4 = v0;
@@ -701,7 +698,8 @@ int main() {
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
-  (void)(val == 5);
+  if (val != 5) // implicit conversion 5 to any_with
+    return -100;
   val = std::string{"hello world"};
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};
