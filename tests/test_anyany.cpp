@@ -393,7 +393,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy, aa::move, aa::type_id>;
+using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -444,9 +444,9 @@ struct base {
 };
 struct deriv : base {
   int j;
-};
+};// TODO избавиться от метода size_of
 int main() {
-  aa::any_with<aa::move, aa::type_id> kekv = {aa::force_stable_pointers, 5};
+  aa::any_with<aa::move> kekv = {aa::force_stable_pointers, 5};
   auto kekv_ptr = &kekv;
   void* kekv_raw_ptr = kekv_ptr.raw();
   auto kekv_move = std::move(kekv);
@@ -466,13 +466,13 @@ int main() {
     return -17;
   auto x = std::bit_cast<std::array<void*, 2>>(cpdd);
   (void)x;
-  aa::any_with<example::Print, aa::type_id> p = "hello world";
+  aa::any_with<example::Print> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
   aa::invoke<example::Print>(p, 4);
   static constexpr int for_r = 0;
-  constexpr aa::const_poly_ref<aa::type_id> r = for_r;
+  constexpr aa::const_poly_ref<> r = for_r;
   std::string X;
   auto visitor = [&]<typename T>(T v) {
     std::cout << typeid(T).name();
@@ -495,7 +495,7 @@ int main() {
   if (switch_result != sizeof(int))
     return -11;
   std::string fifa;
-  aa::poly_ref<aa::type_id> rr = fifa;
+  aa::poly_ref<> rr = fifa;
   auto switch_result1 = aa::type_switch<std::size_t>(rr)
                             .case_<float>(visitor)
                             .case_<bool>(visitor)

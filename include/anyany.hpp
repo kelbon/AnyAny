@@ -150,6 +150,11 @@ consteval size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, T
     return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
 }
 
+// do not use it explicitly, use aa::descriptor_v
+#ifndef AA_DLL_COMPATIBLE
+template<typename T>
+constexpr const void* descriptor = &descriptor<T>;
+#else
 // name 'n' because need to reduce name size - MAGIC ENUM
 template <typename T>
 consteval std::string_view n() {
@@ -168,6 +173,18 @@ consteval std::string_view n() {
 }
 template <typename T>
 constexpr inline std::string_view type_name = n<std::decay_t<T>>();
+
+template <typename T>
+constexpr const char* descriptor = n<T>().data();
+
+// inlinable(std::strcmp no)
+// assumes a && b != nullptr
+inline constexpr std::strong_ordering strcmp(const char* l, const char* r) noexcept {
+  for (; *l == *r && *l != '\0'; ++l, ++r)
+    ;
+  return *l <=> *r;
+}
+#endif
 
 }  // namespace noexport
 
@@ -390,21 +407,6 @@ struct hash {
   }
 };
 
-// enables any_cast for poly_ref/ptr
-template <typename T>
-struct type_id {
-  static decltype(auto) do_invoke(const T&) noexcept {
-#ifdef AA_DLL_COMPATIBLE
-#ifdef AA_CANT_GET_TYPENAME
-#error Cant support any_cast for DLL on this compiler
-#endif
-    return ::noexport::type_name<T>;
-#else
-    return typeid(T);
-#endif
-  }
-};
-
 // since C++20 operator== it is a != too
 template <typename T>
 struct equal_to {
@@ -454,6 +456,37 @@ struct from_callable<R(Ts...), Foo> {
   };
 };
 
+// void by default
+struct descriptor_t {
+ private:
+  using raw_desc_type = decltype(::noexport::descriptor<int>);
+  raw_desc_type _value;
+
+ public:
+  // creates descriptor for 'void' type
+  constexpr descriptor_t() noexcept : _value(noexport::descriptor<void>) {
+  }
+  constexpr explicit descriptor_t(raw_desc_type value) noexcept : _value(value) {
+  }
+  constexpr bool operator==(const descriptor_t& other) const noexcept {
+#ifndef AA_DLL_COMPATIBLE
+    return _value == other._value;
+#else
+    return ::noexport::strcmp(_value, other._value) == std::strong_ordering::equal;
+#endif
+  }
+  std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
+#ifndef AA_DLL_COMPATIBLE
+    return _value <=> other._value;
+#else
+    return ::noexport::strcmp(_value, other._value);
+#endif
+  }
+};
+// always decays type
+template<typename T>
+constexpr descriptor_t descriptor_v{::noexport::descriptor<std::decay_t<T>>};
+
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
@@ -475,6 +508,35 @@ struct vtable {
   }
 };
 
+template<TTA... Methods>
+struct vtable_with_metainfo {
+  // TODO check не ломает ли это инварианты апкаста
+  descriptor_t type_descriptor;
+  const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
+  vtable<Methods...> table;
+};
+
+// precondition: vtable_ptr points to 'vtable<Methoods...>; which was created as field in struct 'vtable_with_metainfo'
+// (any vtable created by poly_ptr/ref/any_with satisfies this requirement)
+inline descriptor_t get_type_descriptor(const void* vtable_ptr) noexcept {
+  static_assert(sizeof(vtable<destroy, copy>) == sizeof(std::array<void*, 2>));
+  static_assert(sizeof(vtable_with_metainfo<destroy>) == sizeof(std::array<void*, 3>));
+  // standard layout guaratees that 'this' can be converted to pointer to first field
+  static_assert(std::is_standard_layout_v<vtable_with_metainfo<>>);
+  // for example table is [A,B,C] and A, B, C is pointers to Method<X>::do_invoke
+  // up-cast reinterprets some of A, B, C as new vtable begin
+  // for creating pointer to table like [B, C] or [C])
+  // so this method searches real start of vtable and returns type descriptor by using guarantee that
+  // vtable always created as field in struct 'vtable_with_metainfo'
+  using value_type = const void*;
+  auto* p = reinterpret_cast<const value_type*>(vtable_ptr);
+  do {
+    --p;
+  } while (*p);
+  auto* type_desc_ptr = reinterpret_cast<const std::byte*>(p) - offsetof(vtable_with_metainfo<>, terminator);
+  return *reinterpret_cast<const descriptor_t*>(type_desc_ptr);
+}
+
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
 // clang-format off
@@ -494,11 +556,13 @@ const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noex
 }
 
 // must be never named explicitly, use addr_vtable_for
-template <typename T, TTA... Methods>   // dont know why, but only C cast works on constexpr here
-constexpr vtable<Methods...> vtable_for = {{&invoker_for<T, Methods>::value...}};
+template <typename T, TTA... Methods>
+constexpr vtable_with_metainfo<Methods...> vtable_for = {
+    descriptor_v<T>, nullptr /* terminator */, vtable<Methods...>{{&invoker_for<T, Methods>::value...}}};
+
 // always decays type
 template<typename T, TTA... Methods>
-constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>; 
+constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>.table; 
 
 // it is concept for removing ambigious ctors in poly ptrs
 template <typename T>
@@ -559,6 +623,10 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   }
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
+
+  descriptor_t type_descriptor() const noexcept {
+    return get_type_descriptor(vtable_ptr);
+  }
 };
 
 // non nullable non owner view to any type which satisfies Methods...
@@ -570,8 +638,7 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   const void* value_ptr;
 
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
-  template <typename>
-  friend struct any_cast_fn;
+
   template <TTA, typename>
   friend struct invoke_fn;
   template <TTA, typename>
@@ -623,6 +690,10 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   }
   // returns const_poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
+
+  descriptor_t type_descriptor() const noexcept {
+    return get_type_descriptor(vtable_ptr);
+  }
 };
 
 template <TTA... Methods>
@@ -707,6 +778,11 @@ struct poly_ptr {
   constexpr bool operator==(const poly_ptr& other) const noexcept {
     return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
   }
+
+  // returns descriptor for void if *this == nullptr
+  descriptor_t type_descriptor() const noexcept {
+    return has_value() ? poly_.type_descriptor() : descriptor_t{};
+  }
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
@@ -717,8 +793,6 @@ struct const_poly_ptr {
   // uninitialized reference by default
   const_poly_ref<Methods...> poly_ = nullptr;
 
-  template <typename>
-  friend struct any_cast_fn;
   template <TTA...>
   friend struct const_poly_ptr;
   template <TTA...>
@@ -798,6 +872,11 @@ struct const_poly_ptr {
 
   constexpr bool operator==(const const_poly_ptr& other) const noexcept {
     return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
+  }
+
+  // returns descriptor for void if *this == nullptr
+  descriptor_t type_descriptor() const noexcept {
+    return has_value() ? poly_.type_descriptor() : descriptor_t{};
   }
 };
 
@@ -937,18 +1016,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   using alloc_pointer_type = typename alloc_traits::pointer;
   using alloc_size_type = typename alloc_traits::size_type;
 
-  static bool equal_types_stored(const basic_any& a, const basic_any& b) noexcept {
-#ifdef AA_DLL_COMPATIBLE
-    if (a.vtable_ptr == nullptr || b.vtable_ptr == nullptr)
-      return a.vtable_ptr == b.vtable_ptr;
-    return invoke_unsafe<type_id>(a) == invoke_unsafe<type_id>(b);
-#else
-    return a.vtable_ptr == b.vtable_ptr;
-#endif
-  }
-
-  template <typename>
-  friend struct any_cast_fn;
   template <TTA...>
   friend struct poly_ptr;
   template<TTA...>
@@ -968,9 +1035,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
                 "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
                 "use aa::copy_with<Alloc, SooS>::tempalte method!");
   static_assert(
-      !(has_method<spaceship> && has_method<equal_to>),
-      "Spaceship already contains most effective way to equality compare, if class have operator ==");
-  static_assert(
       noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires aa::destroy method");
   static_assert(has_method<size_of>, "Any requires aa::size_of method");
@@ -983,15 +1047,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   private:
   template <TTA...>
    struct remove_utility_methods {};
-#ifdef AA_DLL_COMPATIBLE
-  template <TTA... Methods1>
-  struct remove_utility_methods<size_of, destroy, type_id, Methods1...> {
-    using ptr = poly_ptr<Methods1...>;
-    using const_ptr = const_poly_ptr<Methods1...>;
-    using ref = poly_ref<Methods1...>;
-    using const_ref = const_poly_ref<Methods1...>;
-  };
-#endif // in case when Methods... contains 'type_id', it will not be removed
+
   template <TTA... Methods1>
   struct remove_utility_methods<size_of, destroy, Methods1...> {
     using ptr = poly_ptr<Methods1...>;
@@ -1133,6 +1189,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : basic_any(force_stable_pointers, std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
+  // clang-format on
 
   // postconditions : has_value() == false
   void reset() noexcept {
@@ -1144,6 +1201,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 
   // observe
 
+  // returns descriptor for 'void' type if do not contain type
+  descriptor_t type_descriptor() const noexcept {
+      return has_value() ? get_type_descriptor(vtable_ptr) : descriptor_t{};
+  }
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   bool is_stable_pointers() const noexcept {
     return memory_allocated();
@@ -1164,32 +1225,34 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   // * may cause problems with CRTP type(implicit incorrect overload resolution)
 
   [[nodiscard]] bool operator==(const basic_any& other) const
-      requires(has_method<equal_to> || has_method<spaceship>) {
-    if (!equal_types_stored(*this, other))
+    requires(has_method<equal_to> || has_method<spaceship>)
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
       return false;
-    if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
+    if (desc == descriptor_v<void>) [[unlikely]]
       return true;
-    if constexpr (has_method<spaceship>)
-      return invoke_unsafe<spaceship>(*this, other.value_ptr) ==
-             std::partial_ordering::equivalent;
-    else
+    if constexpr (has_method<equal_to>)
       return invoke_unsafe<equal_to>(*this, other.value_ptr);
+    else
+      return invoke_unsafe<spaceship>(*this, other.value_ptr) == std::partial_ordering::equivalent;
   }
 
-  std::partial_ordering operator<=>(const basic_any& other) const requires(has_method<spaceship>) {
-    if (!equal_types_stored(*this, other))
+  std::partial_ordering operator<=>(const basic_any& other) const
+    requires(has_method<spaceship>)
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
       return std::partial_ordering::unordered;
-    if (vtable_ptr == nullptr)  // other.vtable_ptr == nullptr too here
+    if (desc == descriptor_v<void>) [[unlikely]]
       return std::partial_ordering::equivalent;
     return invoke_unsafe<spaceship>(*this, other.value_ptr);
   }
 
- private :
+ private:
 
-     // precodition - has_value() == false
-     // clang-format off
+  // precodition - has_value() == false
   void move_value_from(basic_any&& other) {
-    // clang-format on
     if (!other.has_value())
       return;
     // `move` is noexcept (invariant of small state)
@@ -1227,28 +1290,16 @@ struct any_cast_fn {
  private:
   template <typename U, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static const U* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
-// U already remove_cv
-#ifdef AA_DLL_COMPATIBLE
-    if (any == nullptr || !any->has_value() ||
-        invoke_unsafe<type_id>(*any) != ::noexport::type_name<U>)
+    // U already remove_cv
+    if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
       return nullptr;
-#else
-    if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
-      return nullptr;
-#endif
-    return std::launder(reinterpret_cast<const U*>(any->value_ptr));
+    return std::launder(reinterpret_cast<const U*>((&*any).raw()));
   }
   template <typename U, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
   static U* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
-#ifdef AA_DLL_COMPATIBLE
-    if (any == nullptr || !any->has_value() ||
-        invoke_unsafe<type_id>(*any) != ::noexport::type_name<U>)
+    if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
       return nullptr;
-#else
-    if (any == nullptr || any->vtable_ptr != addr_vtable_for<U, Methods...>)
-      return nullptr;
-#endif
-    return std::launder(reinterpret_cast<U*>(any->value_ptr));
+    return std::launder(reinterpret_cast<U*>((&*any).raw()));
   }
  public:
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
@@ -1283,17 +1334,10 @@ struct any_cast_fn {
       throw std::bad_cast{};
     return *ptr;
   }
-  // any cast for poly_ptr/ref needs Method aa::type_id
-  // because of possibility to cast poly_ref<A, B, C> to poly_ref<B, C> (with changing address of vtable)
   template <TTA... Methods>
-  const std::remove_reference_t<T>* operator()(const_poly_ptr<Methods...> p) const noexcept {
-#ifdef AA_DLL_COMPATIBLE
-    if (p == nullptr || p.poly_.vtable_ptr->template invoke<type_id>(p.raw()) != ::noexport::type_name<T>)
+  std::add_pointer_t<const T> operator()(const_poly_ptr<Methods...> p) const noexcept {
+    if (p == nullptr || p.type_descriptor() != descriptor_v<T>)
       return nullptr;
-#else
-    if (p == nullptr || p.poly_.vtable_ptr->template invoke<type_id>(p.raw()) != typeid(std::decay_t<T>))
-      return nullptr;
-#endif
     return reinterpret_cast<const std::remove_reference_t<T>*>(p.raw());
   }
   template <TTA... Methods>
@@ -1400,33 +1444,9 @@ struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, 
  public:
   using base_t::base_t;
 };
-template<TTA... Methods>
-consteval bool first_is_not_type_id() {
-  // Method 'type_id' must not be first in any_with<Methods...>! Shift it to the right.
-  // Don't ask why =)
-  // (If type_id is first Method, then behavior may change when AA_DLL_COMPATIBLE enabled)
-  return vtable<Methods...>::template number_of_method<type_id> != 0;
 
-}
-#ifdef AA_DLL_COMPATIBLE
-template<typename Alloc, size_t SooS, TTA... Methods>
-consteval auto add_typeid_to_methods() noexcept {
-  // not std::conditional because compilation may breaks if two type_id in type
-  if constexpr (vtable<Methods...>::template has_method<type_id>)
-    return std::type_identity<any_with_t<Alloc, SooS, size_of, destroy, Methods...>>{};
-  else
-    return std::type_identity<any_with_t<Alloc, SooS, size_of, destroy, type_id, Methods...>>{};
-}
-// adds Method type_id if it was not in Methods to enable any cast
 template <typename Alloc, size_t SooS, TTA... Methods>
-  requires(first_is_not_type_id<Methods...>())
-using basic_any_with = typename decltype(add_typeid_to_methods<Alloc, SooS, Methods...>())::type;
-
-#else
-template <typename Alloc, size_t SooS, TTA... Methods>
-  requires(first_is_not_type_id<Methods...>())
 using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
-#endif
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
@@ -1548,6 +1568,12 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
   size_t operator()(const ::aa::const_poly_ptr<Methods...>& p) const noexcept {
       return ::std::hash<void*>{}(p.raw());
   }
+};
+template<>
+struct hash<::aa::descriptor_t> {
+    size_t operator()(const ::aa::descriptor_t& v) const noexcept {
+        return hash<const void*>{}(bit_cast<const void*>(v));
+    }
 };
 // clang-format on
 
