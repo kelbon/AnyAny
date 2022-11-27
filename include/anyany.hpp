@@ -331,10 +331,10 @@ struct copy_with {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static void* do_invoke(const T& src, void* dest) {
+    static std::pair<void*, std::size_t> do_invoke(const T& src, void* dest) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), src);
-        return dest;
+        return {dest, 0};
       } else {
         using alloc_traits = std::allocator_traits<Alloc>;
         // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
@@ -351,7 +351,7 @@ struct copy_with {
             throw;
           }
         }
-        return ptr;
+        return {ptr, alloc_sz};
       }
     }
   };
@@ -368,10 +368,10 @@ struct copy_with<Alloc, SooS> {
     using allocator_type = Alloc;
     static constexpr size_t SooS_value = SooS;
 
-    static void* do_invoke(const T& src, void* dest, Alloc& alloc) {
+    static std::pair<void*, std::size_t> do_invoke(const T& src, void* dest, Alloc& alloc) {
       if constexpr (sizeof(T) <= SooS && std::is_nothrow_copy_constructible_v<T>) {
         std::construct_at(reinterpret_cast<T*>(dest), src);
-        return dest;
+        return {dest, 0};
       } else {
         using alloc_traits = std::allocator_traits<Alloc>;
         // alloc_sz must be std::max(SooS, sizeof(T)), it is invariant of big state
@@ -388,7 +388,7 @@ struct copy_with<Alloc, SooS> {
             throw;
           }
         }
-        return ptr;
+        return {ptr, alloc_sz};
       }
     }
   };
@@ -421,14 +421,6 @@ struct spaceship {
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
   static std::partial_ordering do_invoke(const T& first, const void* second) {
     return first <=> *reinterpret_cast<const T*>(second);
-  }
-};
-
-// utility method for basic_any
-template<typename T>
-struct size_of {
-  static constexpr std::size_t do_invoke(const T&) noexcept {
-    return sizeof(T);
   }
 };
 
@@ -1008,6 +1000,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
           throw;
         }
       }
+      std::construct_at(reinterpret_cast<std::size_t*>(data.data()), allocation_size);
     }
     vtable_ptr = addr_vtable_for<T, Methods...>;
   }
@@ -1037,7 +1030,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   static_assert(
       noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires aa::destroy method");
-  static_assert(has_method<size_of>, "Any requires aa::size_of method");
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
 
   using base_any_type = basic_any;
@@ -1049,7 +1041,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
    struct remove_utility_methods {};
 
   template <TTA... Methods1>
-  struct remove_utility_methods<size_of, destroy, Methods1...> {
+  struct remove_utility_methods<destroy, Methods1...> {
     using ptr = poly_ptr<Methods1...>;
     using const_ptr = const_poly_ptr<Methods1...>;
     using ref = poly_ref<Methods1...>;
@@ -1083,10 +1075,16 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   basic_any(const basic_any& other) requires(has_copy)
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (other.has_value()) {
-      if constexpr (std::is_empty_v<Alloc>)
-        value_ptr = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr);
-      else
-        value_ptr = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr, alloc);
+      std::pair<void*, std::size_t> res;
+      if constexpr (std::is_empty_v<Alloc>) {
+        res = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr);
+      } else {
+        res = invoke_unsafe<copy_with<Alloc, SooS>::template method>(other, value_ptr, alloc);
+      }
+      auto& [val_ptr, alloc_sz] = res;
+      value_ptr = val_ptr;
+      if (alloc_sz != 0)
+        std::construct_at(reinterpret_cast<std::size_t*>(data.data()), alloc_sz);
     }
     vtable_ptr = other.vtable_ptr;
   }
@@ -1122,6 +1120,14 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       }
     }
     *this = std::move(value);
+    return static_cast<CRTP&>(*this);
+  }
+  template<typename V>
+   requires(!any_x<V>)
+  CRTP& operator=(V&& val) {
+    basic_any temp{std::forward<V>(val)};
+    std::destroy_at(this);
+    std::construct_at(this, std::move(temp));
     return static_cast<CRTP&>(*this);
   }
 
@@ -1212,9 +1218,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
-  std::size_t sizeof_now() const noexcept {
-    return has_value() ? invoke_unsafe<size_of>(*this) : 0;
-  }
   // COMPARE
 
   // there are NO operator==(auto&&) or operator<=>(auto&&)
@@ -1259,8 +1262,11 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated())
       invoke_unsafe<move>(other, value_ptr);
-    else
+    else {
       value_ptr = std::exchange(other.value_ptr, &other.data);
+      std::construct_at(reinterpret_cast<std::size_t*>(data.data()),
+                        *reinterpret_cast<std::size_t*>(other.data.data()));
+    }
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
@@ -1269,7 +1275,11 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   }
   size_t allocated_size() const {
     assert(has_value() && memory_allocated());
-    return std::max(SooS, invoke_unsafe<size_of>(*this));
+    // needs atleast sizeof(std::size_t) in buffer(SooS)
+    // to store allocated size for passing it into deallocate(ptr, n)
+    static_assert(SooS >= sizeof(std::size_t));
+    // when allocates stores in size in unused buffer
+    return *reinterpret_cast<const std::size_t*>(data.data());
   }
   void destroy_value() {
     invoke_unsafe<destroy>(*this);
@@ -1443,10 +1453,12 @@ struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, 
 
  public:
   using base_t::base_t;
+  using base_t::operator=;
 };
 
 template <typename Alloc, size_t SooS, TTA... Methods>
-using basic_any_with = any_with_t<Alloc, SooS, size_of, destroy, Methods...>;
+using basic_any_with = any_with_t<Alloc, SooS, destroy, Methods...>;
+
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
