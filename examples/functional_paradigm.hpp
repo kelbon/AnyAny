@@ -35,7 +35,7 @@ struct basic_function;
 template <typename R, typename Head, typename... Args, template <typename> typename... Methods>
 struct basic_function<R(Head, Args...), Methods...>
     : aa::any_with<call<R(Head, Args...)>::template method, Methods...> {
-  using basic_function::any_with_t::any_with_t;
+  using basic_function::basic_any::basic_any;
 
   R operator()(Head arg, Args... args) {
     return aa::invoke<call<R(Head, Args...)>::template method>(*this, static_cast<Head&&>(arg),

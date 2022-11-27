@@ -956,13 +956,12 @@ struct force_stable_pointers_t {
 };
 constexpr inline force_stable_pointers_t force_stable_pointers{};
 
-// CRTP - inheritor of basic_any
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
-template <typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>... {
+template <typename Alloc, size_t SooS, TTA... Methods>
+struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods...>>... {
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
@@ -1023,7 +1022,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>::template method>;
 
-  static_assert((std::is_empty_v<plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Methods...>>> && ...));
+  static_assert((std::is_empty_v<plugin_t<Methods, basic_any<Alloc, SooS, Methods...>>> && ...));
   static_assert((noexport::check_copy<Methods<interface_t>, Alloc, SooS>() && ...),
                 "Alloc and SooS in copy do not match Alloc in SooS in basic_any, "
                 "use aa::copy_with<Alloc, SooS>::tempalte method!");
@@ -1097,7 +1096,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
     move_value_from(std::move(other));
   }
   // TODO C++23 - deducing this here
-  CRTP& operator=(basic_any&& other) noexcept requires(has_method<move>) {
+  basic_any& operator=(basic_any&& other) noexcept requires(has_method<move>) {
     // nocheck about this == &other
     // because after move assign other by C++ standard in unspecified(valid) state
     reset();
@@ -1107,10 +1106,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
         alloc = std::move(other.alloc);
     }
     move_value_from(std::move(other));
-    return static_cast<CRTP&>(*this);
+    return *this;
   }
 
-  CRTP& operator=(const basic_any& other) requires(has_copy&& has_method<move>) {
+  basic_any& operator=(const basic_any& other) requires(has_copy&& has_method<move>) {
     basic_any value{other};
     if constexpr (!alloc_traits::is_always_equal::value &&
                   alloc_traits::propagate_on_container_copy_assignment::value) {
@@ -1120,15 +1119,15 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
       }
     }
     *this = std::move(value);
-    return static_cast<CRTP&>(*this);
+    return *this;
   }
   template<typename V>
-   requires(!any_x<V>)
-  CRTP& operator=(V&& val) {
+    requires(!any_x<V>)
+  basic_any& operator=(V&& val) {
     basic_any temp{std::forward<V>(val)};
     std::destroy_at(this);
     std::construct_at(this, std::move(temp));
-    return static_cast<CRTP&>(*this);
+    return *this;
   }
 
   // making from any other type
@@ -1225,7 +1224,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
   // but:
   // * it will be less effective(useless branching) if you 90% sure its this type
   // * it will cause compilation time, obj file increasing
-  // * may cause problems with CRTP type(implicit incorrect overload resolution)
 
   [[nodiscard]] bool operator==(const basic_any& other) const
     requires(has_method<equal_to> || has_method<spaceship>)
@@ -1298,15 +1296,15 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<CRTP, Alloc, SooS, Me
 template<typename T>
 struct any_cast_fn {
  private:
-  template <typename U, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-  static const U* any_cast_impl(const basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
+  template <typename U, typename Alloc, size_t SooS, TTA... Methods>
+  static const U* any_cast_impl(const basic_any<Alloc, SooS, Methods...>* any) noexcept {
     // U already remove_cv
     if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
       return nullptr;
     return std::launder(reinterpret_cast<const U*>((&*any).raw()));
   }
-  template <typename U, typename CRTP, typename Alloc, size_t SooS, TTA... Methods>
-  static U* any_cast_impl(basic_any<CRTP, Alloc, SooS, Methods...>* any) noexcept {
+  template <typename U, typename Alloc, size_t SooS, TTA... Methods>
+  static U* any_cast_impl(basic_any<Alloc, SooS, Methods...>* any) noexcept {
     if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
       return nullptr;
     return std::launder(reinterpret_cast<U*>((&*any).raw()));
@@ -1445,19 +1443,8 @@ struct invoke_fn<Method, type_list<Args...>> {
 template <TTA Method>
 constexpr inline invoke_fn<Method> invoke = {};
 
-// Strong alias to basic_any with Alloc, SooS and Methods..., used to cover CRTP
 template <typename Alloc, size_t SooS, TTA... Methods>
-struct any_with_t : basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, Methods...> {
- private:
-  using base_t = basic_any<any_with_t<Alloc, SooS, Methods...>, Alloc, SooS, Methods...>;
-
- public:
-  using base_t::base_t;
-  using base_t::operator=;
-};
-
-template <typename Alloc, size_t SooS, TTA... Methods>
-using basic_any_with = any_with_t<Alloc, SooS, destroy, Methods...>;
+using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
 
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
