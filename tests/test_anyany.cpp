@@ -1,4 +1,7 @@
-
+// TODO check самодостаточность всех хедеров
+#include "visit_invoke_example.hpp"
+#include "anyany.hpp"
+#include "visit_invoke.hpp" // TODO перенести в другой тест файл
 #include <array>
 #include <functional>
 #include <iostream>
@@ -14,8 +17,6 @@
 #include "functional_paradigm.hpp" // example 0
 #include "basic_usage.hpp" // example 1
 #include "polyref.hpp"
-
-#include "anyany.hpp"
 
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
@@ -451,7 +452,7 @@ struct spaceship {
 struct planet {
   int val = 150;
 };
-// TODO tests with value use
+
 std::string case_sp(const spaceship& x, const planet& y) {
   if (x.s != "hello" || y.val != 150)
     throw false;
@@ -464,30 +465,31 @@ std::string case_ps(const planet& x, const spaceship& y) {
 }
 
 // clang-format off
-constexpr inline auto collisions = aa::make_invoke_match<std::string,
+constexpr inline auto collisions = aa::make_visit_invoke<
     case_sp,
-    [](spaceship&, const spaceship&) { return "ss"; },
+    [](spaceship&, const spaceship&) { return std::string("ss"); },
     case_ps,
     [](planet a, planet& b) {
       if(a.val != 150 || b.val != 150)
         throw false;
-      return "pp";
+      return std::string("pp");
     },
     [](int&&) {
-        return "int";
+        return std::string("int");
     }
 >();
-constexpr inline auto vars_collision = aa::make_invoke_match<std::string,
-    aa::std_variant_poly_traits,
+constexpr inline auto vars_collision = aa::make_visit_invoke<std::string,
     case_sp,
     case_ps,
     [](int) {
       return "int";
     }
->();
+>(aa::std_variant_poly_traits{});
 // clang-format on
 
 int main() {
+  aa::example::multidispatch_usage();
+  aa::example::multidispatch_usage2();
   using var_type = std::variant<int, spaceship, planet, double, char>;
   var_type var1 = spaceship{};
   const var_type var2 = planet{};
@@ -610,11 +612,11 @@ int main() {
   if (i && cfi2.has_value())  // consteval static member function of reference, true always
     std::cout << "works\n";
   constexpr auto j0 =
-      noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j1 = noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
-  constexpr auto j2 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
-  constexpr auto j3 = noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j4 = noexport::find_subset(
+      aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j1 = aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
+  constexpr auto j2 = aa::noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
+  constexpr auto j3 = aa::noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
+  constexpr auto j4 = aa::noexport::find_subset(
       aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
   (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
   {

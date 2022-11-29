@@ -1,28 +1,51 @@
 cmake_minimum_required(VERSION 3.21)
 project(anyany LANGUAGES CXX)
 
-include(CTest)
+option(AA_ENABLE_TESTING "enables testing" OFF)
 
-if(BUILD_TESTING)
-	set(ANYANY_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anyany.cpp)
-	file(GLOB ANYANY_EXAMPLES REGULAR_EXPRESSION ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
-endif()
-add_executable(anyany ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp ${ANYANY_TEST} ${ANYANY_EXAMPLES})
-set_property(TARGET anyany PROPERTY CMAKE_CXX_EXTENSIONS OFF)
-set_property(TARGET anyany PROPERTY LINKER_LANGUAGE CXX)
-target_include_directories(anyany PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+file(GLOB ${PROJECT_NAME}_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp)
+file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*.hpp)
 
-add_library(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
-set_property(TARGET anyanylib PROPERTY LINKER_LANGUAGE CXX)
-target_include_directories(anyanylib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set_property(TARGET anyanylib PROPERTY CMAKE_CXX_EXTENSIONS OFF)
-source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
-if(BUILD_TESTING)
-	source_group(Examples FILES ${ANYANY_EXAMPLES})
-	target_include_directories(anyany PRIVATE examples)
-	source_group(Tests FILES ${ANYANY_TEST})
-	source_group(Include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/anyany.hpp)
+if(AA_ENABLE_TESTING)
+	include(CTest)
+	file(GLOB ${PROJECT_NAME}_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
+	file(GLOB ${PROJECT_NAME}_EXAMPLES REGULAR_EXPRESSION ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
+	add_executable(${PROJECT_NAME}
+		${${PROJECT_NAME}_HEADERS}
+		${${PROJECT_NAME}_NOEXPORT_HEADERS}
+		${${PROJECT_NAME}_TEST}
+		${${PROJECT_NAME}_EXAMPLES})
+
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		CMAKE_CXX_EXTENSIONS OFF
+		LINKER_LANGUAGE CXX
+		CMAKE_CXX_STANDARD_REQUIRED ON
+		CXX_STANDARD 20
+	)
+
+	target_include_directories(${PROJECT_NAME} PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/include
+		${CMAKE_CURRENT_SOURCE_DIR}/examples)
+
+	source_group(Tests FILES ${${PROJECT_NAME}_TEST})
+
 	add_subdirectory(tests)
 endif()
-set_property(TARGET anyany PROPERTY CMAKE_CXX_STANDARD_REQUIRED ON)
-set_property(TARGET anyany PROPERTY CXX_STANDARD 23)
+
+add_library(${PROJECT_NAME}lib STATIC
+	${${PROJECT_NAME}_HEADERS}
+	${${PROJECT_NAME}_NOEXPORT_HEADERS})
+
+set_property(TARGET ${PROJECT_NAME}lib PROPERTY LINKER_LANGUAGE CXX)
+
+target_include_directories(${PROJECT_NAME}lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+set_target_properties(${PROJECT_NAME}lib PROPERTIES
+	CMAKE_CXX_EXTENSIONS OFF
+	LINKER_LANGUAGE CXX
+	CMAKE_CXX_STANDARD_REQUIRED ON
+	CXX_STANDARD 20)
+
+source_group(Details FILES ${${PROJECT_NAME}_NOEXPORT_HEADERS})
+source_group(Include FILES ${${PROJECT_NAME}_HEADERS})
+source_group(Examples FILES ${${PROJECT_NAME}_EXAMPLES})

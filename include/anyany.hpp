@@ -1,38 +1,34 @@
 ﻿#pragma once
 
+/*
+  HEADER SYNOPSIS:
+
+  * polymorphic value (basic_any_with, any_with),
+  * reference (const_poly_ref, poly_ref),
+  * pointer (const_poly_ptr, poly_ptr),
+  Basic actions on polymorphic types:
+  * any_cast<T>
+  * invoke<Method>
+  * invoke_unsafe<Method>
+  * type_switch(/const/poly_ref)
+
+*/
 #include <array>
 #include <utility>      // std::exchange
 #include <cassert>      // assert
 #include <memory>       // construct_at / destroy_at
 #include <stdexcept>    // bad_cast/exception
-#include <compare>      // partial_ordering
 #include <cstddef>      // max_align_t
 #include <optional>     // for type_switch
 #include <functional>   // std::invoke
-#include <variant>      // for std_variant_poly_traits only
 
-// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
-#if defined(_MSC_VER)
-#define AA_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_MSVC_EBO
-#endif
+#include "type_descriptor.hpp"
+#include "noexport/anyany_details.hpp"
 
 // TTA == template template argument (just for better reading)
 #define TTA template <typename> typename
 
 namespace aa {
-
-template <typename...>
-struct type_list {};
-
-constexpr inline size_t npos = size_t(-1);
-
-template <typename T>
-concept lambda_without_capture =
-    std::default_initializable<std::remove_cvref_t<T>> && requires {
-                                                            { &std::remove_cvref_t<T>::operator() };
-                                                          };
 
 // Method must have same signature for all types(except self),
 // so this type used to check what signature Method have
@@ -40,268 +36,6 @@ concept lambda_without_capture =
 // typical error - concept on Method's template argument, which is false for interface_t
 // (in this case you can explciitly specialize Method for interface_t)
 struct interface_t {};
-
-}  // namespace aa
-
-namespace noexport {
-
-// this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
-template <typename T, size_t>
-struct value_in_tuple {
-  T value{};
-};
-
-template <typename...>
-struct tuple_base;
-
-template <size_t... Is, typename... Ts>
-struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
-  constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
-  }
-};
-// stores values always in right order(in memory), used only for function pointers in vtable
-template <typename... Ts>
-struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
-  using tuple::tuple_base::tuple_base;
-};
-
-// in this library tuple used ONLY for function pointers in vtable, so get_value returns value
-template <size_t I, typename U>
-constexpr U get_value(value_in_tuple<U, I> v) noexcept {
-  return v.value;
-}
-
-template <size_t I, typename... Args>
-struct number_of_impl {
-  static constexpr size_t value = aa::npos;  // no such element in pack
-};
-template <size_t I, typename T, typename... Args>
-struct number_of_impl<I, T, T, Args...> {
-  static constexpr size_t value = I;
-};
-template <size_t I, typename T, typename First, typename... Args>
-struct number_of_impl<I, T, First, Args...> {
-  static constexpr size_t value = number_of_impl<I + 1, T, Args...>::value;
-};
-
-// npos if no such type in pack
-template <typename T, typename... Args>
-inline constexpr size_t number_of_first = number_of_impl<0, T, Args...>::value;
-
-template <typename T, typename... Args>
-struct is_one_of : std::bool_constant<(std::is_same_v<T, Args> || ...)> {};
-
-template <typename T>
-constexpr inline bool always_false = false;
-
-template <typename Self>
-consteval bool is_const_method() noexcept {
-  if (std::is_reference_v<Self>)
-    return std::is_const_v<std::remove_reference_t<Self>>;
-  return true;  // passing by value is a const method!
-}
-
-template <typename>
-struct any_method_traits;
-
-// returns false if it is ill-formed to pass non-const reference into function which accepts T
-template <typename T>
-consteval bool is_const_arg() {
-  return !std::is_reference_v<T> || std::is_const_v<std::remove_reference_t<T>>;
-}
-// Note: for signature && added to arguments for forwarding
-template <typename R, typename Self, typename... Args>
-struct any_method_traits<R (*)(Self, Args...)> {
-  using self_sample_type = Self;
-  using result_type = R;
-  static constexpr bool is_const = is_const_method<Self>();
-  using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
-  using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
-  using args = aa::type_list<Args...>;
-  // for invoke_match
-  static constexpr bool is_noexcept = false;
-  using all_args = aa::type_list<Self, Args...>;
-  using decay_args = aa::type_list<std::decay_t<Self>, std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args) + 1;
-  static constexpr std::array args_const = {is_const_arg<Self>(), is_const_arg<Args>()...};
-};
-// noexcept version
-template <typename R, typename Self, typename... Args>
-struct any_method_traits<R (*)(Self, Args...) noexcept> {
-  using self_sample_type = Self;
-  using result_type = R;
-  static constexpr bool is_const = is_const_method<Self>();
-  using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
-  using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
-  using args = aa::type_list<Args...>;
-  // for invoke_match
-  static constexpr bool is_noexcept = true;
-  using all_args = aa::type_list<Self, Args...>;
-  using decay_args = aa::type_list<std::decay_t<Self>, std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args) + 1;
-  static constexpr std::array args_const = {is_const_arg<Self>(), is_const_arg<Args>()...};
-};
-// for invoke_match (only lambdas without capture)
-template <typename Class, typename R, typename... Args>
-struct any_method_traits<R (Class::*)(Args...) const> {
-  using result_type = R;
-  static constexpr bool is_noexcept = false;
-  using all_args = aa::type_list<Args...>;
-  using decay_args = aa::type_list<std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args);
-  static constexpr std::array args_const = {is_const_arg<Args>()...};
-};
-template <typename Class, typename R, typename... Args>
-struct any_method_traits<R (Class::*)(Args...) const noexcept> {
-  using result_type = R;
-  static constexpr bool is_noexcept = true;
-  using all_args = aa::type_list<Args...>;
-  using decay_args = aa::type_list<std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args);
-  static constexpr std::array args_const = {is_const_arg<Args>()...};
-};
-
-template <aa::lambda_without_capture T>
-struct any_method_traits<T> : any_method_traits<decltype(&T::operator())> {};
-
-template <typename Method, typename Alloc, size_t SooS>
-static consteval bool check_copy() {
-  if constexpr (requires { typename Method::allocator_type; })
-    return std::is_same_v<typename Method::allocator_type, Alloc> && SooS == Method::SooS_value;
-  else
-    return true;
-}
-
-consteval bool starts_with(aa::type_list<>, auto&&) {
-  return true;
-}
-// first type not equal
-consteval bool starts_with(auto&&, auto&&) {
-  return false;
-}
-template <typename Head, typename... Ts1, typename... Ts2>
-consteval bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<Head, Ts2...>) {
-  return starts_with(aa::type_list<Ts1...>{}, aa::type_list<Ts2...>{});
-}
-
-// returns index in list where first typelist starts as subset in second typelist or npos if no such index
-template <typename... Ts1, typename Head, typename... Ts2>
-consteval size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
-                             size_t n = 0) noexcept {
-  if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
-    return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
-  else if constexpr (starts_with(needle, all))
-    return n;
-  else
-    return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
-}
-
-// name 'n' because need to reduce name size
-template <typename T>
-consteval const char* n() {
-#if defined(__GNUC__) && !defined(__clang__)
-  return __PRETTY_FUNCTION__ + sizeof("consteval const char* noexport::n() [with T =");
-#elif defined(__clang__)
-  return __PRETTY_FUNCTION__ + sizeof("const char *noexport::n() [T =");
-#elif defined(_MSC_VER)
-  const char* res = __FUNCSIG__ + sizeof("const char *__cdecl noexport::n<") - 1;
-  // MSVC may return different names for SAME type if it was decalred as struct and implemented as class or
-  // smth like
-  std::string_view s{res};
-  if (s.starts_with("class"))
-    res += sizeof("class");
-  else if (s.starts_with("struct"))
-    res += sizeof("struct");
-  // fundamental types has no 'prefix'
-  return res;
-#else
-#define AA_CANT_GET_TYPENAME
-  // it will not break dll support, because global variables addresses may differ only on windows, where
-  // msvc/clang support type names getting
-  return nullptr;
-#endif
-}
-// do not use it explicitly, use aa::descriptor_v
-#ifdef AA_CANT_GET_TYPENAME
-template <typename T>
-constexpr const void* descriptor = &descriptor<T>;
-#else
-template <typename T>
-constexpr const char* descriptor = n<T>();
-#endif
-// inlinable(std::strcmp no)
-// assumes a && b != nullptr
-inline constexpr std::strong_ordering strcmp(const char* l, const char* r) noexcept {
-  for (; *l == *r && *l != '\0'; ++l, ++r)
-    ;
-  return *l <=> *r;
-}
-
-// minimal flat_map impl for invoke_match
-template<typename Key, typename Value, std::size_t N, typename Compare = std::less<Key>>
-struct flat_map {
- private:
-  std::array<Key, N> keys;
-  std::array<Value, N> values;
-
- public:
-  constexpr flat_map(std::array<std::pair<Key, Value>, N> arr) {
-    // sort by keys
-    std::ranges::sort(arr, [](auto& l, auto& r) { return l.first < r.first; });
-    auto kb = keys.begin();
-    auto kv = values.begin();
-    // clang do not supports views like 'keys' now =(
-    for (auto& [k, v] : arr) {
-      *kb = k;
-      *kv = v;
-      ++kb, ++kv;
-    }
-    bool b = false;
-    assert(b = true);
-    if (std::is_constant_evaluated() || b) {
-      auto it = std::unique(keys.begin(), keys.end(),
-                            [](auto& l, auto& r) { return !Compare{}(l, r) && !Compare{}(r, l); });
-      if (it != keys.end())
-        throw "keys are not unique!";
-    }
-  }
-  // its minimal impl, do not support transparent compare
-  constexpr auto find(const Key& key) const noexcept(requires(Key v) {
-                                                       { Compare{}(v, v) } noexcept;
-                                                     }) {
-    auto it = std::ranges::lower_bound(keys, key, Compare{});
-    // lower_bound returns such 'it' for which 'key' <= *it, so check if it true, that key < *it
-    if (it == keys.end() || Compare{}(key, *it))
-      return values.end();
-    return std::next(values.begin(), std::distance(keys.begin(), it));
-  }
-  constexpr auto end() const noexcept {
-    return values.end();
-  }
-};
-
-// helper for invoke_match
-// mostly exist because MSVC exist (and make ICE when auto* in template decl)
-template <auto V,
-          typename = typename ::noexport::any_method_traits<std::remove_cvref_t<decltype(V)>>::all_args>
-struct make_wrapper {};
-
-template <aa::lambda_without_capture auto V, typename X>
-struct make_wrapper<V, X> : std::type_identity<std::remove_cvref_t<decltype(V)>> {};
-
-template <auto V, typename... Args>
-  requires(!aa::lambda_without_capture<decltype(V)>)
-struct make_wrapper<V, aa::type_list<Args...>> {
-  struct type {
-    decltype(auto) operator()(Args... args) const noexcept(noexcept(V(static_cast<Args&&>(args)...))) {
-      return V(static_cast<Args&&>(args)...);
-    }
-  };
-};
-
-}  // namespace noexport
-
-namespace aa {
 
 // just unique type for every Method, because i need to inherit from plugins
 template <TTA Method>
@@ -338,16 +72,17 @@ template <TTA... Methods>
 struct satisfies : satisfy<Methods>... {
   static_assert((has_explicit_interface<Methods> && ...), "It's useless to subscribe if it is not required");
 };
+
+// You can add specialization for your type,
+// so it is equal to 'using satisfies = aa::satisfies<Method>;' in type
 template <typename T, TTA... Methods>
 constexpr inline bool satisfies_v = false;
-
 template<TTA... Methods>
 constexpr inline bool satisfies_v<interface_t, Methods...> = true;
 
-// clang-format off
+// true if satisfies_v specialized for T or T has inner 'using satisfies = aa::satisfies<...Method...>'
 template<typename T, TTA Method>
 concept is_satisfies = satisfies_v<T, Method> || std::is_base_of_v<satisfy<Method>, typename T::satisfies>;
-// clang-format on
 
 template <TTA Method>
 using method_traits = noexport::any_method_traits<decltype(&Method<interface_t>::do_invoke)>;
@@ -374,7 +109,7 @@ template <TTA Method>
 concept const_method = method_traits<Method>::is_const;
 
 template <typename T, TTA Method, typename = args_list<Method>>
-struct invoker_for;
+struct invoker_for {};
 
 template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
@@ -521,7 +256,7 @@ struct hash {
   }
 };
 
-// since C++20 operator== it is a != too
+// enables operator== for any_with
 template <typename T>
 struct equal_to {
   static bool do_invoke(const T& first, const void* second) {
@@ -529,6 +264,7 @@ struct equal_to {
   }
 };
 
+// enables operator<=> and operator== for any_with
 template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
@@ -544,7 +280,7 @@ struct spaceship {
 // using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
 // using any_sized_range = aa::any_with<Size>;
 template <typename Signature, auto>
-struct from_callable;
+struct from_callable {};
 
 template <typename R, typename... Ts, auto Foo>
 struct from_callable<R(Ts...), Foo> {
@@ -562,55 +298,11 @@ struct from_callable<R(Ts...), Foo> {
   };
 };
 
-// void by default
-struct descriptor_t {
- private:
-  using raw_desc_type = std::remove_cvref_t<decltype(::noexport::descriptor<int>)>;
-  raw_desc_type _value;
-
- public:
-  // creates descriptor for 'void' type
-  constexpr descriptor_t() noexcept : _value(noexport::descriptor<void>) {
-  }
-  constexpr explicit descriptor_t(raw_desc_type value) noexcept : _value(value) {
-  }
-  constexpr bool operator==(const descriptor_t& other) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
-    return _value == other._value;
-#else
-    if (!std::is_constant_evaluated()) {
-      // cant compare pointers from different objects on compile time
-      if (_value == other._value) [[unlikely]]
-        return true;
-    }
-    return ::noexport::strcmp(_value, other._value) == std::strong_ordering::equal;
-#endif
-  }
-
-#ifdef AA_CANT_GET_TYPENAME
-#define AA_CONSTEXPR
-#define AA_CONSTEVAL
-#else
-#define AA_CONSTEXPR constexpr
-#define AA_CONSTEVAL consteval
-#endif
-  AA_CONSTEXPR std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
-    return (uintptr_t)_value <=> (uintptr_t)other._value;
-#else
-    return ::noexport::strcmp(_value, other._value);
-#endif
-  }
-};
-// always decays type
-template<typename T>
-constexpr descriptor_t descriptor_v{::noexport::descriptor<std::decay_t<T>>};
-
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
 template <TTA... Methods>
 struct vtable {
-  ::noexport::tuple<type_erased_signature_t<Methods>...> table;
+  noexport::tuple<type_erased_signature_t<Methods>...> table;
 
   template <TTA Method>
   static inline constexpr size_t number_of_method =
@@ -623,20 +315,20 @@ struct vtable {
   requires(has_method<Method>)
   constexpr decltype(auto) invoke(Args&&... args) const {
     // clang-format on
-    return ::noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
+    return noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
 
 template<TTA... Methods>
 struct vtable_with_metainfo {
-  // TODO check не ломает ли это инварианты апкаста
   descriptor_t type_descriptor;
   const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
   vtable<Methods...> table;
 };
 
-// precondition: vtable_ptr points to 'vtable<Methoods...>; which was created as field in struct 'vtable_with_metainfo'
-// (any vtable created by poly_ptr/ref/any_with satisfies this requirement)
+namespace noexport {
+// precondition: vtable_ptr points to 'vtable<Methoods...>; which was created as field in struct
+// 'vtable_with_metainfo' (any vtable created by poly_ptr/ref/any_with satisfies this requirement)
 inline descriptor_t get_type_descriptor(const void* vtable_ptr) noexcept {
   static_assert(sizeof(vtable<destroy, copy>) == sizeof(std::array<void*, 2>));
   static_assert(sizeof(vtable_with_metainfo<destroy>) == sizeof(std::array<void*, 3>));
@@ -656,18 +348,20 @@ inline descriptor_t get_type_descriptor(const void* vtable_ptr) noexcept {
   return *reinterpret_cast<const descriptor_t*>(type_desc_ptr);
 }
 
+}  // namespace noexport
+
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>* 
 // clang-format off
 // first argument only for deducting ToMethods(or internal compiler error on gcc...)
 template <TTA... ToMethods, TTA... FromMethods>
-requires(::noexport::find_subset(
+requires(noexport::find_subset(
                             type_list<ToMethods<interface_t>...>{},
                             type_list<FromMethods<interface_t>...>{}) != npos)
 const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
   // clang-format on
   assert(ptr != nullptr);
-  constexpr std::size_t Index = ::noexport::find_subset(type_list<ToMethods<interface_t>...>{},
+  constexpr std::size_t Index = noexport::find_subset(type_list<ToMethods<interface_t>...>{},
                                                         type_list<FromMethods<interface_t>...>{});
   static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
   return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
@@ -744,12 +438,12 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   constexpr auto operator&() const noexcept;
 
   descriptor_t type_descriptor() const noexcept {
-    return get_type_descriptor(vtable_ptr);
+    return noexport::get_type_descriptor(vtable_ptr);
   }
 };
 
 // non nullable non owner view to any type which satisfies Methods...
-// Do not extends lifetime!!! (when constructed from literal '5' for example)
+// Note: do not extends lifetime
 template<TTA... Methods>
 struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>>... {
  private:
@@ -811,7 +505,7 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   constexpr auto operator&() const noexcept;
 
   descriptor_t type_descriptor() const noexcept {
-    return get_type_descriptor(vtable_ptr);
+    return noexport::get_type_descriptor(vtable_ptr);
   }
 };
 
@@ -819,7 +513,6 @@ template <TTA... Methods>
 const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
-// usage example : void foo(poly_ptr<Method0, Method1> p) (same Methods like in AnyAny)
 template <TTA... Methods>
 struct poly_ptr {
  private:
@@ -905,7 +598,6 @@ struct poly_ptr {
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
-// usage example : void foo(const_poly_ptr<Method0, Method1> p) (same Methods like in AnyAny)
 template <TTA... Methods>
 struct const_poly_ptr {
  private:
@@ -998,7 +690,7 @@ struct const_poly_ptr {
     return has_value() ? poly_.type_descriptor() : descriptor_t{};
   }
 };
-
+// TODO change github actions AA_ENABLE_TESTS flag
 template<TTA... Methods>
 const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
@@ -1018,232 +710,7 @@ constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
 }
 
 template <TTA Method, typename = args_list<Method>>
-struct invoke_unsafe_fn;
-
-// traits describes invoke_match_t which types are polymorphic and which not
-// T::get_type_descriptor return descriptor for static type of non-polymorphic types and dynamic type descripor for polymorphic types
-// T::to_address returns void*/const void* to of runtime value for polymorphic types and just addressof(v) for non-polymorphic 'v'
-template<typename T>
-concept poly_traits = requires(T val, int some_val) {
-                        { val.get_type_descriptor(some_val) } -> std::same_as<descriptor_t>;
-                        { val.to_address(some_val) };
-                      };
-
-// these traits poly_ptr/ref/any_with are polymorphic values with dynamic type
-// all other types considered as non-polymorphic
-struct anyany_poly_traits {
- private:
-  template <typename T>
-  static constexpr bool is_polymorphic = requires(T v) {
-                                           { v.type_descriptor() } -> std::same_as<descriptor_t>;
-                                         };
-
- public:
-  // default case for non-polymorphic types like 'int', 'string' etc
-  template <typename T>
-  static constexpr descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
-  }
-  template <typename T>
-    requires(is_polymorphic<T>)  // case for /const/ poly_ptr/ref and any_with and its inheritors
-  static descriptor_t get_type_descriptor(T&& x) noexcept {
-    return x.type_descriptor();
-  }
-  // non-polymorphic types, returns /const/ void*
-  template <typename T>
-  static constexpr auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  template <typename T>
-    requires(is_polymorphic<T>)
-  static auto* to_address(T&& v) noexcept {
-    // for /const/poly_ptr
-    if constexpr (requires { v.raw(); })
-      return v.raw();
-    else  // poly_ref/any_with and its inheritors
-      return (&v).raw();
-  }
-};
-
-// those traits may be used for visit many variants without O(n*m*...) instantiating.
-// Its very usefull for pattern matching, but may be slower then matching with visit.
-// All variants are polymorphic types for there traits, all other types considered as non-polymorphic
-struct std_variant_poly_traits {
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename T>
-  static descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
-  }
-  template <typename T>
-  static auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  // Do not support cases like variant<int, const int> with mixed constness
-  template <typename... Ts>
-  static const void* to_address(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(const T& v) { return reinterpret_cast<const void*>(std::addressof(v)); },
-                      v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
-  }
-};
-
-// -- Result -- .resolve method will return std::optional<Result> by converting Foos results to this type 
-// -- Traits -- is a customization point, it describes what types invoke_match_t sees as polymorphic.
-// example: you can add Traits for some your virtual/LLVM-type-id hierarchy
-// (see anyany_poly_traits or std_variant_poly_traits as examples)
-template<typename Result, poly_traits Traits, lambda_without_capture... Foos>
-struct invoke_match_t {
- private:
-  template <typename F>
-  using traits = ::noexport::any_method_traits<F>;
-
-  static constexpr std::size_t overload_count = sizeof...(Foos);
-  static constexpr std::size_t args_count = std::max({traits<Foos>::args_count...});
-  using result_type = Result;
-  using key_type = std::array<descriptor_t, args_count>;
-  using value_type = result_type (*)(const std::array<void*, args_count>&);
-
-  // map of overloads sorted by type descriptors of decayed types in signature
-  ::noexport::flat_map<key_type, value_type, overload_count> map;
-  [[no_unique_address]] Traits poly_traits;
-
-  static_assert((... && std::is_convertible_v<typename traits<Foos>::result_type, result_type>),
-                "invoke_match overloads result types must be convertible to result type");
-
-  // verifies that atleast one of Foos may accept input args based on const arg or not
-  template <typename... Voids>
-  static consteval bool verify_const_correctness(Voids*...) noexcept {
-#if defined(_MSC_VER) && !defined(__clang__)
-    // really do not want support msvc, its full of bugs, cant compile
-    return true;
-#else
-    std::array<bool, args_count> bitset;
-    bitset.fill(false);
-    std::ranges::copy(std::initializer_list<bool>{std::is_const_v<Voids>...}, bitset.begin());
-    std::array<std::array<bool, args_count>, overload_count> all_foos_bitsets;
-    for (auto& arr : all_foos_bitsets)
-      arr.fill(true);
-    std::apply([](auto&... arrs) { (..., std::ranges::copy(traits<Foos>::args_const, arrs.begin())); },
-               all_foos_bitsets);
-    auto may_accept_args = [&](auto& foo_args) {
-      auto b = bitset.begin();
-      for (bool may_accept_const : foo_args) {
-        if (!may_accept_const && *b)
-          return false;
-        ++b;
-      }
-      return true;
-    };
-    return std::ranges::any_of(all_foos_bitsets, may_accept_args);
-#endif
-  }
-  template<typename... Args>
-  static bool runtime_const_correctness_check(auto* overload_winner) {
-    auto make_value_constness_array_pair = []<typename F, typename... Ts>(std::type_identity<F>,
-                                                                          type_list<Ts...>) {
-      std::array<bool, args_count> value;
-      value.fill(true);
-      std::ranges::copy(traits<F>::args_const, value.begin());
-      return std::pair(&match_invoker<F, Ts...>, value);
-    };
-    std::array m{
-        make_value_constness_array_pair(std::type_identity<Foos>{}, typename traits<Foos>::all_args{})...};
-    auto cit = std::ranges::find(m, overload_winner, [](auto& pair) { return pair.first; });
-    auto& [_, can_accept_const] = *cit;
-    constexpr std::array is_const_input_arg{
-        std::is_const_v<std::remove_pointer_t<decltype(poly_traits.to_address(std::declval<Args>()))>>...};
-    for (std::size_t i = 0; i < sizeof...(Args); ++i)
-      if (is_const_input_arg[i] && !can_accept_const[i])
-        return false;
-    return true;
-  }
-
-  // type erases Foo signature, accepts void* array and invokes real Foo with them
-  template <typename Foo, typename... Ts>
-  static result_type match_invoker(const std::array<void*, args_count>& args) {
-    std::array<void*, sizeof...(Ts)> necessary_args;
-    std::ranges::copy_n(args.begin(), sizeof...(Ts), necessary_args.begin());
-    return std::apply(
-        [](auto*... void_ptrs) {
-          return Foo{}(static_cast<Ts&&>(*reinterpret_cast<std::add_pointer_t<Ts>>(void_ptrs))...);
-        },
-        necessary_args);
-  }
-
-  template <typename F>
-  static constexpr std::pair<key_type, value_type> make_key_value_pair_for() noexcept {
-    return []<typename... Ts>(aa::type_list<Ts...>) {
-      return std::pair{key_type{descriptor_v<Ts>...}, &match_invoker<F, Ts...>};
-    }(typename traits<F>::all_args{});  // INVOKED HERE
-  }
- public:
-  AA_CONSTEVAL explicit invoke_match_t(Traits t = Traits{}) noexcept
-      : map({make_key_value_pair_for<Foos>()...}), poly_traits(std::move(t)) {
-    struct signatures_must_be_unique_after_decay : traits<Foos>::decay_args... {
-    } _;
-    (void)_;
-  }
-
-  // returns nullopt if no such function in overload/match set
-  // or winner overload cant accept args due const-qualifiers(when Unsafe == false)
-  // If Unsafe == false, then const qualifiers on overload-winner function and input args will be checked,
-  // otherwise its UB to pass const-qualified arg into non-const qualified function
-  template <bool Unsafe = true, typename... Args>
-    requires(sizeof...(Args) <= args_count)
-  std::optional<result_type> resolve(Args&&... args) const noexcept((traits<Foos>::is_noexcept && ...)) {
-    static_assert(((traits<Foos>::args_count == sizeof...(Args)) || ...),
-                  "No overload with this count of arguments");
-    static_assert(verify_const_correctness(decltype(poly_traits.to_address(args)){}...),
-                  "No overload which can accept those arguments, you are trying "
-                  "to pass const argument into non-const qualified reference");
-    key_type key{poly_traits.get_type_descriptor(args)...};
-    std::fill(key.begin() + sizeof...(Args), key.end(), descriptor_v<void>);
-    auto it = map.find(key);
-    if (it == map.end()) [[unlikely]]
-      return std::nullopt;
-    if constexpr (Unsafe) {
-      assert(runtime_const_correctness_check<Args...>(*it) &&
-             "Trying to pass const input arg into non-const function arg");
-    } else {
-      if (!runtime_const_correctness_check<Args...>(*it))
-        return std::nullopt;
-    }
-    return (*it)({const_cast<void*>(poly_traits.to_address(args))...});
-  }
-};
-
-// invoke_match its like runtime overload resolution for Foos with converting result to Result
-// Each in Foos may be function pointer or lambda without capture(with NON overloaded operator())
-template<typename Result, auto... Foos>
-AA_CONSTEXPR inline auto make_invoke_match() {
-  return invoke_match_t<Result, anyany_poly_traits, typename ::noexport::make_wrapper<Foos>::type...>{};
-}
-template <typename Result, poly_traits Traits, auto... Foos>
-AA_CONSTEXPR inline auto make_invoke_match() {
-  return invoke_match_t<Result, Traits, typename ::noexport::make_wrapper<Foos>::type...>{};
-}
+struct invoke_unsafe_fn {};
 
 template <TTA Method, typename... Args>
 struct invoke_unsafe_fn<Method, type_list<Args...>> {
@@ -1441,7 +908,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   basic_any(basic_any&& other) noexcept requires(has_method<move>) : alloc(std::move(other.alloc)) {
     move_value_from(std::move(other));
   }
-  // TODO C++23 - deducing this here
+
   basic_any& operator=(basic_any&& other) noexcept requires(has_method<move>) {
     // nocheck about this == &other
     // because after move assign other by C++ standard in unspecified(valid) state
@@ -1554,7 +1021,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
 
   // returns descriptor for 'void' type if do not contain type
   descriptor_t type_descriptor() const noexcept {
-      return has_value() ? get_type_descriptor(vtable_ptr) : descriptor_t{};
+      return has_value() ? noexport::get_type_descriptor(vtable_ptr) : descriptor_t{};
   }
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   bool is_stable_pointers() const noexcept {
@@ -1732,7 +1199,7 @@ struct empty_any_method_call : std::exception {
 };
 
 template <TTA Method, typename = args_list<Method>>
-struct invoke_fn;
+struct invoke_fn {};
 
 template <TTA Method, typename... Args>
 struct invoke_fn<Method, type_list<Args...>> {
@@ -1794,6 +1261,8 @@ using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
 
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
+
+namespace noexport {
 
 template <typename PolyPtr, typename ResultT = void>
 struct type_switch_impl {
@@ -1859,6 +1328,8 @@ struct type_switch_impl {
   std::optional<Result> result = std::nullopt;
 };
 
+}  // namespace noexport
+
 // Returns instance of type which
 // implements a switch-like dispatch statement for poly_ptr/const_poly_ptr
 // using any_cast.
@@ -1872,11 +1343,11 @@ struct type_switch_impl {
 //    .Default([](const_poly_ref<Methods...> ref) { ... });
 template<typename Result = void, TTA... Methods>
 constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
-  return type_switch_impl<poly_ptr<Methods...>, Result>{&p};
+  return noexport::type_switch_impl<poly_ptr<Methods...>, Result>{&p};
 }
 template <typename Result = void, TTA... Methods>
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
-  return type_switch_impl<const_poly_ptr<Methods...>, Result>{&p};
+  return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result>{&p};
 }
 
 }  // namespace aa
