@@ -17,7 +17,7 @@ jobs:
           sudo ln -sf /usr/local/bin/ld /usr/bin/lld
       - name: Configure CMake
         run: |
-          cmake . -DBUILD_TESTING=ON -B build \
+          cmake . -DAA_ENABLE_TESTING=ON -B build \
             -G "Ninja"                  \
             -DCMAKE_BUILD_TYPE=Debug    \
             -DCMAKE_C_COMPILER=gcc-12   \
