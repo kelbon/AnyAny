@@ -159,7 +159,6 @@ struct move {
   // constructible. Actially relocates
   static void do_invoke(T& src, void* dest) {
     if constexpr (std::is_nothrow_move_constructible_v<T>) {
-        // TODO std::relocate ? When possible, if type is relocable
       std::construct_at(reinterpret_cast<T*>(dest), std::move(src));
       std::destroy_at(std::addressof(src));
     } else {
@@ -674,7 +673,7 @@ struct const_poly_ptr {
     return has_value() ? poly_.type_descriptor() : descriptor_t{};
   }
 };
-// TODO change github actions AA_ENABLE_TESTS flag
+
 template<TTA... Methods>
 const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
@@ -1091,13 +1090,30 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
 
 // ######################## ACTION any_cast ########################
 
-// TEMPLATE FUNCTIONAL OBJECT any_cast
+// generic version for every type
+// Note: it can cast non-polymorphic types too, but only to
+// them =) (int -> int)
+// always casts to pointer to T or const T (nullptr if wrong dynamic type)
+// example : any_cast<int>(x) -> int*
+template <typename T, poly_traits Traits = anyany_poly_traits>
+struct any_cast_fn {
+  template <typename U>
+  auto* operator()(U&& val) const {
+    constexpr bool is_const_result =
+        std::is_const_v<std::remove_pointer_t<decltype(Traits{}.to_address(val))>>;
+    using result_type = std::add_pointer_t<std::conditional_t<is_const_result, const U, U>>;
+    if (Traits{}.get_type_descriptor(val) != descriptor_v<T>)
+      return result_type(nullptr);
+    return reinterpret_cast<result_type>(Traits{}.to_address(val));
+  }
+};
+
+// specialization for anyany types
 // any_cast<T>(any | any*) -> std::remove_cv_t<T> | T*
 // any_cast<T&>(const|poly_ref) -> const|T&
 // any_cast<T*>(const|poly_ptr) -> const|T*
-// TODO add poly_traits!!!
 template<typename T>
-struct any_cast_fn {
+struct any_cast_fn<T, anyany_poly_traits> {
  private:
   template <typename U, typename Alloc, size_t SooS, TTA... Methods>
   static const U* any_cast_impl(const basic_any<Alloc, SooS, Methods...>* any) noexcept {
@@ -1173,9 +1189,9 @@ struct any_cast_fn {
     return *reinterpret_cast<const std::remove_cvref_t<T>*>(ptr);
   }
 };
-// TODO add poly_traits support
-template<typename T>
-constexpr inline any_cast_fn<T> any_cast = {};
+
+template<typename T, poly_traits Traits = anyany_poly_traits>
+constexpr inline any_cast_fn<T, Traits> any_cast = {};
 
 // ######################## ACTION invoke ########################
 
@@ -1253,8 +1269,8 @@ template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
 namespace noexport {
-// TODO support any polymorphic types with Traits in any_cast!!!!!!!
-template <typename PolyPtr, typename ResultT = void>
+
+template <typename PolyPtr, typename ResultT = void, poly_traits Traits = anyany_poly_traits>
 struct type_switch_impl {
  private:
   struct non_void {
@@ -1272,7 +1288,7 @@ struct type_switch_impl {
   type_switch_impl& case_(Fn&& f) {
     if (result)
       return *this;
-    if (auto* v = ::aa::any_cast<T>(value)) {
+    if (auto* v = ::aa::any_cast<T, Traits>(value)) {
       if constexpr (std::is_void_v<ResultT>) {
         std::invoke(std::forward<Fn>(f), *v);
         result.emplace();
@@ -1333,13 +1349,13 @@ struct type_switch_impl {
 //  ResultType result = type_switch<ResultType>(op)
 //    .Case<ConstantOp>([](ConstantOp op) { ... })
 //    .Default([](const_poly_ref<Methods...> ref) { ... });
-template<typename Result = void, TTA... Methods>
+template<typename Result = void, poly_traits Traits = anyany_poly_traits, TTA... Methods>
 constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
-  return noexport::type_switch_impl<poly_ptr<Methods...>, Result>{&p};
+  return noexport::type_switch_impl<poly_ptr<Methods...>, Result, Traits>{&p};
 }
-template <typename Result = void, TTA... Methods>
+template <typename Result = void, poly_traits Traits = anyany_poly_traits, TTA... Methods>
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
-  return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result>{&p};
+  return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result, Traits>{&p};
 }
 
 // call<Ret(Args...)>::method adds operator() with Args... to basic_any

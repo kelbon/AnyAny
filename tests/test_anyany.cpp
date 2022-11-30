@@ -494,6 +494,16 @@ int main() {
   const var_type var2 = planet{};
   if (*vars_collision.resolve(var1, var2) != "sp")
     return -11;
+  if (!aa::any_cast<spaceship, aa::std_variant_poly_traits>(var1))
+    return -12;
+  if (!aa::any_cast<planet, aa::std_variant_poly_traits>(var2))
+    return -13;
+  if (!aa::any_cast<const spaceship, aa::std_variant_poly_traits>(var1))
+    return -14;
+  if (!aa::any_cast<const planet&, aa::std_variant_poly_traits>(var2))
+    return -15;
+  if (aa::any_cast<int, aa::std_variant_poly_traits>(var2))
+    return -16;
   std::unordered_set<aa::descriptor_t> dmap{aa::descriptor_v<void>, aa::descriptor_v<int>};
   spaceship space_ship;
   planet space_planet;
