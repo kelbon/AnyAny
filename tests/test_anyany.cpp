@@ -1,7 +1,6 @@
-// TODO check самодостаточность всех хедеров
 #include "visit_invoke_example.hpp"
 #include "anyany.hpp"
-#include "visit_invoke.hpp" // TODO перенести в другой тест файл
+#include "visit_invoke.hpp"
 #include <array>
 #include <functional>
 #include <iostream>
@@ -770,7 +769,7 @@ int main() {
   val = std::string{"hello world"};
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};
-  example1();
+  aa::example::example1();
   example_draw();
   example_draw_explicit();
   example_polyref();
