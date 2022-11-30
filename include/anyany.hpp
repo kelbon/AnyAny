@@ -37,6 +37,8 @@ namespace aa {
 // (in this case you can explciitly specialize Method for interface_t)
 struct interface_t {};
 
+// ######################## explicit_interface support ########################
+
 // just unique type for every Method, because i need to inherit from plugins
 template <TTA Method>
 struct nullplugin {};
@@ -83,6 +85,8 @@ constexpr inline bool satisfies_v<interface_t, Methods...> = true;
 // true if satisfies_v specialized for T or T has inner 'using satisfies = aa::satisfies<...Method...>'
 template<typename T, TTA Method>
 concept is_satisfies = satisfies_v<T, Method> || std::is_base_of_v<satisfy<Method>, typename T::satisfies>;
+
+// ######################## compilt time information about Methods(Traits) ########################
 
 template <TTA Method>
 using method_traits = noexport::any_method_traits<decltype(&Method<interface_t>::do_invoke)>;
@@ -140,7 +144,7 @@ concept any_x = requires {
   typename std::remove_cvref_t<T>::base_any_type;
 };
 
-// BASIC METHODS
+// ######################## BASIC METHODS for basic_any ########################
 
 template <std::destructible T>
 struct destroy {
@@ -274,29 +278,7 @@ struct spaceship {
   }
 };
 
-// Creates a Method from invocable object with given signature
-// usage example:
-// template<typename T>
-// using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
-// using any_sized_range = aa::any_with<Size>;
-template <typename Signature, auto>
-struct from_callable {};
-
-template <typename R, typename... Ts, auto Foo>
-struct from_callable<R(Ts...), Foo> {
-  template <typename T>
-  struct method {
-    static R do_invoke(T& self, Ts... args) {
-      return Foo(self, static_cast<Ts&&>(args)...);
-    }
-  };
-  template <typename T>
-  struct const_method {
-    static R do_invoke(const T& self, Ts... args) {
-      return Foo(self, static_cast<Ts&&>(args)...);
-    }
-  };
-};
+// ######################## VTABLE TYPE ########################
 
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
@@ -376,6 +358,8 @@ constexpr vtable_with_metainfo<Methods...> vtable_for = {
 // always decays type
 template<typename T, TTA... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>.table; 
+
+// ######################## poly_ref / poly_ptr  ########################
 
 // it is concept for removing ambigious ctors in poly ptrs
 template <typename T>
@@ -709,6 +693,8 @@ constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   return result;
 }
 
+// ######################## ACTION invoke_unsafe ########################
+
 template <TTA Method, typename = args_list<Method>>
 struct invoke_unsafe_fn {};
 
@@ -768,6 +754,8 @@ struct invoke_unsafe_fn<Method, type_list<Args...>> {
 template <TTA Method>
 constexpr inline invoke_unsafe_fn<Method> invoke_unsafe = {};
 
+// ######################## BASIC_ANY ########################
+
 // when used in ctor this tag forces anyany allocate memory, so pointers to value(poly_ptr/ref)
 // will not invalidated after anyany move
 struct force_stable_pointers_t {
@@ -784,8 +772,8 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = &data;
-  [[no_unique_address]] alignas(std::max_align_t) std::array<std::byte, SooS> data;
-  [[no_unique_address]] Alloc alloc;
+  AA_NO_UNIQUE_ADDRESS alignas(std::max_align_t) std::array<std::byte, SooS> data;
+  AA_NO_UNIQUE_ADDRESS Alloc alloc;
 
   // invariant of basic_any - it is always in one of those states:
   // empty - has_value() == false, memory_allocated == false
@@ -1101,11 +1089,13 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   }
 };
 
+// ######################## ACTION any_cast ########################
+
 // TEMPLATE FUNCTIONAL OBJECT any_cast
 // any_cast<T>(any | any*) -> std::remove_cv_t<T> | T*
 // any_cast<T&>(const|poly_ref) -> const|T&
 // any_cast<T*>(const|poly_ptr) -> const|T*
-
+// TODO add poly_traits!!!
 template<typename T>
 struct any_cast_fn {
  private:
@@ -1183,11 +1173,11 @@ struct any_cast_fn {
     return *reinterpret_cast<const std::remove_cvref_t<T>*>(ptr);
   }
 };
-
+// TODO add poly_traits support
 template<typename T>
 constexpr inline any_cast_fn<T> any_cast = {};
 
-// TEMPLATE VARIABLE (FUNCTION OBJECT) invoke <Method> (any)
+// ######################## ACTION invoke ########################
 
 // hack for compilation time / obj size reduce + accept exactly user args
 // (for example i can write invoke<Foo>(Any, {}, {1, 2, 3}) because compiler knows what types in must be
@@ -1263,7 +1253,7 @@ template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
 namespace noexport {
-
+// TODO support any polymorphic types with Traits in any_cast!!!!!!!
 template <typename PolyPtr, typename ResultT = void>
 struct type_switch_impl {
  private:
@@ -1330,6 +1320,8 @@ struct type_switch_impl {
 
 }  // namespace noexport
 
+// ######################## ACTION type_switch for all polymorphic types ########################
+
 // Returns instance of type which
 // implements a switch-like dispatch statement for poly_ptr/const_poly_ptr
 // using any_cast.
@@ -1349,6 +1341,107 @@ template <typename Result = void, TTA... Methods>
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result>{&p};
 }
+
+// call<Ret(Args...)>::method adds operator() with Args... to basic_any
+// (similar to std::function<Ret(Args...)>)
+// it supports different signatures:
+// * Ret(Args...) const
+// * Ret(Args...) noexcept
+// * Ret(Args...) const noexcept
+template <typename Signature>
+struct call {};
+// non-const version
+template <typename Ret, typename... Args>
+struct call<Ret(Args...)> {
+  template <typename T>
+  struct method {
+    static Ret do_invoke(T& self, Args... args) {
+      return self(static_cast<Args&&>(args)...);
+    }
+    template <typename CRTP>
+    struct plugin {
+      Ret operator()(Args... args) {
+        auto& self = *static_cast<CRTP*>(this);
+        return invoke<method>(self, static_cast<Args&&>(args)...);
+      }
+    };
+  };
+};
+// const version
+template <typename Ret, typename... Args>
+struct call<Ret(Args...) const> {
+  template <typename T>
+  struct method {
+    static Ret do_invoke(const T& self, Args... args) {
+      return self(static_cast<Args&&>(args)...);
+    }
+    template <typename CRTP>
+    struct plugin {
+      Ret operator()(Args... args) const {
+        auto& self = *static_cast<const CRTP*>(this);
+        return invoke<method>(self, static_cast<Args&&>(args)...);
+      }
+    };
+  };
+};
+// noexcept version
+template <typename Ret, typename... Args>
+struct call<Ret(Args...) noexcept> {
+  template <typename T>
+  struct method {
+    static Ret do_invoke(T& self, Args... args) noexcept {
+      return self(static_cast<Args&&>(args)...);
+    }
+    template <typename CRTP>
+    struct plugin {
+      Ret operator()(Args... args) noexcept {
+        auto& self = *static_cast<CRTP*>(this);
+        return invoke<method>(self, static_cast<Args&&>(args)...);
+      }
+    };
+  };
+};
+// const noexcept version
+template <typename Ret, typename... Args>
+struct call<Ret(Args...) const noexcept> {
+  template <typename T>
+  struct method {
+    static Ret do_invoke(const T& self, Args... args) noexcept {
+      return self(static_cast<Args&&>(args)...);
+    }
+    template <typename CRTP>
+    struct plugin {
+      Ret operator()(Args... args) const noexcept {
+        auto& self = *static_cast<const CRTP*>(this);
+        return invoke<method>(self, static_cast<Args&&>(args)...);
+      }
+    };
+  };
+};
+
+// Creates a Method from invocable object with given signature
+// usage example:
+// template<typename T>
+// using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
+// using any_sized_range = aa::any_with<Size>;
+template <typename Signature, auto>
+struct from_callable {};
+
+template <typename R, typename... Ts, auto Foo>
+struct from_callable<R(Ts...), Foo> {
+  template <typename T>
+  struct method {
+    static R do_invoke(T& self, Ts... args) {
+      return Foo(self, static_cast<Ts&&>(args)...);
+    }
+  };
+  template <typename T>
+  struct const_method {
+    static R do_invoke(const T& self, Ts... args) {
+      return Foo(self, static_cast<Ts&&>(args)...);
+    }
+  };
+};
 
 }  // namespace aa
 

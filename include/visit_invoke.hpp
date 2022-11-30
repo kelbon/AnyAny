@@ -12,24 +12,12 @@
     * std_variant_poly_traits
 */
 
-#include <variant>      // for std_variant_poly_traits only
-#include <optional>
+#include <optional>      // for visit_invoke.resolve result
 
 #include "type_descriptor.hpp"
 #include "noexport/visit_invoke_details.hpp"
 
 namespace aa {
-
-// traits describe 'visit_invoke_fn' which types are polymorphic and which are not
-// -- T::get_type_descriptor must return descriptor for static type of non-polymorphic types and dynamic type
-// descripor for polymorphic types
-// -- T::to_address returns void*/const void* to of runtime value for polymorphic
-// types and just addressof(v) for non-polymorphic 'v'
-template <typename T>
-concept poly_traits = requires(T val, int some_val) {
-                        { val.get_type_descriptor(some_val) } -> std::same_as<descriptor_t>;
-                        { val.to_address(some_val) };
-                      };
 
 // -- Result -- .resolve method will return std::optional<Result> by converting Foos results to this type
 // -- Traits -- is a customization point, it describes what types visit_invoke_fn sees as polymorphic.
@@ -49,7 +37,7 @@ struct visit_invoke_fn {
 
   // map of overloads sorted by type descriptors of decayed types in signature
   noexport::flat_map<key_type, value_type, overload_count> map;
-  [[no_unique_address]] Traits poly_traits;
+  AA_NO_UNIQUE_ADDRESS Traits poly_traits;
 
   static_assert((... && std::is_convertible_v<typename traits<Foos>::result_type, result_type>),
                 "invoke_match overloads result types must be convertible to result type");
@@ -157,98 +145,21 @@ struct visit_invoke_fn {
   }
 };
 
-// these traits poly_ptr/ref/any_with are polymorphic values with dynamic type
-// all other types considered as non-polymorphic
-struct anyany_poly_traits {
- private:
-  template <typename T>
-  static constexpr bool is_polymorphic = requires(T v) {
-                                           { v.type_descriptor() } -> std::same_as<descriptor_t>;
-                                         };
-
- public:
-  // default case for non-polymorphic types like 'int', 'string' etc
-  template <typename T>
-  static constexpr descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
-  }
-  template <typename T>
-    requires(is_polymorphic<T>)  // case for /const/ poly_ptr/ref and any_with and its inheritors
-  static descriptor_t get_type_descriptor(T&& x) noexcept {
-    return x.type_descriptor();
-  }
-  // non-polymorphic types, returns /const/ void*
-  template <typename T>
-  static constexpr auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  template <typename T>
-    requires(is_polymorphic<T>)
-  static auto* to_address(T&& v) noexcept {
-    // for /const/poly_ptr
-    if constexpr (requires { v.raw(); })
-      return v.raw();
-    else  // poly_ref/any_with and its inheritors
-      return (&v).raw();
-  }
-};
-
-// those traits may be used for visit many variants without O(n*m*...) instantiating.
-// Its very usefull for pattern matching, but may be slower then matching with visit.
-// All variants are polymorphic types for there traits, all other types considered as non-polymorphic
-struct std_variant_poly_traits {
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename T>
-  static descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
-  }
-  template <typename T>
-  static auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  // Do not support cases like variant<int, const int> with mixed constness
-  template <typename... Ts>
-  static const void* to_address(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(const T& v) { return reinterpret_cast<const void*>(std::addressof(v)); },
-                      v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
-  }
-};
-
 // vist_invoke its like runtime overload resolution for Foos with converting result to Result
 // Each in Foos may be function pointer or lambda without capture(with NON overloaded operator())
-template <typename Result, auto... Foos, typename Traits = anyany_poly_traits>
+template <typename Result, auto... Foos, poly_traits Traits = anyany_poly_traits>
 AA_CONSTEVAL inline auto make_visit_invoke(Traits t = Traits{}) {
   return visit_invoke_fn<Result, Traits, typename noexport::make_wrapper<Foos>::type...>{std::move(t)};
 }
 // deducts return type if all return types of Foos are same
-template <auto... Foos, typename Traits = anyany_poly_traits>
+template <auto... Foos, poly_traits Traits = anyany_poly_traits>
 AA_CONSTEVAL inline auto make_visit_invoke(Traits t = Traits{}) {
-  using result_type = typename decltype((noexport::any_method_traits<decltype(Foos)>{}, ...))::result_type;
+  using result_type =
+      typename decltype((noexport::any_method_traits<std::decay_t<decltype(Foos)>>{}, ...))::result_type;
   static_assert(
-      (std::is_same_v<result_type, typename noexport::any_method_traits<decltype(Foos)>::result_type> && ...),
+      (std::is_same_v<result_type,
+                      typename noexport::any_method_traits<std::decay_t<decltype(Foos)>>::result_type> &&
+       ...),
       "Return type cannot be deducted, because Foos have different return types, use second "
       "'make_visit_invoke' overload and specify return type by hands");
   return visit_invoke_fn<result_type, Traits, typename noexport::make_wrapper<Foos>::type...>{std::move(t)};

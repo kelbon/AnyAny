@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <ranges>
 
 #include "type_descriptor.hpp"
 #include "noexport/anyany_details.hpp"
