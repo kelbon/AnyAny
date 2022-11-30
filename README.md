@@ -10,12 +10,16 @@ https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
 (MSVC works too)
 
 This is a library for dynamic polymorphism through type erasure with better code readability and reusage, performance, far less boilerplate then with usual way (virtual functions).
+Also there are many very usefull tools such as multidispatching [`visit_invoke`](#visit_invoke)
+
+### See /examples folder for fast start!
+
 * [`Design and understanding`](#design)
 * [`How to build?`](#build)
 
 ### Basic design knowledge (please read this example first)
 
-The whole library is built on **Methods**, it is a short description of _captured_ method - template with one argument
+The whole library is built on **Methods** (Traits), it is a short description of _captured_ method - template with one argument
 and static function `do_invoke(Self, Args...)` where `Self` - value from which method will be invoked and `Args` is a _captured_ method arguments.
 
 For example, i want to create a type to store any other type with .say() method:
@@ -29,8 +33,6 @@ struct Say {
     self.say(out);
   }
 };
-// Self can be const T& / T& / const T* / T* or just T - in this case self will be provided by copy -
-// (Self also can be cv void* but... even in this case, under it always lies an object of type T)
 
 // Create a type which can contain any other type with method .say !
 using any_animal = aa::any_with<Say>;
@@ -52,10 +54,8 @@ struct Dog {
 };
 int main() {
   any_animal Pet = Cat{};
-  // there are several ways to invoke - external and internal.
-  aa::invoke<Say>(Pet, std::cout); // external way
-  // internal - if you write a plugin (see basic_usage.hpp in examples)
-  // Pet.say(std::cout); // just an any other type
+  aa::invoke<Say>(Pet, std::cout);
+  // see /examples/basic_usage.hpp for more
 }
 ```
 There are no virtual functions, inheritance, pointers, memory management etc! Nice!
@@ -66,6 +66,9 @@ You can add any number of methods like
 Wait, copy... Move? Yes, by default any is only have a destructor, so you can create move only any or ... copy only etc
 
 Note: result type of do_invoke and Args must be same for all types T (as for virtual functions)
+Customization points:
+* [`descriptor`](#descriptor)
+* [`poly_traits`](#poly_traits)
 
 Type creators:
 * [`any_with<Methods...>`](#any_with)
@@ -79,6 +82,8 @@ Actions:
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
 * [`invoke_unsafe<Method>`](#invoke_unsafe)
+* [`type_switch`](#type_switch)
+* [`visit_invoke`](#visit_invoke)
 
 Compile time information:
 * [`method_traits<Method>`](#method_traits)
@@ -90,12 +95,23 @@ Interface plugins and interface requirement:
 
 * [`destroy`](#destroy)
 * [`copy`](#copy)
-* ['copy_with'](#copy_with)
+* [`copy_with`](#copy_with)
 * [`move`](#move)
-* [`type_id`](#type_id)
 * [`hash`](#hash)
 * [`equal_to`](#equal_to)
 * [`spaceship`](#spaceship)
+* [`call`](#call)
+
+### `descriptor`
+There are `descriptor_t` and `descriptor_v`, they are used to describe static or dynamic types of objects, they are used in poly_traits
+### `poly_traits`
+It is concept of type which can describe to library what types are polymorphic and what are not.
+`type_switch`, `any_cast` and multidispatching ([`visit_invoke`](#visit_invoke)) are use it.
+So you can define your traits and use them with your types polymorphic hierarchies(LLVM-like type ids, virutal functions etc).
+Library has two such traits built-in(you can use them as example for implementing your own):
+  * anyany_poly_traits - for types from <anyany.hpp>
+  * std_variant_poly_traits - for std::variants, (tip: you can create pattern matching in O(1) instanciating with aa::make_visit_invoke instead of O(N * M...) with std::visit)
+ 
 
 ### `any_with`
 It is a template alias which accepts any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
@@ -136,8 +152,6 @@ template <typename T, typename U, typename... Args>
 constructor(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args);
 
 bool has_value() const noexcept; // true if not empty
-// returns sizeof of type currently in Any, (0 if empty)
-std::size_t sizeof_now() const noexcept;
 
 // emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
 template<typename T, typename... Args>
@@ -298,6 +312,50 @@ Example:
 ### `invoke_unsafe`
 Same as `invoke`, but more effective and if any has no value -> undefined behavior (never throws empty_any_method_call)
 
+### `type_switch`
+Selects .case based on input arg dynamic type and invokes 'visitor' with this dynamic type or default function
+Also supports poly_traits as second template argument, so it supports any type for which you have poly traits
+```C++
+interface of type switch object:
+  .case_<T>(auto&& f) - invokes 'f' if input matches type
+  .cases<Ts...>(auto&& f) - invokes 'f' if input matches any of Ts
+  Result default(auto&& f) - invokes 'f' with input arg if no one 'case' succeeded
+  Result default(Result t) - returns default value 't' if no one 'case' succeeded
+  optional<Result> no_default() - returns std::nullopt if no one 'case' succeeded
+ 
+  Result val = aa::type_switch<Result>(value)
+      .case_<float>(foo1)
+      .case_<bool>(foo2)
+      .cases<char, int, unsigned char, double>(foo3)
+      .default(15);
+```
+### `visit_invoke`
+Its... runtime overload resolution! `aa::make_visit_invoke<Foos...>` creates overload set object with method `.resolve(Args...)`,
+which performs overload resolution based on Args... runtime types.
+This example is very basic, see also /examples/visit_invoke_example.hpp for more
+Example:
+```C++
+
+std::string ship_asteroid(spaceship s, asteroid a);
+std::string ship_star(spaceship s, star);
+std::string star_star(star a, star b);
+std::string ship_ship(spaceship a, spaceship b);
+
+// Create multidispacter
+constexpr inline auto collision = aa::make_visit_invoke<
+  ship_asteroid,
+  ship_star,
+  star_star,
+  ship_ship
+>();
+...
+// Perform runtime overload resolution
+std::optional<std::string> foo(any_with<A> a, any_with<B> b) {
+  return collision.resolve(a, b);
+}
+
+```
+
 ## Methods
   Methods - user defined template types with one argument and static function `do_invoke`, first argument is a Self, others - method arguments
   
@@ -319,9 +377,6 @@ enables copy = )
 
 ### `move`
   enables move AND copy assignment operator (if you have copy). If inserted types have noexcept move constructor any will be more effective.
-  
-### `type_id`
-  enables aa::any_cast for poly_ref and poly_ptr
 
 ### `hash`
  enables specialization of std::hash, Hash for polymorphic value returns std::hash<T>{}(stored_value) or 0, if any is empty
@@ -331,6 +386,8 @@ enables copy = )
   
 ### `spaceship`
   enables operator<=>
+### `call`
+  Method call<Ret(Args...)> adds operator() in created type, also supports Ret(Args...) const/noexcept signatures (see examples)
 
 ### `any_x`
 concept of any type created by any_with, basic_any_with or successor of such type
@@ -509,6 +566,5 @@ target_link_libraries(MyProjectName PUBLIC anyanylib)
 git clone https://github.com/kelbon/AnyAny
 cd AnyAny
 cmake . -B build
-# OR with testing # cmake . -DBUILD_TESTING=ON -B build
 cmake --build build
 ```
