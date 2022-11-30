@@ -4,7 +4,7 @@ project(anyany LANGUAGES CXX)
 option(AA_ENABLE_TESTING "enables testing" OFF)
 
 file(GLOB ${PROJECT_NAME}_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp)
-file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*)
+file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*.hpp)
 
 if(AA_ENABLE_TESTING)
 	include(CTest)
@@ -32,14 +32,9 @@ if(AA_ENABLE_TESTING)
 	add_subdirectory(tests)
 endif()
 
-add_library(${PROJECT_NAME}lib STATIC
-	${${PROJECT_NAME}_HEADERS}
-	${${PROJECT_NAME}_NOEXPORT_HEADERS})
+add_library(${PROJECT_NAME}lib INTERFACE ${${PROJECT_NAME}_HEADERS})
 
-target_include_directories(${PROJECT_NAME}lib
-	PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
-	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/noexport
-)
+target_include_directories(${PROJECT_NAME}lib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 set_target_properties(${PROJECT_NAME}lib PROPERTIES
 	CMAKE_CXX_EXTENSIONS OFF
