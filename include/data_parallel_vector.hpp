@@ -82,7 +82,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     constexpr auto operator<=>(const value_type& v) const {
       using result_type =
           std::common_comparison_category_t<std::compare_three_way_result_t<element_t<Is>>...>;
-      result_type cmp_res{0};
+      result_type cmp_res = static_cast<result_type>(std::strong_ordering::equal);
       auto is_equal_field = [&]<std::size_t I>(std::integral_constant<std::size_t, I>) {
         cmp_res = std::get<I>(ref) <=> Traits::template get<I>(v);
         return cmp_res == std::strong_ordering::equal;
