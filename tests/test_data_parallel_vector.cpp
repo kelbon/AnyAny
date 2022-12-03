@@ -32,9 +32,9 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   auto cmp_foo = [](auto&& x, auto&& y) {
     return x == y;
   };
-  ASSERT(std::ranges::equal(t4, std::ranges::subrange(it, sent), cmp_foo));
+  ASSERT(std::equal(t4.begin(), t4.end(), it, sent, cmp_foo));
   tt t5(it, sent);
-  ASSERT(std::ranges::equal(t5, std::ranges::subrange(it, sent), cmp_foo));
+  ASSERT(std::equal(t5.begin(), t5.end(), it, sent, cmp_foo));
   auto x = t;
   auto x1 = t1;
   auto x2 = t2;
@@ -159,7 +159,7 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   ASSERT(x4.size() == (x4sz + std::distance(it, sent)));
   ASSERT(x5.size() == (x5sz + std::distance(it, sent)));
   x5.assign(it, sent);
-  ASSERT(std::ranges::equal(x5, std::ranges::subrange(it, sent), cmp_foo));
+  ASSERT(std::equal(x5.begin(), x5.end(), it, sent, cmp_foo));
   x4.assign(10, *std::prev(sent));
   ASSERT(cmp_foo(x4[1], *std::prev(sent)));
   ASSERT(cmp_foo(x4[1], *std::prev(sent)));
