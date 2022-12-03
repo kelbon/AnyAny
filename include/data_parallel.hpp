@@ -7,11 +7,8 @@
 #include <span>
 
 #include "noexport/data_parallel_details.hpp"
-// TODO rename vector_pack or smth? data_parallel_vector<T>?
-namespace aa {
 
-template <typename...>
-struct data_parallel_impl {};
+namespace aa {
 
 // std::vector have specialization for bools, this type behaves like bool and disables it
 struct bool_ {
@@ -33,36 +30,50 @@ struct bool_ {
   constexpr operator bool() const noexcept {
     return b;
   }
-  constexpr bool operator==(const bool& x) const noexcept {
+  // removes ambiguity
+  template<std::same_as<bool> B>
+  constexpr bool operator==(const B& x) const noexcept {
     return b == x;
   }
-  constexpr bool operator==(const bool_&) const noexcept = default;
-  constexpr auto operator<=>(const bool_&) const noexcept = default;
-};
-// disables specialization std::vector<bool>
-// Its not in data_parallel_impl only because ofr MSVC bug (AGAIN)
-template <typename X, typename Alloc>
-struct container_for {
-  using U = std::conditional_t<std::is_same_v<bool, X>, bool_, X>;
-  using rebind_alloc = typename std::allocator_traits<Alloc>::template rebind_alloc<U>;
-  using type = std::vector<U, rebind_alloc>;
+  // removes ambiguity
+  template<std::same_as<bool> B>
+  constexpr auto operator<=>(const B& x) const noexcept {
+    return b <=> x;
+  }
+  constexpr bool operator==(const bool_& x) const noexcept {
+    return b == x;
+  }
+  constexpr auto operator<=>(const bool_& x) const noexcept {
+    return b <=> x.b;
+  }
 };
 
-template <typename T, typename Alloc, typename Traits, std::size_t... Is>
-struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
+template <typename...>
+struct data_parallel_impl {};
+
+template <typename T, typename Alloc, std::size_t... Is>
+struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   using value_type = T;
   using allocator_type = Alloc;
   using difference_type = std::ptrdiff_t;
 
-  // it may be much prettier with second default arg-alias, but MSVC cant expand it in function declaration like 
-  // foo(element_t<Is>...)
+ protected:
+  using Traits = noexport::tl_traits;
+  // it may be much prettier with second default arg-alias, but MSVC cant expand it in function declaration
+  // like foo(element_t<Is>...)
   template <std::size_t I>
-  using element_t = std::conditional_t<
-      std::is_same_v<bool, typename Traits::template tuple_element<I, T>>,
-      bool_, typename Traits::template tuple_element<I, T>>;
+  using element_t = std::conditional_t<std::is_same_v<bool, typename Traits::template tuple_element<I, T>>,
+                                       bool_, typename Traits::template tuple_element<I, T>>;
 
-  template<typename X>
-  using container_for_t = typename container_for<X, Alloc>::type;
+  // disables specialization std::vector<bool>
+  template <typename X>
+  struct container_for {
+    using U = std::conditional_t<std::is_same_v<bool, X>, bool_, X>;
+    using rebind_alloc = typename std::allocator_traits<Alloc>::template rebind_alloc<U>;
+    using type = std::vector<U, rebind_alloc>;
+  };
+  template <typename X>
+  using container_for_t = typename container_for<X>::type;
 
   template <std::size_t I>
   using container_t = container_for_t<element_t<I>>;
@@ -99,14 +110,13 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
 
     // NOTE: behaves as defauled(=default) operator== for T
     // template for remove ambiguity
-    template<std::same_as<value_type> X>
+    template <std::same_as<value_type> X>
     constexpr bool operator==(const X& v) const {
       return ((std::get<Is>(ref) == Traits::template get<Is>(v)) && ...);
     }
     constexpr bool operator==(const proxy&) const = default;
 
     // NOTE: behaves as defauled(=default) operator<=> for T
-    // TODO check working
     constexpr auto operator<=>(const value_type& v) const {
       using result_type =
           std::common_comparison_category_t<std::compare_three_way_result_t<element_t<Is>>...>;
@@ -117,7 +127,8 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
       };
       bool unequal_finded = false;
       // finds first UNEQUAL fields and sets result of their comparison into 'cmp_res'
-      ((unequal_finded || is_equal_field(std::integral_constant<std::size_t, Is>{}) || unequal_finded = true),
+      ((unequal_finded || is_equal_field(std::integral_constant<std::size_t, Is>{}) ||
+        (unequal_finded = true)),
        ...);
       return cmp_res;
     }
@@ -200,15 +211,18 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
       std::apply([&](auto&... its) { ((its += dif), ...); }, iters);
       return *this;
     }
-    constexpr iterator_ operator+(difference_type dif) noexcept {
+    constexpr iterator_ operator+(difference_type dif) const noexcept {
       auto copy = *this;
       return copy += dif;
+    }
+    friend constexpr iterator_ operator+(difference_type dif, const iterator_& it) noexcept {
+      return it + dif;
     }
     constexpr iterator_& operator-=(difference_type dif) noexcept {
       std::apply([&](auto&... its) { ((its -= dif), ...); }, iters);
       return *this;
     }
-    constexpr iterator_ operator-(difference_type dif) noexcept {
+    constexpr iterator_ operator-(difference_type dif) const noexcept {
       auto copy = *this;
       return copy -= dif;
     }
@@ -222,7 +236,7 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
   };
 
  public:
-  using size_type = std::size_t;//typename std::tuple_element_t<0, decltype(parts)>::size_type;
+  using size_type = std::size_t;  // typename std::tuple_element_t<0, decltype(parts)>::size_type;
   using reference = proxy;
   using const_reference = const_proxy;
 
@@ -332,7 +346,7 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
 
   // returns tuple of spans to underlying containers(so user cant break invariants of containers)
  private:
-     template<typename X>
+  template <typename X>
   std::span<X> get_span() noexcept {
     auto& c = std::get<container_for_t<X>>(parts);
     if constexpr (std::is_same_v<bool, X>)
@@ -364,6 +378,7 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
     else
       return std::span(c);
   }
+
  public:
   template <typename... Types>
   constexpr auto view() noexcept {
@@ -522,63 +537,20 @@ struct data_parallel_impl<T, Alloc, Traits, std::index_sequence<Is...>> {
   }
 };
 
-template <typename T, typename U>
-concept tuple_traits_for = requires(U value) {
-                             { T::template get<0>(value) };
-                             //MSVC bug typename T::template tuple_element<0, U>;
-                             { T::template tuple_size<U> } -> std::same_as<const std::size_t&>;
-                           };
-
 // Supports tuple-like objects(for which exist std::tuple_element/std::tuple_size)
-// and aggregates with less then 30 fields
-// TODO check for structs with C arrays in it(hmm, difference between C and std array...)
-struct tuple_like_traits {
-  template <typename T>
-  static constexpr bool is_tuple_like = requires { typename std::tuple_element<0, T>::type; };
-
-  // selects tuple_size if exist, otherwise calculates field count
-  template <typename Tpl>
-  static constexpr std::size_t tuple_size = [] {
-    using T = std::remove_cvref_t<Tpl>;
-    if constexpr (is_tuple_like<T>)
-      return std::tuple_size_v<Tpl>;
-    else if constexpr (std::is_aggregate_v<T>)
-      return noexport::fields_count_v<T>;
-    else
-      static_assert(
-          ![] {}, "T must be aggreagte or tuple-like!");
-  }();  // INVOKED HERE
-  template <std::size_t I, typename Tpl>
-  using tuple_element = typename decltype([] {
-    using T = std::remove_cvref_t<Tpl>;
-    if constexpr (is_tuple_like<T>)
-      return std::type_identity<std::tuple_element_t<I, T>>{};
-    else if constexpr (std::is_aggregate_v<T>)
-      return std::type_identity<noexport::field_type_t<I, T>>{};
-    else
-      static_assert(
-          ![] {}, "T must be aggreagte or tuple-like!");
-  }())::type;  // INVOKED HERE
-
-  template <std::size_t I, typename Tpl>
-  static constexpr decltype(auto) get(Tpl&& v) {
-    if constexpr (is_tuple_like<std::remove_cvref_t<Tpl>>)
-      return std::get<I>(std::forward<Tpl>(v));
-    else
-      return noexport::magic_get<I>(std::forward<Tpl>(v));
-  }
-};
+// and aggregates with less then 30 fields.
+// NOTE: aggregate with C array in it is BAD(use std::array)
 
 // behaves as vector of T, but stores its fields separately
 // (if T contains 'bool' behaves as normal non-specialized vector of bool)
 // random_access_range (not contigious)
 // NOTE: iterator::reference compares with T as if T has = default operator<=>
-template <typename T, typename Alloc = std::allocator<T>, tuple_traits_for<T> Traits = tuple_like_traits>
+template <typename T, typename Alloc = std::allocator<T>>
 struct data_parallel_vector
-    : data_parallel_impl<T, Alloc, Traits, std::make_index_sequence<Traits::template tuple_size<T>>> {
+    : data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
  private:
-  using base_t =
-      data_parallel_impl<T, Alloc, Traits, std::make_index_sequence<Traits::template tuple_size<T>>>;
+  using tl_traits = noexport::tl_traits;
+  using base_t = data_parallel_impl<T, Alloc, std::make_index_sequence<tl_traits::template tuple_size<T>>>;
 
  public:
   using base_t::base_t;
@@ -608,7 +580,7 @@ struct data_parallel_vector
       using std::swap;
       (swap(std::get<Ms>(this->parts), std::get<Ms>(other.parts)), ...);
     }
-    (std::make_index_sequence<Traits::template tuple_size<T>>{});  // INVOKED HERE
+    (std::make_index_sequence<tl_traits::template tuple_size<T>>{});  // INVOKED HERE
   }
   friend constexpr void swap(data_parallel_vector& a, data_parallel_vector& b) noexcept {
     a.swap(b);
@@ -621,37 +593,37 @@ struct data_parallel_vector
 
 namespace std {
 
-template <typename T, typename Alloc, typename Traits>
-struct tuple_size<::aa::data_parallel_vector<T, Alloc, Traits>>
-    : integral_constant<size_t, Traits::template tuple_size<T>> {};
+template <typename T, typename Alloc>
+struct tuple_size<::aa::data_parallel_vector<T, Alloc>>
+    : integral_constant<size_t, ::aa::noexport::tl_traits::template tuple_size<T>> {};
 
-template <size_t I, typename T, typename Alloc, typename Traits>
-struct tuple_element<I, ::aa::data_parallel_vector<T, Alloc, Traits>> {
-    using X = typename Traits::template tuple_element<I, T>;
-    using type = std::span<X>;
+template <size_t I, typename T, typename Alloc>
+struct tuple_element<I, ::aa::data_parallel_vector<T, Alloc>> {
+  using X = typename ::aa::noexport::tl_traits::template tuple_element<I, T>;
+  using type = std::span<X>;
 };
-template <size_t I, typename T, typename Alloc, typename Traits>
-struct tuple_element<I, const ::aa::data_parallel_vector<T, Alloc, Traits>> {
-    using X = typename Traits::template tuple_element<I, T>;
-    using type = std::span<const X>;
+template <size_t I, typename T, typename Alloc>
+struct tuple_element<I, const ::aa::data_parallel_vector<T, Alloc>> {
+  using X = typename ::aa::noexport::tl_traits::template tuple_element<I, T>;
+  using type = std::span<const X>;
 };
 
 // returns span
 
-template <size_t I, typename T, typename Alloc, typename Traits>
-constexpr auto get(::aa::data_parallel_vector<T, Alloc, Traits>& value) {
+template <size_t I, typename T, typename Alloc>
+constexpr auto get(::aa::data_parallel_vector<T, Alloc>& value) {
   return get<0>(value.template view<I>());
 }
-template <size_t I, typename T, typename Alloc, typename Traits>
-constexpr auto get(const ::aa::data_parallel_vector<T, Alloc, Traits>& value) {
+template <size_t I, typename T, typename Alloc>
+constexpr auto get(const ::aa::data_parallel_vector<T, Alloc>& value) {
   return get<0>(value.template view<I>());
 }
-template <size_t I, typename T, typename Alloc, typename Traits>
-constexpr auto get(::aa::data_parallel_vector<T, Alloc, Traits>&& value) {
+template <size_t I, typename T, typename Alloc>
+constexpr auto get(::aa::data_parallel_vector<T, Alloc>&& value) {
   return get<0>(value.template view<I>());
 }
-template <size_t I, typename T, typename Alloc, typename Traits>
-constexpr auto get(const ::aa::data_parallel_vector<T, Alloc, Traits>&& value) {
+template <size_t I, typename T, typename Alloc>
+constexpr auto get(const ::aa::data_parallel_vector<T, Alloc>&& value) {
   return get<0>(value.template view<I>());
 }
 

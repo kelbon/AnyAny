@@ -1,4 +1,3 @@
-#include "data_parallel.hpp"
 #include <string>
 #include <iostream>
 #include <set>
@@ -6,6 +5,9 @@
 #include <list>
 #include <ranges>
 #include <algorithm>
+#include <utility>
+
+#include "data_parallel.hpp"
 
 #define ASSERT(...)   \
   if (!(__VA_ARGS__)) \
@@ -14,6 +16,8 @@
 template <typename T, typename Alloc>
 void test_data_parallel(Alloc a, auto it, auto sent) {
   using tt = aa::data_parallel_vector<T, Alloc>;
+  static_assert(std::random_access_iterator<typename tt::iterator>);
+  static_assert(std::ranges::random_access_range<tt>);
   aa::data_parallel_vector<std::tuple<int, bool>> hh{{5, false}, {6, true}, {7, false}};
   tt t;
   ASSERT(t.empty() && t.size() == 0);
@@ -192,6 +196,11 @@ int main() {
   aa::data_parallel_vector<field_4> magic;
   auto [f_1, f_2, f_3, f_4] = magic;
   magic.emplace_back(5, 6.f, 3.14, true);
+  if (*magic.begin() <= field_4{5, 6., 3., true})
+    return -15;
+  static_assert(std::random_access_iterator<decltype(magic)::iterator>);
+  if (magic.begin() != std::find(magic.begin(), magic.end(), field_4{5, 6., 3.14, true}))
+    return -20;
   using tt1 = std::tuple<int, float, double, char>;
   std::vector<tt1> vec(15, {5, 3.14f, 66., 'c'});
   std::vector<field_4> vecag(15, {5, 3.14f, 66., true});
