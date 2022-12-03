@@ -1,5 +1,5 @@
 ﻿#pragma once
-
+// TODO перенести трейты для variant_swarm / data_parallel для anyany сюда
 /*
   HEADER SYNOPSIS:
 
