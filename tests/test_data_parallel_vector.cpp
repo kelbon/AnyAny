@@ -113,7 +113,6 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   auto itt3 = x3.insert(std::prev(x3.end()), x3.front());
   auto itt4 = x4.insert(std::prev(x4.end()), x4.front());
   auto itt5 = x5.insert(std::prev(x5.end()), x5.front());
-  // TODO emplace back with Args...
   ASSERT(cmp_foo(x2.front(), *itt2));
   ASSERT(cmp_foo(x3.front(), *itt3));
   ASSERT(cmp_foo(x4.front(), *itt4));
@@ -191,6 +190,7 @@ struct field_4 {
   bool l;
 };
 int main() {
+  std::cout << "start test\n";
   static_assert(aa::noexport::fields_count_v<field_4> == 4);
   static_assert(std::is_same_v<aa::noexport::field_type_t<1, field_4>, float>);
   aa::data_parallel_vector<field_4> magic;
@@ -238,4 +238,5 @@ int main() {
   static_assert(std::is_same_v<std::span<int>, decltype(ax)>);
   static_assert(std::is_same_v<std::span<double>, decltype(bx)>);
   static_assert(std::is_same_v<std::span<bool>, decltype(cx)>);
+  std::cout << "end test\n";
 }

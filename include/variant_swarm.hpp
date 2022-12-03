@@ -1,112 +1,40 @@
 #pragma once
-// TODO перегрузку вставки для InputIt InputIt с выбором нужного контейнера
-// TODO найти тот контейнер std::colony-like
+
+/*
+  HEADER SYNOPSIS:
+  
+  * basic_variant_swarm<Container, Ts...>
+  * variant_swarm<Ts...>
+
+  Polymorphic container type, which supports high-performance insert, visit_all operations
+  It stores Ts... separatelly, so it looks like Container<variant<Ts...>>,
+  but in reality it is many containers for each T.
+  It allows to visit all values very fast and easy
+*/
+
 #include <ranges>
 #include <tuple>
 #include <vector>
 #include <variant>
 #include <algorithm>
 
-namespace aa::noexport {
-
-// binds std::allocator so 'vector' has only one template arg(or error on clang)
-template <typename T>
-using vector = std::vector<T>;
-
-// Just make 'insert' overloads for each T in Ts... for basic_variant_swarm
-template <typename CRTP, typename Container>
-struct inserter {
- private:
-  Container& my_container() noexcept {
-    return std::get<Container>(static_cast<CRTP*>(this)->containers);
-  }
-
- public:
-  using const_iter = typename Container::const_iterator;
-  using value_t = std::ranges::range_value_t<Container>;
-
-  constexpr decltype(auto) insert(value_t&& value) {
-    auto& c = my_container();
-    return c.insert(c.end(), std::move(value));
-  }
-  constexpr decltype(auto) insert(value_t& value) {
-    auto& c = my_container();
-    if constexpr (requires {
-                    { c.insert(c.end(), value) };
-                  }) {
-      return c.insert(c.end(), value);
-    } else {
-      return c.inesrt(value);
-    }
-  }
-  constexpr decltype(auto) insert(const value_t& value) {
-    auto& c = my_container();
-    return c.insert(c.end(), value);
-  }
-
-  constexpr decltype(auto) erase(const_iter pos) {
-    auto& c = my_container();
-    return c.erase(pos);
-  }
-  constexpr decltype(auto) erase(const_iter b, const_iter e) {
-    auto& c = my_container();
-    return c.erase(b, e);
-  }
-};
-
-#if defined(_MSC_VER)
-#define AA_VS_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_VS_MSVC_EBO
-#endif
-
-template <typename CRTP, typename Traits, typename... Ts>
-struct AA_VS_MSVC_EBO inserters : inserter<CRTP, typename Traits::template container<Ts>>... {
-  using inserter<CRTP, typename Traits::template container<Ts>>::insert...;
-  using inserter<CRTP, typename Traits::template container<Ts>>::erase...;
-};
-
-#undef AA_VS_MSVC_EBO
-
-}  // namespace aa::noexport
+#include "noexport/variant_swarm_details.hpp"
 
 namespace aa {
 
-template <typename T>
-concept swarm_traits = requires {
-                         typename T::template sumtype<int, float>;
-                         typename T::template container<int>;
-                       };
-
-// TODO anyany traits
-template <template <typename> typename Container>
-struct swarm_variant_traits {
-  template <typename... Ts>
-  using sumtype = std::variant<Ts...>;
+// Container<Ts>... must be unique types
+template <template<typename> typename Container, typename... Ts>
+struct basic_variant_swarm
+    : private noexport::inserters<basic_variant_swarm<Container, Ts...>, Container, Ts...> {
+  
   template <typename T>
-  using container = Container<T>;
-
-  template <typename Visitor, typename... Ts>
-  static decltype(auto) visit(Visitor&& v, Ts&&... args) {
-    return std::visit(std::forward<Visitor>(v), std::forward<Ts>(args)...);
-  }
-};
-
-// Ts... must be unique types
-template <swarm_traits Traits, typename... Ts>
-struct basic_variant_swarm : private noexport::inserters<basic_variant_swarm<Traits, Ts...>, Traits, Ts...> {
-  static_assert((!std::is_const_v<Ts> && ...));
-
+  using container_for = Container<T>;
  private:
-  using sumtype = typename Traits::template sumtype<Ts...>;
-
-  template <typename T>
-  using container_for = typename Traits::template container<T>;
 
   // Just separate store all Ts...
   std::tuple<container_for<Ts>...> containers;
 
-  using inserters_type = noexport::inserters<basic_variant_swarm<Traits, Ts...>, Traits, Ts...>;
+  using inserters_type = noexport::inserters<basic_variant_swarm<Container, Ts...>, Container, Ts...>;
 
   // access to containers
   template <typename, typename>
@@ -114,26 +42,47 @@ struct basic_variant_swarm : private noexport::inserters<basic_variant_swarm<Tra
 
  public:
 
-  // MODIFY
+  // modify
 
-  void swap(basic_variant_swarm& other) noexcept {
+  constexpr void swap(basic_variant_swarm& other) noexcept {
     std::swap(containers, other.containers);
   }
-  friend void swap(basic_variant_swarm& a, basic_variant_swarm& b) noexcept {
+  friend constexpr void swap(basic_variant_swarm& a, basic_variant_swarm& b) noexcept {
     a.swap(b);
+  }
+  // selects right container and inserts it, sent into it
+  template<std::input_iterator It>
+    requires((std::same_as<std::iter_value_t<It>, std::ranges::range_value_t<Container<Ts>>> || ...))
+  constexpr auto insert(It it, It sent) {
+    auto& c = std::get<std::iter_value_t<It>>(containers);
+    constexpr bool is_associative = requires { c.insert(it, sent); };
+    if constexpr (is_associative)
+      return c.insert(it, sent);
+    else
+      return c.insert(c.end(), it, sent);
   }
 
   // insert and erase overloads for each type in Ts...
   using inserters_type::erase;
   using inserters_type::insert;
 
-  // OBSERVE
+  // observe
 
   constexpr bool empty() const noexcept {
     using std::empty;
     return std::apply([](const auto&... args) { return (empty(args) && ...); }, containers);
   }
-
+  // returns count values, stored in container for T
+  template<typename T>
+    requires(std::ranges::sized_range<container_for<Ts>> && ...)
+  constexpr auto count() const noexcept {
+    return std::get<0>(view<T>()).size();
+  }
+  template <std::size_t I>
+    requires(std::ranges::sized_range<container_for<Ts>> && ...)
+  constexpr auto count() const noexcept {
+    return std::get<0>(view<I>()).size();
+  }
   constexpr auto size() const noexcept
     requires(std::ranges::sized_range<container_for<Ts>> && ...)
   {
@@ -158,24 +107,30 @@ struct basic_variant_swarm : private noexport::inserters<basic_variant_swarm<Tra
     return std::tie(std::get<container_for<Types>>(containers)...);
   }
 
-  // out is invocable with visitor results(it may be overloaded for different types too, no requirement
-  // for visitor to return same type for all)
+  // non-const versions
+
+  // version with visitor for visitor results (yeah)
   template <typename F, typename OutVisitor>
   constexpr void visit_all_unordered(F&& visitor, OutVisitor&& out) {
+    auto value_handler = [&]<typename X>(X&& val) {
+      if constexpr (std::is_void_v<std::invoke_result_t<F&&, X&&>>)
+        std::invoke(visitor, std::forward<X>(val));
+      else
+        std::invoke(out, std::invoke(visitor, std::forward<X>(val)));
+    };
     std::apply(
         [&]<typename... Args>(Args&&... conts) {
-          (..., std::ranges::for_each(std::forward<Args>(conts),
-                                      [&]<typename X>(X&& v) { out(visitor(std::forward<X>(v))); }));
+          (..., std::ranges::for_each(std::forward<Args>(conts), value_handler));
         },
         containers);
   }
-  // ignores functor results
+  // only visitor version(ignores visitor results)
   template <typename F>
   constexpr void visit_all_unordered(F&& visitor) {
     visit_all_unordered(std::forward<F>(visitor), [](auto&&...) {});
   }
-  // Out must be is output iterator for visitor results
-  template <typename F, std::incrementable Out>
+  // output iterator version
+  template <typename F, std::input_or_output_iterator Out>
   constexpr Out visit_all_unordered(F&& visitor, Out out) {
     visit_all_unordered(std::forward<F>(visitor), [&]<typename Res>(Res&& result) {
       *out = std::forward<Res>(result);
@@ -183,22 +138,37 @@ struct basic_variant_swarm : private noexport::inserters<basic_variant_swarm<Tra
     });
     return out;
   }
+  // only output iterator version
+  template <std::input_or_output_iterator Out>
+  constexpr Out visit_all_unordered(Out out) {
+    visit_all_unordered(std::identity{}, out);
+    return out;
+  }
+
+  // const versions
+
+  // version with visitor for visitor results (yeah)
   template <typename F, typename OutVisitor>
   constexpr void visit_all_unordered(F&& visitor, OutVisitor&& out) const {
+    auto value_handler = [&]<typename X>(X&& val) {
+      if constexpr (std::is_void_v<std::invoke_result_t<F&&, X&&>>)
+        std::invoke(visitor, std::forward<X>(val));
+      else
+        std::invoke(out, std::invoke(visitor, std::forward<X>(val)));
+    };
     std::apply(
         [&]<typename... Args>(Args&&... conts) {
-          (..., std::ranges::for_each(std::forward<Args>(conts),
-                                      [&]<typename X>(X&& v) { out(visitor(std::forward<X>(v))); }));
+          (..., std::ranges::for_each(std::forward<Args>(conts), value_handler));
         },
         containers);
   }
-  // ignores functor results
+  // only visitor version(ignores visitor results)
   template <typename F>
   constexpr void visit_all_unordered(F&& visitor) const {
     visit_all_unordered(std::forward<F>(visitor), [](auto&&...) {});
   }
-  // Out must be is output iterator for visitor results
-  template <typename F, std::incrementable Out>
+  // output iterator version
+  template <typename F, std::input_or_output_iterator Out>
   constexpr Out visit_all_unordered(F&& visitor, Out out) const {
     visit_all_unordered(std::forward<F>(visitor), [&]<typename Res>(Res&& result) {
       *out = std::forward<Res>(result);
@@ -206,9 +176,15 @@ struct basic_variant_swarm : private noexport::inserters<basic_variant_swarm<Tra
     });
     return out;
   }
+  // only output iterator version
+  template<std::input_or_output_iterator Out>
+  constexpr Out visit_all_unordered(Out out) const {
+    visit_all_unordered(std::identity{}, out);
+    return out;
+  }
 };
 
 template <typename... Ts>
-using variant_swarm = basic_variant_swarm<swarm_variant_traits<noexport::vector>, Ts...>;
+using variant_swarm = basic_variant_swarm<noexport::vector, Ts...>;
 
 }  // namespace aa

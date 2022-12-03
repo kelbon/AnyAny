@@ -1,5 +1,23 @@
 #pragma once
 
+/*
+  HEADER SYNOPSIS:
+
+  * data_parallel_vector<T, Alloc>
+
+    random_access_range, behaves as vector of T, but stores its fields separately
+    (ignores specialization for bool),
+    T may be:
+        * tuple-like object (for which exist std::tuple_element/std::tuple_size/std::get)
+        * aggregate with less then 30 fields (without const/C-array fields)
+
+  * specializations std::tuple_size/std::tuple_element/std::get for data_parallel_vector
+  It means:
+    auto [a, b, c] = data_parallel_vector<T>{};
+  will work and a, b, c - std::spans to separately stored fields of T
+
+*/
+
 #include <tuple>
 #include <vector>
 #include <cassert>
@@ -8,7 +26,7 @@
 
 #include "noexport/data_parallel_vector_details.hpp"
 
-namespace aa {
+namespace aa::noexport {
 
 template <typename...>
 struct data_parallel_impl {};
@@ -499,6 +517,10 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   }
 };
 
+}  // namespace aa::noexport
+
+namespace aa {
+
 // random_access_range, behaves as vector of T, but stores its fields separately
 // ignores specialization for bool
 // NOTE: iterator::reference compares with T as if T has = default operator<=>
@@ -507,10 +529,10 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
 // NOTE: aggregate with C array in it is BAD(use std::array)
 template <typename T, typename Alloc = std::allocator<T>>
 struct data_parallel_vector
-    : data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
+    : noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
  private:
   using tl_traits = noexport::tl_traits;
-  using base_t = data_parallel_impl<T, Alloc, std::make_index_sequence<tl_traits::template tuple_size<T>>>;
+  using base_t = noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<tl_traits::template tuple_size<T>>>;
 
  public:
   using base_t::base_t;
@@ -526,11 +548,7 @@ struct data_parallel_vector
   constexpr data_parallel_vector& operator=(data_parallel_vector&&) = default;
 
   constexpr void swap(data_parallel_vector& other) noexcept {
-    [&]<std::size_t... Ms>(std::index_sequence<Ms...>) {
-      using std::swap;
-      (swap(std::get<Ms>(this->parts), std::get<Ms>(other.parts)), ...);
-    }
-    (std::make_index_sequence<tl_traits::template tuple_size<T>>{});  // INVOKED HERE
+    this->parts.swap(other.parts);
   }
   friend constexpr void swap(data_parallel_vector& a, data_parallel_vector& b) noexcept {
     a.swap(b);
