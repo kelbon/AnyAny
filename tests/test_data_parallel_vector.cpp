@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "data_parallel.hpp"
+#include "data_parallel_vector.hpp"
 
 #define ASSERT(...)   \
   if (!(__VA_ARGS__)) \
@@ -219,7 +219,7 @@ int main() {
   vecc.insert(vecc.end(), {tt1{3, 4.f, 5., 6}, tt1{3, 4.f, 5., 6}, tt1{3, 4.f, 5., 6}});
   *vecc.begin() = tt1{-1, -2.f, -3., -4};
   aa::data_parallel_vector<tt2> beb{true, false, false, true};
-  aa::bool_ b;
+  aa::noexport::bool_ b;
   b = false;
   b = 1;
   b = 1u;

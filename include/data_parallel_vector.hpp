@@ -6,47 +6,9 @@
 #include <compare>
 #include <span>
 
-#include "noexport/data_parallel_details.hpp"
+#include "noexport/data_parallel_vector_details.hpp"
 
 namespace aa {
-
-// std::vector have specialization for bools, this type behaves like bool and disables it
-struct bool_ {
-  bool b{};
-
-  constexpr bool_() = default;
-  constexpr bool_(const bool_&) = default;
-  constexpr bool_& operator=(const bool_&) = default;
-  constexpr bool_(bool_&&) = default;
-  constexpr bool_& operator=(bool_&&) = default;
-
-  constexpr bool_(bool x) noexcept : b(x) {
-  }
-  constexpr bool_& operator=(bool x) noexcept {
-    b = x;
-    return *this;
-  }
-
-  constexpr operator bool() const noexcept {
-    return b;
-  }
-  // removes ambiguity
-  template<std::same_as<bool> B>
-  constexpr bool operator==(const B& x) const noexcept {
-    return b == x;
-  }
-  // removes ambiguity
-  template<std::same_as<bool> B>
-  constexpr auto operator<=>(const B& x) const noexcept {
-    return b <=> x;
-  }
-  constexpr bool operator==(const bool_& x) const noexcept {
-    return b == x;
-  }
-  constexpr auto operator<=>(const bool_& x) const noexcept {
-    return b <=> x.b;
-  }
-};
 
 template <typename...>
 struct data_parallel_impl {};
@@ -63,12 +25,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   // like foo(element_t<Is>...)
   template <std::size_t I>
   using element_t = std::conditional_t<std::is_same_v<bool, typename Traits::template tuple_element<I, T>>,
-                                       bool_, typename Traits::template tuple_element<I, T>>;
+                                       noexport::bool_, typename Traits::template tuple_element<I, T>>;
 
   // disables specialization std::vector<bool>
   template <typename X>
   struct container_for {
-    using U = std::conditional_t<std::is_same_v<bool, X>, bool_, X>;
+    using U = std::conditional_t<std::is_same_v<bool, X>, noexport::bool_, X>;
     using rebind_alloc = typename std::allocator_traits<Alloc>::template rebind_alloc<U>;
     using type = std::vector<U, rebind_alloc>;
   };
@@ -537,14 +499,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   }
 };
 
-// Supports tuple-like objects(for which exist std::tuple_element/std::tuple_size)
-// and aggregates with less then 30 fields.
-// NOTE: aggregate with C array in it is BAD(use std::array)
-
-// behaves as vector of T, but stores its fields separately
-// (if T contains 'bool' behaves as normal non-specialized vector of bool)
-// random_access_range (not contigious)
+// random_access_range, behaves as vector of T, but stores its fields separately
+// ignores specialization for bool
 // NOTE: iterator::reference compares with T as if T has = default operator<=>
+// Supports tuple-like objects(for which exist std::tuple_element/std::tuple_size/std::get)
+// and aggregates with less then 30 fields
+// NOTE: aggregate with C array in it is BAD(use std::array)
 template <typename T, typename Alloc = std::allocator<T>>
 struct data_parallel_vector
     : data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
@@ -566,16 +526,6 @@ struct data_parallel_vector
   constexpr data_parallel_vector& operator=(data_parallel_vector&&) = default;
 
   constexpr void swap(data_parallel_vector& other) noexcept {
-    /*
-    Rly. MSVC writes here "'__this': undeclared identifier" omg.
-    this bug with several packs from different contexts expanding was "FIXED" two fucking times by my report!
-    using std::swap;
-    std::apply(
-        [&](auto&... conts) {
-          std::apply([&](auto&... other_conts) { (swap(conts, other_conts), ...); }, other.parts);
-        },
-        this->parts);
-    */
     [&]<std::size_t... Ms>(std::index_sequence<Ms...>) {
       using std::swap;
       (swap(std::get<Ms>(this->parts), std::get<Ms>(other.parts)), ...);

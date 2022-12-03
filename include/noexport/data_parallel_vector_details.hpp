@@ -263,4 +263,42 @@ struct tl_traits {
   }
 };
 
+// std::vector have specialization for bools, this type behaves like bool and disables it
+struct bool_ {
+  bool b{};
+
+  constexpr bool_() = default;
+  constexpr bool_(const bool_&) = default;
+  constexpr bool_& operator=(const bool_&) = default;
+  constexpr bool_(bool_&&) = default;
+  constexpr bool_& operator=(bool_&&) = default;
+
+  constexpr bool_(bool x) noexcept : b(x) {
+  }
+  constexpr bool_& operator=(bool x) noexcept {
+    b = x;
+    return *this;
+  }
+
+  constexpr operator bool() const noexcept {
+    return b;
+  }
+  // removes ambiguity
+  template <std::same_as<bool> B>
+  constexpr bool operator==(const B& x) const noexcept {
+    return b == x;
+  }
+  // removes ambiguity
+  template <std::same_as<bool> B>
+  constexpr auto operator<=>(const B& x) const noexcept {
+    return b <=> x;
+  }
+  constexpr bool operator==(const bool_& x) const noexcept {
+    return b == x;
+  }
+  constexpr auto operator<=>(const bool_& x) const noexcept {
+    return b <=> x.b;
+  }
+};
+
 }  // namespace aa::noexport
