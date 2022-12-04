@@ -216,7 +216,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   };
 
  public:
-  using size_type = std::size_t;  // typename std::tuple_element_t<0, decltype(parts)>::size_type;
+  using size_type = std::size_t;
   using reference = proxy;
   using const_reference = const_proxy;
 
