@@ -3,38 +3,17 @@ project(anyany LANGUAGES CXX)
 
 option(AA_ENABLE_TESTING "enables testing" OFF)
 
-file(GLOB ${PROJECT_NAME}_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp)
-file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*.hpp)
+file(GLOB ${PROJECT_NAME}_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*.hpp")
+file(GLOB ${PROJECT_NAME}_EXAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/examples/*")
 
-if(AA_ENABLE_TESTING)
-	include(CTest)
-	file(GLOB ${PROJECT_NAME}_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
-	file(GLOB ${PROJECT_NAME}_EXAMPLES REGULAR_EXPRESSION ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
-	add_executable(${PROJECT_NAME}
-		${${PROJECT_NAME}_HEADERS}
-		${${PROJECT_NAME}_NOEXPORT_HEADERS}
-		${${PROJECT_NAME}_TEST}
-		${${PROJECT_NAME}_EXAMPLES})
+### anyanylib ###
 
-	set_target_properties(${PROJECT_NAME} PROPERTIES
-		CMAKE_CXX_EXTENSIONS OFF
-		LINKER_LANGUAGE CXX
-		CMAKE_CXX_STANDARD_REQUIRED ON
-		CXX_STANDARD 20
-	)
+add_library(${PROJECT_NAME}lib INTERFACE "${${PROJECT_NAME}_HEADERS}"
+	"${${PROJECT_NAME}_NOEXPORT_HEADERS}"
+	"${${PROJECT_NAME}_EXAMPLES}")
 
-	target_include_directories(${PROJECT_NAME} PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/include
-		${CMAKE_CURRENT_SOURCE_DIR}/examples)
-
-	source_group(Tests FILES ${${PROJECT_NAME}_TEST})
-
-	add_subdirectory(tests)
-endif()
-
-add_library(${PROJECT_NAME}lib INTERFACE ${${PROJECT_NAME}_HEADERS})
-
-target_include_directories(${PROJECT_NAME}lib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME}lib INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 set_target_properties(${PROJECT_NAME}lib PROPERTIES
 	CMAKE_CXX_EXTENSIONS OFF
@@ -42,6 +21,15 @@ set_target_properties(${PROJECT_NAME}lib PROPERTIES
 	CMAKE_CXX_STANDARD_REQUIRED ON
 	CXX_STANDARD 20)
 
+### visual ###
+
 source_group(Details FILES ${${PROJECT_NAME}_NOEXPORT_HEADERS})
 source_group(Include FILES ${${PROJECT_NAME}_HEADERS})
 source_group(Examples FILES ${${PROJECT_NAME}_EXAMPLES})
+
+### tests ###
+
+if(AA_ENABLE_TESTING)
+	include(CTest)
+	add_subdirectory(tests)
+endif()
