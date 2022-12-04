@@ -6,32 +6,42 @@
   * basic_variant_swarm<Container, Ts...>
   * variant_swarm<Ts...>
 
-  Polymorphic container type, which supports high-performance insert, visit_all operations
-  It stores Ts... separatelly, so it looks like Container<variant<Ts...>>,
-  but in reality it is many containers for each T.
-  It allows to visit all values very fast and easy
+  Unordered polymorphic container type, which supports high-performance insert,
+  visit<Types...>/visit_all operations. Values appears in 'visit' in order of types and not in order of adding
+
 */
 
 #include <ranges>
 #include <tuple>
 #include <vector>
-#include <variant>
 #include <algorithm>
 
 #include "noexport/variant_swarm_details.hpp"
 
+namespace aa::tt {
+
+template <typename T, typename... Ts>
+concept one_of = (std::same_as<T, Ts> || ...);
+
+}  // namespace aa::tt
+
 namespace aa {
 
+template <typename T, typename... Ts>
+concept visitor_for = (std::invocable<T, Ts> && ...);
+
 // Container<Ts>... must be unique types
-template <template<typename> typename Container, typename... Ts>
+// NOTE: values appears in 'visit' in order of types and not in order of adding
+template <template <typename> typename Container, typename... Ts>
 struct basic_variant_swarm
     : private noexport::inserters<basic_variant_swarm<Container, Ts...>, Container, Ts...> {
-  
+
   template <typename T>
   using container_for = Container<T>;
- private:
 
-  // Just separate store all Ts...
+ private:
+  // stores Ts... separatelly, so it looks like Container<variant<Ts...>>,
+  // but in reality it is many containers for each T
   std::tuple<container_for<Ts>...> containers;
 
   using inserters_type = noexport::inserters<basic_variant_swarm<Container, Ts...>, Container, Ts...>;
@@ -41,7 +51,6 @@ struct basic_variant_swarm
   friend struct noexport::inserter;
 
  public:
-
   // modify
 
   constexpr void swap(basic_variant_swarm& other) noexcept {
@@ -51,8 +60,8 @@ struct basic_variant_swarm
     a.swap(b);
   }
   // selects right container and inserts it, sent into it
-  template<std::input_iterator It>
-    requires((std::same_as<std::iter_value_t<It>, std::ranges::range_value_t<Container<Ts>>> || ...))
+  template <std::input_iterator It>
+    requires(tt::one_of<std::iter_value_t<It>, std::ranges::range_value_t<Container<Ts>>...>)
   constexpr auto insert(It it, It sent) {
     auto& c = std::get<std::iter_value_t<It>>(containers);
     constexpr bool is_associative = requires { c.insert(it, sent); };
@@ -73,16 +82,18 @@ struct basic_variant_swarm
     return std::apply([](const auto&... args) { return (empty(args) && ...); }, containers);
   }
   // returns count values, stored in container for T
-  template<typename T>
+  template <tt::one_of<Ts...> T>
     requires(std::ranges::sized_range<container_for<Ts>> && ...)
   constexpr auto count() const noexcept {
     return std::get<0>(view<T>()).size();
   }
+
   template <std::size_t I>
     requires(std::ranges::sized_range<container_for<Ts>> && ...)
   constexpr auto count() const noexcept {
     return std::get<0>(view<I>()).size();
   }
+  // returns count of values stored in all containers
   constexpr auto size() const noexcept
     requires(std::ranges::sized_range<container_for<Ts>> && ...)
   {
@@ -98,89 +109,113 @@ struct basic_variant_swarm
   constexpr auto view() const noexcept {
     return std::tie(std::get<Is>(containers)...);
   }
-  template <typename... Types>
+  template <tt::one_of<Ts...>... Types>
   constexpr auto view() noexcept {
     return std::tie(std::get<container_for<Types>>(containers)...);
   }
-  template <typename... Types>
+  template <tt::one_of<Ts...>... Types>
   constexpr auto view() const noexcept {
     return std::tie(std::get<container_for<Types>>(containers)...);
   }
 
-  // non-const versions
+  // visit things
 
-  // version with visitor for visitor results (yeah)
-  template <typename F, typename OutVisitor>
-  constexpr void visit_all_unordered(F&& visitor, OutVisitor&& out) {
-    auto value_handler = [&]<typename X>(X&& val) {
-      if constexpr (std::is_void_v<std::invoke_result_t<F&&, X&&>>)
-        std::invoke(visitor, std::forward<X>(val));
+  // visits with 'v' and passes its results into 'out_visitor' (if result is not void)
+  template <tt::one_of<Ts...>... Types>
+  constexpr void visit(visitor_for<Types...> auto&& v, auto&& out_visitor) {
+    auto apply_visitor = [&]<typename X>(X&& val) {
+      if constexpr (std::is_void_v<decltype(v(std::forward<X>(val)))>)
+        v(std::forward<X>(val));
       else
-        std::invoke(out, std::invoke(visitor, std::forward<X>(val)));
+        out_visitor(v(std::forward<X>(val)));
     };
-    std::apply(
-        [&]<typename... Args>(Args&&... conts) {
-          (..., std::ranges::for_each(std::forward<Args>(conts), value_handler));
-        },
-        containers);
+    (std::ranges::for_each(std::get<container_for<Types>>(containers), apply_visitor), ...);
   }
-  // only visitor version(ignores visitor results)
-  template <typename F>
-  constexpr void visit_all_unordered(F&& visitor) {
-    visit_all_unordered(std::forward<F>(visitor), [](auto&&...) {});
+  // ignores visitor results
+  template <tt::one_of<Ts...>... Types>
+  constexpr void visit(visitor_for<Types...> auto&& v) {
+    visit<Types...>(v, [](auto&&...) {});
   }
-  // output iterator version
-  template <typename F, std::input_or_output_iterator Out>
-  constexpr Out visit_all_unordered(F&& visitor, Out out) {
-    visit_all_unordered(std::forward<F>(visitor), [&]<typename Res>(Res&& result) {
-      *out = std::forward<Res>(result);
+  // visits with 'v' and passes its results into 'out_visitor' (if result is not void)
+  constexpr void visit_all(visitor_for<Ts...> auto&& v, auto&& out_visitor) {
+    visit<Ts...>(v, out_visitor);
+  }
+  // ignores visitor results
+  constexpr void visit_all(visitor_for<Ts...> auto&& v) {
+    visit<Ts...>(v);
+  }
+
+  template <tt::one_of<Ts...>... Types, std::input_or_output_iterator Out>
+  constexpr Out visit_copy(visitor_for<Types...> auto&& v, Out out) {
+    visit<Types...>(v, [&]<typename X>(X&& v) {
+      *out = std::forward<X>(v);
       ++out;
     });
     return out;
   }
-  // only output iterator version
+
+  template <tt::one_of<Ts...>... Types, std::input_or_output_iterator Out>
+  constexpr Out visit_copy(Out out) {
+    return visit_copy<Types...>(std::identity{}, out);
+  }
+  // visits with 'v' and passes its results into output iterator 'out', returns 'out" after all
   template <std::input_or_output_iterator Out>
-  constexpr Out visit_all_unordered(Out out) {
-    visit_all_unordered(std::identity{}, out);
-    return out;
+  constexpr Out visit_copy_all(visitor_for<Ts...> auto&& v, Out out) {
+    return visit_copy<Ts...>(v, out);
+  }
+  // passes all values into 'out' iterator, returns 'out' after all
+  template <std::input_or_output_iterator Out>
+  constexpr Out visit_copy_all(Out out) {
+    return visit_copy<Ts...>(out);
   }
 
   // const versions
 
-  // version with visitor for visitor results (yeah)
-  template <typename F, typename OutVisitor>
-  constexpr void visit_all_unordered(F&& visitor, OutVisitor&& out) const {
-    auto value_handler = [&]<typename X>(X&& val) {
-      if constexpr (std::is_void_v<std::invoke_result_t<F&&, X&&>>)
-        std::invoke(visitor, std::forward<X>(val));
+  // visits with 'v' and passes its results into 'out_visitor' (if result is not void)
+  template <tt::one_of<Ts...>... Types>
+  constexpr void visit(visitor_for<const Types...> auto&& v, auto&& out_visitor) const {
+    auto apply_visitor = [&]<typename X>(X&& val) {
+      if constexpr (std::is_void_v<decltype(v(std::forward<X>(val)))>)
+        v(std::forward<X>(val));
       else
-        std::invoke(out, std::invoke(visitor, std::forward<X>(val)));
+        out_visitor(v(std::forward<X>(val)));
     };
-    std::apply(
-        [&]<typename... Args>(Args&&... conts) {
-          (..., std::ranges::for_each(std::forward<Args>(conts), value_handler));
-        },
-        containers);
+    (std::ranges::for_each(std::get<container_for<Types>>(containers), apply_visitor), ...);
   }
-  // only visitor version(ignores visitor results)
-  template <typename F>
-  constexpr void visit_all_unordered(F&& visitor) const {
-    visit_all_unordered(std::forward<F>(visitor), [](auto&&...) {});
+  // ignores visitor results
+  template <tt::one_of<Ts...>... Types>
+  constexpr void visit(visitor_for<const Types...> auto&& v) const {
+    visit<Types...>(v, [](auto&&...) {});
   }
-  // output iterator version
-  template <typename F, std::input_or_output_iterator Out>
-  constexpr Out visit_all_unordered(F&& visitor, Out out) const {
-    visit_all_unordered(std::forward<F>(visitor), [&]<typename Res>(Res&& result) {
-      *out = std::forward<Res>(result);
+  // visits with 'v' and passes its results into 'out_visitor' (if result is not void)
+  constexpr void visit_all(visitor_for<const Ts...> auto&& v, auto&& out_visitor) const {
+    visit<Ts...>(v, out_visitor);
+  }
+  // ignores visitor results
+  constexpr void visit_all(visitor_for<const Ts...> auto&& visitor) const {
+    visit<Ts...>(visitor);
+  }
+  // visits with 'v' and passes its results into output iterator 'out', returns 'out' after all
+  template <tt::one_of<Ts...>... Types, std::input_or_output_iterator Out>
+  constexpr Out visit_copy(visitor_for<const Types...> auto&& v, Out out) const {
+    visit<Types...>(v, [&]<typename X>(X&& v) {
+      *out = std::forward<X>(v);
       ++out;
     });
     return out;
   }
-  // only output iterator version
-  template<std::input_or_output_iterator Out>
-  constexpr Out visit_all_unordered(Out out) const {
-    visit_all_unordered(std::identity{}, out);
-    return out;
+  // passes all values into 'out' iterator, returns Out after all
+  template <tt::one_of<Ts...>... Types, std::input_or_output_iterator Out>
+  constexpr Out visit_copy(Out out) const {
+    return visit_copy<Types...>(std::identity{}, out);
+  }
+  template <std::input_or_output_iterator Out>
+  constexpr Out visit_copy_all(visitor_for<const Ts...> auto&& v, Out out) const {
+    return visit_copy<Ts...>(v, out);
+  }
+  template <std::input_or_output_iterator Out>
+  constexpr Out visit_copy_all(Out out) const {
+    return visit_copy<Ts...>(std::identity{}, out);
   }
 };
 

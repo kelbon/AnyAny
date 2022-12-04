@@ -4,6 +4,7 @@
 #include <iostream>
 #include <set>
 #include <map>
+#include <variant>
 
 template<typename T>
 using set = std::set<T>;
@@ -63,11 +64,11 @@ int main() {
   auto visitor = [](auto&& x) {
     std::cout << x << '\n';
   };
-  kek.visit_all_unordered(visitor);
-  std::as_const(kek).visit_all_unordered(visitor);
+  kek.visit_all(visitor);
+  std::as_const(kek).visit_all(visitor);
   std::vector<std::variant<int, double, std::string>> vecc;
-  kek.visit_all_unordered(std::back_inserter(vecc));
-  std::as_const(kek).visit_all_unordered(std::back_inserter(vecc));
+  kek.visit_copy_all(std::back_inserter(vecc));
+  std::as_const(kek).visit_copy_all(std::back_inserter(vecc));
   if (vecc.size() != kek.size() * 2)
     return -160;
   if (kek.count<std::string>() != 3 || kek.count<0>() != 5)
