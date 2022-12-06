@@ -222,4 +222,17 @@ struct basic_variant_swarm
 template <typename... Ts>
 using variant_swarm = basic_variant_swarm<noexport::vector, Ts...>;
 
+// returns creates visitor which insert values into 'swarm'
+// and ignores return of 'insert'
+// usage example:
+// std::variant<...> x = ...;
+// variant_swarm<...> y = ...;
+// std::visit(aa::inserter(y), x); // inserts any value from 'x' to 'y' (if possible)
+template<template<typename> typename Container, typename... Ts>
+constexpr auto inserter(basic_variant_swarm<Container, Ts...>& swarm) noexcept {
+  return [&swarm]<typename X>(X&& value) -> void {
+    swarm.insert(std::forward<X>(value));
+  };
+}
+
 }  // namespace aa

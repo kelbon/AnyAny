@@ -20,6 +20,10 @@ int main() {
     return -1;
   if (f.size() != 0)
     return -3;
+  std::variant<int, const char*> varf = "hello world";
+  std::visit(aa::inserter(f), varf);
+  if (f.count<std::string>() != 1 || f.size() != 1 || f.empty())
+    return -5;
   swap(f, f);
   aa::basic_variant_swarm<set, int, double, std::string> kek;
   aa::basic_variant_swarm<map, int, double, std::string> kek2;
@@ -30,17 +34,19 @@ int main() {
     return -15;
   f.swap(f);
   f.insert("hello");
-  if (f.size() != 1)
+  if (f.size() != 2)
     return -5;
   if (f.empty())
     return -2;
   f.insert(155);
   f.insert(3.14);
-  if (f.size() != 3)
+  if (f.size() != 4)
     return -4;
   kek.insert("hello");
   kek.insert(3.14);
-  auto it = kek.insert(55);
+  auto [it, b] = kek.insert(55);
+  if (!b)
+    return -10;
   if (kek.size() != 3)
     return -11;
   kek.swap(kek);
