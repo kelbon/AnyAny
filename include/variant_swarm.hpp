@@ -83,13 +83,13 @@ struct basic_variant_swarm
   }
   // returns count values, stored in container for T
   template <tt::one_of<Ts...> T>
-    requires(std::ranges::sized_range<container_for<Ts>> && ...)
+    requires(std::ranges::sized_range<container_for<T>>)
   constexpr auto count() const noexcept {
     return std::get<0>(view<T>()).size();
   }
 
   template <std::size_t I>
-    requires(std::ranges::sized_range<container_for<Ts>> && ...)
+    requires(std::ranges::sized_range<decltype(std::get<I>(containers))>)
   constexpr auto count() const noexcept {
     return std::get<0>(view<I>()).size();
   }

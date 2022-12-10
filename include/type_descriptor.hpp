@@ -145,16 +145,16 @@ struct std_variant_poly_traits {
   // Do not support cases like variant<int, const int> with mixed constness
   template <typename... Ts>
   static const void* to_address(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(const T& v) { return reinterpret_cast<const void*>(std::addressof(v)); },
+    return std::visit([](const auto& v) { return reinterpret_cast<const void*>(std::addressof(v)); },
                       v);
   }
   template <typename... Ts>
   static void* to_address(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
+    return std::visit([](auto& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
   }
   template <typename... Ts>
   static void* to_address(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
+    return std::visit([](auto&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
   }
 };
 
