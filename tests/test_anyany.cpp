@@ -494,7 +494,7 @@ int main() {
   static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
   static_assert(std::is_trivially_copyable_v<aa::const_poly_ref<>>);
   aa::poly_ref<> refa = a;
-  // implicit rebind ref
+  // explicit rebind ref
   refa = aa::poly_ref<>(a);
   sm sm_val;
   aa::poly_ptr<> sm_val_p1 = &sm_val;
