@@ -485,8 +485,22 @@ constexpr inline auto vars_collision = aa::make_visit_invoke<std::string,
     }
 >(aa::std_variant_poly_traits{});
 // clang-format on
-
+struct sm {
+  int x;
+};
 int main() {
+  std::atomic<aa::poly_ptr<>> a;
+  std::atomic<aa::const_poly_ptr<>> afff;
+  static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
+  static_assert(std::is_trivially_copyable_v<aa::const_poly_ref<>>);
+  aa::poly_ref<> refa = a;
+  // explicit rebind ref
+  refa = aa::poly_ref<>(a);
+  sm sm_val;
+  aa::poly_ptr<> sm_val_p1 = &sm_val;
+  aa::poly_ptr<> sm_val_p2 = &sm_val.x;
+  if (sm_val_p1 == sm_val_p2)
+    return -111;
   aa::example::multidispatch_usage();
   aa::example::multidispatch_usage2();
   using var_type = std::variant<int, spaceship, planet, double, char>;
