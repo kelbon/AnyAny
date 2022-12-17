@@ -391,9 +391,11 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
  public:
   poly_ref(const poly_ref&) = default;
   poly_ref(poly_ref&&) = default;
-  // cannot rebind reference
-  void operator=(poly_ref&&) = delete;
-  void operator=(const poly_ref&) = delete;
+
+  poly_ref& operator=(poly_ref&&) = default;
+  poly_ref& operator=(const poly_ref&) = default;
+  // cannot implicitly rebind reference
+  void operator=(auto&&) = delete;
 
   // clang-format off
   // from mutable lvalue
@@ -451,9 +453,11 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
 
   const_poly_ref(const const_poly_ref&) = default;
   const_poly_ref(const_poly_ref&&) = default;
-  // cannot rebind reference
-  void operator=(const_poly_ref&&) = delete;
-  void operator=(const const_poly_ref&) = delete;
+
+  const_poly_ref& operator=(const_poly_ref&&) = default;
+  const_poly_ref& operator=(const const_poly_ref&) = default;
+  // cannot implicitly rebind reference
+  void operator=(auto&&) = delete;
 
   // clang-format off
   // from value
@@ -570,8 +574,9 @@ struct poly_ptr {
 
   // compare
 
+  // returns true if pointed to same logical object(same type and address)
   constexpr bool operator==(const poly_ptr& other) const noexcept {
-    return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
+    return raw() == other.raw() && type_descriptor() == other.type_descriptor();
   }
 
   // returns descriptor for void if *this == nullptr
@@ -664,8 +669,9 @@ struct const_poly_ptr {
 
   // compare
 
+  // returns true if pointed to same logical object(same type and address)
   constexpr bool operator==(const const_poly_ptr& other) const noexcept {
-    return raw() == other.raw() && poly_.vtable_ptr == other.poly_.vtable_ptr;
+    return raw() == other.raw() && type_descriptor() == other.type_descriptor();
   }
 
   // returns descriptor for void if *this == nullptr
