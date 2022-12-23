@@ -32,7 +32,7 @@ struct Circle {
 struct Square {
 
   // Note: it is template method, but it also works
-  // because any captures only one instantiation of this template method with [T = void*]
+  // because any captures only one instantiation of this template method with [T = int&]
   template <typename T>
   void draw(std::ostream& out, T&&) const {
     out << "Square";

@@ -13,30 +13,37 @@ struct inserter {
   constexpr Container& my_container() noexcept {
     return std::get<Container>(static_cast<CRTP*>(this)->containers);
   }
-
+  template<typename X>
+  constexpr decltype(auto) do_insert(X&& val) {
+    auto& c = my_container();
+    constexpr bool push_backable = requires {
+                                     { c.push_back(std::forward<X>(val)) };
+                                   };
+    constexpr bool assotiative = requires {
+                                   { c.insert(std::forward<X>(val)) };
+                                 };
+    if constexpr (push_backable)
+      return c.push_back(std::forward<X>(val));
+    else if constexpr (assotiative)
+      return c.insert(std::forward<X>(val));
+    else
+      return c.insert(c.end(), std::forward<X>(val));
+  }
  public:
   using const_iter = typename Container::const_iterator;
   using value_t = std::ranges::range_value_t<Container>;
-  static constexpr bool is_associative = requires(Container v, value_t value) {
-                                           { v.insert(value) };
-                                         };
+
   constexpr decltype(auto) insert(value_t&& value) {
-    auto& c = my_container();
-    if constexpr (is_associative)
-      return c.insert(std::move(value));
-    else
-      return c.insert(c.end(), std::move(value));
+    return do_insert(std::move(value));
   }
   constexpr decltype(auto) insert(const value_t& value) {
-    auto& c = my_container();
-    if constexpr (is_associative)
-      return c.insert(value);
-    else
-      return c.insert(c.end(), value);
+    return do_insert(value);
   }
   constexpr auto insert(std::initializer_list<value_t> init) {
     auto& c = my_container();
-    if constexpr (is_associative)
+    if constexpr (requires {
+                    { c.insert(init.begin(), init.end()) };
+                  })
       return c.insert(init.begin(), init.end());
     else
       return c.insert(std::ranges::end(c), init.begin(), init.end());

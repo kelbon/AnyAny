@@ -1103,11 +1103,15 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
 // example : any_cast<int>(x) -> int*
 template <typename T, poly_traits Traits = anyany_poly_traits>
 struct any_cast_fn {
+ private:
+  using X = std::remove_reference_t<T>;
+
+ public:
   template <typename U>
   auto* operator()(U&& val) const {
-    constexpr bool is_const_result =
-        std::is_const_v<std::remove_pointer_t<decltype(Traits{}.to_address(val))>>;
-    using result_type = std::add_pointer_t<std::conditional_t<is_const_result, const U, U>>;
+    using ptr_t = decltype(Traits{}.to_address(val));
+    constexpr bool is_const_input = std::is_const_v<std::remove_pointer_t<ptr_t>>;
+    using result_type = std::conditional_t<is_const_input, const X, X>*;
     if (Traits{}.get_type_descriptor(val) != descriptor_v<T>)
       return result_type(nullptr);
     return reinterpret_cast<result_type>(Traits{}.to_address(val));
@@ -1121,78 +1125,83 @@ struct any_cast_fn {
 template<typename T>
 struct any_cast_fn<T, anyany_poly_traits> {
  private:
-  template <typename U, typename Alloc, size_t SooS, TTA... Methods>
-  static const U* any_cast_impl(const basic_any<Alloc, SooS, Methods...>* any) noexcept {
+  using X = std::remove_reference_t<T>;
+
+  template <typename Alloc, size_t SooS, TTA... Methods>
+  static const X* any_cast_impl(const basic_any<Alloc, SooS, Methods...>* any) noexcept {
     // U already remove_cv
-    if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
+    if (any == nullptr || any->type_descriptor() != descriptor_v<T>)
       return nullptr;
-    return std::launder(reinterpret_cast<const U*>((&*any).raw()));
+    return std::launder(reinterpret_cast<const X*>((&*any).raw()));
   }
-  template <typename U, typename Alloc, size_t SooS, TTA... Methods>
-  static U* any_cast_impl(basic_any<Alloc, SooS, Methods...>* any) noexcept {
-    if (any == nullptr || any->type_descriptor() != descriptor_v<U>)
+  template <typename Alloc, size_t SooS, TTA... Methods>
+  static X* any_cast_impl(basic_any<Alloc, SooS, Methods...>* any) noexcept {
+    if (any == nullptr || any->type_descriptor() != descriptor_v<T>)
       return nullptr;
-    return std::launder(reinterpret_cast<U*>((&*any).raw()));
+    return std::launder(reinterpret_cast<X*>((&*any).raw()));
   }
+
  public:
   static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
                 "Incorrect call, it will be always nullptr");
   template <any_x U>
-  auto* operator()(U* ptr) const noexcept {
-    return any_cast_impl<std::remove_cvref_t<T>>(static_cast<typename U::base_any_type*>(ptr));
+  std::add_pointer_t<T> operator()(U* ptr) const noexcept {
+    return any_cast_impl(static_cast<typename U::base_any_type*>(ptr));
   }
   template <any_x U>
-  const auto* operator()(const U* ptr) const noexcept {
-    return any_cast_impl<std::remove_cvref_t<T>>(static_cast<const typename U::base_any_type*>(ptr));
+  const X* operator()(const U* ptr) const noexcept {
+    return any_cast_impl(static_cast<const typename U::base_any_type*>(ptr));
   }
 
   template <any_x U>
-  std::remove_cv_t<T> operator()(U& any) const {
-    auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
+  decltype(auto) operator()(U&& any) const {
+    auto* ptr = (*this)(std::addressof(any));
     if (!ptr)
       throw std::bad_cast{};
-    return *ptr;
+    // const T& + const U& == const
+    // const T& + non const U& == const
+    // non-const T& + const U& == const
+    // non-const T& + non-const U& == non-const
+    if constexpr (std::is_lvalue_reference_v<T>)
+      return *ptr;
+    else if constexpr (std::is_rvalue_reference_v<T> && std::is_rvalue_reference_v<U&&>)
+      return std::move(*ptr);
+    else if constexpr (std::is_rvalue_reference_v<U&&>)
+      return std::remove_cvref_t<T>(std::move(*ptr));  // move value
+    else
+      return std::remove_cvref_t<T>(*ptr);  // copy value
   }
-  template <any_x U>
-  std::remove_cv_t<T> operator()(U&& any) const {
-    auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
-    if (!ptr)
-      throw std::bad_cast{};
-    return std::move(*ptr);
-  }
-  template <any_x U>
-  std::remove_cv_t<T> operator()(const U& any) const {
-    const auto* ptr = any_cast_fn<std::remove_cvref_t<T>>{}(std::addressof(any));
-    if (!ptr)
-      throw std::bad_cast{};
-    return *ptr;
-  }
+
   template <TTA... Methods>
-  std::add_pointer_t<const T> operator()(const_poly_ptr<Methods...> p) const noexcept {
+  const X* operator()(const_poly_ptr<Methods...> p) const noexcept {
     if (p == nullptr || p.type_descriptor() != descriptor_v<T>)
       return nullptr;
-    return reinterpret_cast<const std::remove_reference_t<T>*>(p.raw());
+    return reinterpret_cast<const X*>(p.raw());
   }
   template <TTA... Methods>
-  auto* operator()(poly_ptr<Methods...> p) const noexcept {
-    const_poly_ptr pp = p;
-    return const_cast<T*>(any_cast_fn<T>{}(pp));
+  X* operator()(poly_ptr<Methods...> p) const noexcept {
+    if (p == nullptr || p.type_descriptor() != descriptor_v<T>)
+      return nullptr;
+    return reinterpret_cast<X*>(p.raw());
   }
   template <TTA... Methods>
-  std::remove_cv_t<T> operator()(poly_ref<Methods...> p) const {
-    using U = std::remove_reference_t<T>;
-    auto ptr = any_cast_fn<U>{}(&p);
+  std::conditional_t<std::is_rvalue_reference_v<T>, std::remove_cvref_t<T>,
+                     std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
+  operator()(poly_ref<Methods...> p) const {
+    X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
       throw std::bad_cast{};
-    return *reinterpret_cast<std::remove_cvref_t<T>*>(const_cast<std::remove_const_t<U>*>(ptr));
+    return *ptr;
   }
+  // clang-format off
   template <TTA... Methods>
-  std::conditional_t<std::is_reference_v<T>, const std::remove_reference_t<T>&, std::remove_cv_t<T>>
+  std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>>
   operator()(const_poly_ref<Methods...> p) const {
-    auto ptr = any_cast_fn<std::remove_reference_t<T>>{}(&p);
+    // clang-format on
+    const X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
       throw std::bad_cast{};
-    return *reinterpret_cast<const std::remove_cvref_t<T>*>(ptr);
+    return *ptr;
   }
 };
 
