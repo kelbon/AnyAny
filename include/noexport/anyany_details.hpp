@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <cstddef>
+#include <array>
 
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 #if defined(_MSC_VER)

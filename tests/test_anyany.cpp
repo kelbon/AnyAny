@@ -488,7 +488,73 @@ constexpr inline auto vars_collision = aa::make_visit_invoke<std::string,
 struct sm {
   int x;
 };
+using Tt = any_copyable<>;
+
+template<typename T, typename U>
+using ac_res = decltype(aa::any_cast<T>(std::declval<U>()));
+
+using Ttvar = std::variant<int, float, double, bool>;
+
+template<typename T, typename U>
+using acvar_res = decltype(aa::any_cast<T, aa::std_variant_poly_traits>(std::declval<U>()));
+
 int main() {
+  static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
+  static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
+  static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
+
+  static_assert(std::is_same_v<acvar_res<const int, Ttvar&>, const int*>);
+  static_assert(std::is_same_v<acvar_res<const int&, Ttvar&>, const int*>);
+  static_assert(std::is_same_v<acvar_res<const int&&, Ttvar&>, const int*>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt&>, int>);
+  static_assert(std::is_same_v<ac_res<int&, Tt&>, int&>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt&>, int>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt&>, int>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt&>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt&>, int>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt>, int>);
+  static_assert(std::is_same_v<ac_res<int&, Tt>, int&>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt>, int&&>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt>, int>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt>, const int&&>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt::ref>, int>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::ref>, int&>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::ref>, int>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt::ref>, int>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::ref>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::ref>, int>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt::const_ref>, int>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::const_ref>, const int&>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::const_ref>, const int&>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt::const_ref>, int>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::const_ref>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ref>, const int&>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt::ptr>, int*>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::ptr>, int*>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::ptr>, int*>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt::ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::ptr>, const int*>);
+
+  static_assert(std::is_same_v<ac_res<int, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::const_ptr>, const int*>);
+
+  static_assert(std::is_same_v<ac_res<const int, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ptr>, const int*>);
+
   std::atomic<aa::poly_ptr<>> a;
   std::atomic<aa::const_poly_ptr<>> afff;
   static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
