@@ -1,5 +1,7 @@
-# AnyAny
-C++20 library for comfortable and efficient dynamic polymorphism
+## AnyAny
+C++20 library for efficient dynamic polymorphism through type erasure.
+
+Goals are efficiency, understandability and extensibility.
 
 [![Clang](
 https://github.com/kelbon/AnyAny/actions/workflows/clang.yml/badge.svg?branch=main)](
@@ -9,68 +11,184 @@ https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml/badge.svg?branch=main
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
 (MSVC works too)
 
-This is a library for dynamic polymorphism through type erasure with better code readability and reusage, performance, far less boilerplate then with usual way (virtual functions).
-Also there are many very usefull tools such as multidispatching [`visit_invoke`](#visit_invoke)
+Also there are tools for polymorphism such as multidispatching [`visit_invoke`](#visit_invoke) or [`type_switch`](#type_switch)
 
 ### See /examples folder for fast start!
 
 * [`Design and understanding`](#design)
 * [`How to build?`](#build)
 
-### Basic design knowledge (please read this example first)
+## Basic usage example
 
-The whole library is built on **Methods** (Traits), it is a short description of _captured_ method - template with one argument
-and static function `do_invoke(Self, Args...)` where `Self` - value from which method will be invoked and `Args` is a _captured_ method arguments.
+Foundation of library'a type erase part is a _Methods_ - a description which part of the type we want to use after erasing.
 
-For example, i want to create a type to store any other type with .say() method:
+Let's create one for erasing types with `void draw()`:
 
 ```C++
-
-// Let's write a Method - description for a library what type must have to be stored in our type and how to invoke it
+// For each type T do value.draw()
 template<typename T>
-struct Say {
-  static void do_invoke(const T& self, std::ostream& out) {
-    self.say(out);
+struct Draw {
+  static void do_invoke(const T& self) {
+    self.draw();
+  }
+};
+```
+
+We can use `Draw` for type erasion:
+
+```C++
+#include "anyany.hpp"
+using any_drawable = aa::any_with<Draw>;
+```
+
+And now we can use `any_drawable` to store any type with .draw()
+
+```C++
+// some types with .draw()
+struct Circle {
+  void draw() const {
+    std::cout << "Draw Circle\n";
+  }
+};
+struct Square {
+  void draw() const {
+    std::cout << "Draw Square\n";
   }
 };
 
-// Create a type which can contain any other type with method .say !
-using any_animal = aa::any_with<Say>;
-
-// Let's use it!
-struct Cat {
-  int field;
-  
-  void say(std::ostream& out) const {
-   out << "Meow\n";
-  }
-};
-struct Dog {
-  std::string field;
-  
-  void say(std::ostream& out) const {
-   out << "Woof!\n";
-  }
-};
 int main() {
-  any_animal Pet = Cat{};
-  aa::invoke<Say>(Pet, std::cout);
+  any_drawable shape = Circle{};
+  aa::invoke<Draw>(shape); // prints "Draw Circle"
+  shape = Square{};
+  aa::invoke<Draw>(shape); // prints "Draw Square"
   // see /examples/basic_usage.hpp for more
 }
 ```
+
 There are no virtual functions, inheritance, pointers, memory management etc! Nice!
-It is modular and flexible:
-You can add any number of methods like
-`using any_my = aa::any_with<Say, Draw, Float, aa::copy, aa::move>;`
 
-Wait, copy... Move? Yes, by default any is only have a destructor, so you can create move only any or ... copy only etc
 
-Note: result type of do_invoke and Args must be same for all types T (as for virtual functions)
-Customization points:
-* [`descriptor`](#descriptor)
-* [`poly_traits`](#poly_traits)
+You can add any number of _Methods_:
+```C++
+using any_my = aa::any_with<Draw, Run, aa::copy, aa::move>;
+```
 
-Type creators:
+Wait, copy... move? Yes, by default any is only have a destructor, so you can create move only any or ... copy only etc
+
+Predefined _Methods_:
+
+<details>
+  <summary>copy</summary>
+  
+  enables copy constructor
+</details>
+
+<details>
+  <summary>move</summary>
+  
+  enables move constructor, move assignment (and copy assignment if aa::copy method presented)
+  
+  Note: move constructor for `any_with` always noexcept
+</details>
+
+<details>
+  <summary>hash</summary>
+  
+  enables `std::hash` specialization for `any_with` and `poly_ref`. If `any_with` is empty, then hash == 0.
+  
+  Note: `poly_ptr` has specialization of `std::hash` by default, but it is pointer-like hash.
+  
+</details>
+<details>
+  <summary>equal_to</summary>
+  
+  enables `operator==` for `any_with`.
+  
+  Two `any_with` objects are equal if they contain same type(or both empty) and stored values are equal.
+</details>
+
+<details>
+  <summary>spaceship</summary>
+  
+  enables `operator<=>` and `operator==` for erased `any_with`.
+  
+  Always returns `std::partial_ordering`.
+  
+  If two `any_with` objects do not contain same type returns `unordered`, otherwise
+  returns result of `operator <=>` for contained objects.
+  
+  Note: `equal` if both empty
+  
+</details>
+
+<details>
+  <summary>call&ltR(Args...)&gt</summary>
+  
+  adds `R operator()(Args...)` for `any_with` and `poly_ref`
+  
+  Note: also supported `const`, `noexcept` and `const noexcept` signatures
+  
+  example:
+  ```C++
+ 
+  template<typename Signature>
+  using cpp23_function_ref = aa::poly_ref<aa::call<Signature>::template method>;
+
+  cpp23_function_ref<int(float) const> fooref = foo;
+
+  ```
+</details>
+
+<details>
+  <summary>destroy</summary>
+  
+  Invokes destructor. `any_with` has it by default, but maybe you want to use it with `aa::poly_ptr` to manually manage lifetime
+</details>
+
+<details>
+  <summary>copy_with&ltAlloc, SooS&gt</summary>
+  
+  used for creation copyable `basic_any_with` with custom `Allocator`
+  
+  example:
+  ```C++
+  // 16 here is a Small Object Optimization buffer size
+  using my_any_with_alloc = aa::basic_any_with<MyAlloc, 16, aa::copy_with<MyAlloc, 16>::template method>;
+  ```
+
+</details>
+
+<details>
+  <summary>More formally about Methods</summary>
+  
+_Method_ is a template class/alias with one type argument, such that specializations of _Method_ for each type `T` contains addressable static method `do_invoke`
+
+```C++
+template<typename T>
+struct MethodName {
+  static Ret do_invoke(SelfType, Args...);
+};
+```
+  * `SelfType` may be `T&` or `const T&` or `T` (copy `T` for each invoke of _Method_)
+  * `Ret` and `Args...` must be same for all specializations of _Method_
+ 
+_Method_ is a _const Method_ if `SelfType` is not `T&`.
+_const Method_ may be called even when erased object is const qualified
+</details>
+
+#
+
+<details>
+  <summary>About type descriptors</summary>
+
+There are `descriptor_t` and `descriptor_v<T>`, they are used to describe static or dynamic types of objects.
+
+You need to use it only If you want to create custom poly traits.
+
+</details>
+
+Polymorphic types:
+
 * [`any_with<Methods...>`](#any_with)
 * [`basic_any_with<Methods...>`](#basic_any_with)
 * [`poly_ref<Methods...>`](#poly_ref)
@@ -79,122 +197,193 @@ Type creators:
 * [`const_poly_ptr<Methods...>`](#const_poly_ptr)
 
 Actions:
+
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
 * [`invoke_unsafe<Method>`](#invoke_unsafe)
 * [`type_switch`](#type_switch)
 * [`visit_invoke`](#visit_invoke)
 
-Compile time information:
-* [`method_traits<Method>`](#method_traits)
+Polymorphic containers:
 
-Interface plugins and interface requirement:
-* [`plugin`](#plugins)
-* [`explicit_interface`](#explicit_interface)
-### Methods
+* [`variant_swarm<Ts...>`](#variant_swarm)
+* [`data_parallel_vector<T, Alloc>`](#data_parallel_vector)
 
-* [`destroy`](#destroy)
-* [`copy`](#copy)
-* [`copy_with`](#copy_with)
-* [`move`](#move)
-* [`hash`](#hash)
-* [`equal_to`](#equal_to)
-* [`spaceship`](#spaceship)
-* [`call`](#call)
+<details>
+  <summary>Compile time information</summary>
 
-### `descriptor`
-There are `descriptor_t` and `descriptor_v`, they are used to describe static or dynamic types of objects, they are used in poly_traits
-### `poly_traits`
-It is concept of type which can describe to library what types are polymorphic and what are not.
-`type_switch`, `any_cast` and multidispatching ([`visit_invoke`](#visit_invoke)) are use it.
-So you can define your traits and use them with your types polymorphic hierarchies(LLVM-like type ids, virutal functions etc).
+```C++
+// true if type created by any_with, basic_any_with or inherits from such type
+template <typename T>
+concept any_x = /*...*/;
+
+// true if type can be used as poly traits argument in any_cast / type_switch / visit_invoke etc
+template <typename T>
+concept poly_traits = requires(T val, int some_val) {
+                        { val.get_type_descriptor(some_val) } -> std::same_as<descriptor_t>;
+                        { val.to_address(some_val) };
+                      };
+```
+You can define traits for your polymorphic hierarchies(LLVM-like type ids, virutal functions etc).
+
 Library has two such traits built-in(you can use them as example for implementing your own):
+
   * anyany_poly_traits - for types from <anyany.hpp>
-  * std_variant_poly_traits - for std::variants, (tip: you can create pattern matching in O(1) instanciating with aa::make_visit_invoke instead of O(N * M...) with std::visit)
+  * std_variant_poly_traits - for std::variant
+
+</details>
+
+
+<details>
+  <summary>Interface features</summary>
+
+For example, you want to have method .foo() in type created by `any_with` or `poly_ref` with your _Method_.
+
+Then you should use `plugins`:
+```C++
+template <typename T>
+struct Foo {
+    static void do_invoke(T&) { /* do something*/ }
+   
+    // any_with<Foo> will inherit plugin<SELF>
  
+    template <typename CRTP>
+    struct plugin {
+      void foo() const {
+        auto& self = *static_cast<const CRTP*>(this);
+        // Note: *this may not contain value, you can check it by calling self.has_value()
+        aa::invoke<Foo>(self);
+      }
+    };
+};
+
+//
+any_with<Foo> val = /*...*/;
+val.foo(); // we have method .foo from plugin!
+
+```
+
+If your _Method_ have inner alias `using explicit_interface = /*anything*/`,
+then all types before inserting into `any_with` will be checked.
+
+They must explicitly satisfy _Method_: `using satisfies = aa::satisfies<Method1, Method2...>;`
+
+Example:
+
+```C++
+template<typename T>
+struct Foo {
+ static void do_invoke(T&) {}
+
+ using explicit_interface = int;
+};
+struct BadType { };
+// error - BadType do not satisfies Foo
+// any_with<Foo> x = BadType{};
+
+struct GoodType {
+  using satisfies = aa::satisfies<Foo>;
+};
+
+// all works
+any_with<Foo> y = GoodType{};
+
+```
+
+</details>
 
 ### `any_with`
-It is a template alias which accepts any number of Methods and creates a type which can hold any value, which supports those Methods. Its like a concept but in runtime.
+Accepts any number of _Methods_ and creates a type which can hold any value, which supports those _Methods_. Similar to runtime concept
 
-Created type is a **polymorphic value type** (see [`design`](#design)) and has inner alliases for ptr, ref, const_ptr, const_ref (see [`design`](#design))
+<details>
+<summary>
+Interface of created type
+</summary>
 
-Interface of created type:
 ```C++
 // all interface from method's plugins(see basic_usage in /examples)
 
 // All constructors and move assign operators are exception safe
 // move and move assign always noexcept
 
-// creates empty poly value
-default constructor
+struct Any {
+  // aliases to poly ref/ptr
+ 
+  using ptr = /*...*/;
+  using ref = /*...*/;
+  using const_ptr = /*...*/;
+  using const_ref = /*...*/;
 
-constructor(auto&& value); // from any type
-constructor(Alloc)
-constructor(std::allocator_arg_t, Alloc alloc, T&& value); // from any value, but with Alloc
+  // operator & for getting poly ptr
+ 
+  poly_ptr<Methods...> operator&() noexcept;
+  const_poly_ptr<Methods...> operator&() const noexcept;
+  
+  // main constructors
+  
+  // creates empty
+  constexpr Any();
+  Any(auto&& value); // from any type
+ 
+  Any(const Any&) requires aa::copy
+  Any& operator=(const Any&) requires aa::move and aa::copy
 
-copy constructor(if aa::copy Method used)
+  Any(Any&&) noexcept requires aa::move;
+  Any& operator=(Any&&) requires method aa::move;
+  
+  // observers
+  
+  bool has_value() const noexcept;
+  
+  // returns true if poly_ptr/ref to *this will not be invalidated after moving value
+  bool is_stable_pointers() const noexcept
+ 
+  // returns descriptor_v<void> if value is empty
+  type_descriptor_t type_descriptor() const noexcept;
+ 
+  // forces that after creation is_stable_pointers() == true (allocates memory)
+  template <typename T>
+  Any(force_stable_pointers_t, T&& value);
 
-copy assign operator (if aa::copy AND aa::move Methods are used)
+  // also emplace constructors(std::in_place_type_t<T>), initiaizer list versions
+  // same with force_stable_pointers_t tag etc etc
+  // same with Alloc...
 
-move constructor and move assign operator(if aa::move Method used)
+  // modifiers
+  
+  // emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
+  template<typename T, typename... Args>
+  std::decay_t<T>& emplace(Args&&...); // returns reference to emplaced value
 
-// poly_ptr/poly_ref/const_poly_ptr/const_poly_ref
-using ptr = /*...*/;
-using ref = /*...*/;
-using const_ptr = /*...*/;
-using const_ref = /*...*/;
+  template <typename T, typename U, typename... Args>
+  std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args)
 
-// creating with emplace
-template <typename T, typename... Args>
-constructor(std::in_place_type_t<T>, Args&&... args);
+  // postcondition: has_value() == false
+  void reset() noexcept; 
 
-template <typename T, typename U, typename... Args>
-constructor(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args);
-
-bool has_value() const noexcept; // true if not empty
-
-// emplaces value in any, if exception thrown - any is empty(use operator= if you need strong exception guarantee here)
-template<typename T, typename... Args>
-std::decay_t<T>& emplace(Args&&...); // returns reference to emplaced value
-
-template <typename T, typename U, typename... Args>
-std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args)
-
-// after this method has_value() == false
-void reset() noexcept; 
-
-// presented if method aa::RTTI is used
-const std::type_info& type() const noexcept;
-
-// presented if aa::equal_to OR aa::spaceship Methods are used
-bool operator==( ... ) const;
-
-// presented if aa::spaceship
-// Note: always returns std::partial_ordering, this means that two anyes can be unordered
-std::partial_ordering operator<=>(...) const; 
-
-poly_ptr<Methods...> operator&() noexcept;
-const_poly_ptr<Methods...> operator&() const noexcept;
-
+  // see aa::equal_to description for behavior
+  bool operator==(const Any&) const requires aa::spaceship || aa::equal_to;
+  // see aa::spaceship description for behavior
+  std::partial_ordering operator<=>(const Any&) const requires aa::spaceship;
+  
+  // ... interface from plugins for Methods if presented ...
 };
 
-// Created type also has specialization of std::hash, if aa::hash method used!
-
 ```
-**All constructors and copy/move assignment operators have strong exception guarantee**
+</details>
 
-**Important** - if your type has noexcept move constructor, it can really increase perfomance(like in std::vector case).
+All constructors and copy/move assignment operators have strong exception guarantee
 
-Example of type creation:
+Note: if your type has noexcept move constructor, it can really increase perfomance(like in std::vector case).
 
-Creates type which is movable and satisfies user defined `Print` method:
-
-`using any_printable = aa::any_with<Print, aa::move>;`
+Example:
+```C++
+using any_printable = aa::any_with<Print, aa::move>;
+```
 
 ### `basic_any_with`
-Same as `any_with`, but with custom alloc and small object optimization buffer size - if you need a copy method, then use **aa::copy_with<Alloc, SooS>::method**
+Same as `any_with`, but with custom alloc and small object optimization buffer size - if you need a copyable `basic_any_with` use `copy_with`
 
-interface:
 ```C++
 template<typename Alloc, size_t SooS, TTA... Methods>
 using basic_any_with = /*...*/;
@@ -203,40 +392,57 @@ using basic_any_with = /*...*/;
 ### `poly_ref`
 Non owning, always not null, lightweight(~=void*)
 
-Interface:
+<details>
+<summary>Interface</summary>
+
 ```C++
 template <template<typename> typename... Methods>
 struct poly_ref {
-  // cannot rebind reference after creation, but can copy it
   poly_ref(const poly_ref&) = default;
   poly_ref(poly_ref&&) = default;
-  void operator=(poly_ref&&) = delete;
-  void operator=(const poly_ref&) = delete;
-
+  poly_ref& operator=(poly_ref&&) = default;
+  poly_ref& operator=(const poly_ref&) = default;
+  
+  // only explicit rebind reference after creation
+  void operator=(auto&&) = delete;
+  
+  descriptor_t type_descriptor() const noexcept;
+ 
   // from mutable lvalue
   template <not_const_type T> // not shadow copy ctor
   poly_ref(T& value) noexcept
   poly_ptr<Methods...> operator&() const noexcept;
+  
+  // ... interface from plugins for Methods if presented ...
 }
 ```
+</details>
 
 ### `const_poly_ref`
-Same as poly_ref, but can be created from poly_ref and const T& (not extends lifetime)
+Same as `poly_ref`, but can be created from `poly_ref` and `const T&`
+
+Note: do not extends lifetime
 
 ### `poly_ptr`
 Non owning, nullable, lightweight(~=void*)
 
-Interface:
+Note: `poly_ptr` and `const_poly_ptr` are trivially copyable, so `std::atomic<poly_ptr<...>>` works.
+
+<details>
+<summary>
+Interface
+</summary>
+
 ```C++
 template <template<typename> typename... Methods>
 struct poly_ptr {
   poly_ptr() = default;
   poly_ptr(std::nullptr_t) noexcept;
   poly_ptr& operator=(std::nullptr_t) noexcept;
-  // from mutable pointer
-  template <not_const_type T>
-  poly_ptr(T* ptr) noexcept;
-  // from mutable pointer to Any with same methods
+
+  poly_ptr(not_const_type auto* ptr) noexcept;
+ 
+  // from non-const pointer to Any with same methods
   template <any_x Any>
   poly_ptr(Any* ptr) noexcept;
   
@@ -244,17 +450,24 @@ struct poly_ptr {
  
   // returns raw pointer to value
   void* raw() const noexcept;
+  
+  // returns descriptor_v<void> is nullptr
+  descriptor_t type_descriptor() const noexcept;
+  
   bool has_value() const noexcept;
   bool operator==(std::nullptr_t) const noexcept;
   explicit operator bool() const noexcept;
 
-  // access
+  // similar to common pointer operator* returns reference
+ 
   poly_ref<Methods...> operator*() const noexcept;
   const poly_ref<Methods...>* operator->() const noexcept;
 }
 ```
+</details>
+
 ### `const_poly_ptr`
-Same as poly_ptr, but can be created from poly_ptr and const T*/Any*
+Same as `poly_ptr`, but can be created from `poly_ptr` and `const T*` / `Any*`
 
 ### `any_cast`
 
@@ -354,82 +567,6 @@ std::optional<std::string> foo(any_with<A> a, any_with<B> b) {
   return collision.resolve(a, b);
 }
 
-```
-
-## Methods
-  Methods - user defined template types with one argument and static function `do_invoke`, first argument is a Self, others - method arguments
-  
-  Methods used to create polymorphic types - values, references and pointers(`design`) and invoking
-  
-  Methods 'from the box':
-
-### `destroy`
-  Polymorphic value have by default. Cannot be invoked explicitly
-  
-### `copy`
-enables copy = )
-
-### `copy_with`
-  used for creation basic_any_with with custom Allocator, for example:
-  ```C++
-  using my_any_with_alloc = aa::basic_any_with<MyAlloc, 16, aa::copy_with<MyAlloc, 16>::template method>;
-  ```
-
-### `move`
-  enables move AND copy assignment operator (if you have copy). If inserted types have noexcept move constructor any will be more effective.
-
-### `hash`
- enables specialization of std::hash, Hash for polymorphic value returns std::hash<T>{}(stored_value) or 0, if any is empty
- 
-### `equal_to`
-  Incompatible with `spaceship`(spaceship already contains it). Enables operator== with other any.
-  
-### `spaceship`
-  enables operator<=>
-### `call`
-  Method call<Ret(Args...)> adds operator() in created type, also supports Ret(Args...) const/noexcept signatures (see examples)
-
-### `any_x`
-concept of any type created by any_with, basic_any_with or successor of such type
-```C++
-template <typename T>
-concept any_x = /*...*/;
-```
-### `method_traits`
-Provides compile time information about Method such as is it const? What is Self type? What a signature of Method? Etc
-
-### `plugins`
-  With plugins you can add an interface for type, created by `aa::any_with`/`aa::poly_ref`, for example:
-```C++
-template <typename T>
-struct Draw {
-    static void do_invoke(T self, std::ostream& out, int val) {
-      self.draw(out, val);
-    }
-  // interface plugin, Any with this method will have methods from plugin
-    template <typename CRTP>
-    struct plugin {
-      void draw(std::ostream& out) const {
-  // CRTP here is a resulting type, which will be created, its always interits from plugin
-        aa::invoke<DrawExplicit>(*static_cast<const CRTP*>(this), out);
-      }
-    };
-};
-using any_drawable = aa::any_with<Draw>;
-any_drawable val = /*...*/;
-val.draw(std::cout); // we have method .draw from plugin!
-
-```
-### `explicit_interface`
-  If your Method have inner alias `using explicit_interface = /*anything*/`;
-  Then all types before inserting into created Any type will be checked - they must
-  explicitly satisfy your Method by `using satisfies = aa::satisfies<Method1, Method2...>;`
-  OR with specialization like that:
-```C++
-namespace aa {
-  template <>
-  constexpr inline bool satisfies_v<Circle, Draw> = true;
-}  // namespace aa
 ```
   
 ### `design`
