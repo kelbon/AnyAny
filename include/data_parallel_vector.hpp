@@ -56,7 +56,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   template <std::size_t I>
   using container_t = container_for_t<element_t<I>>;
 
- public:
+ protected:
   // invariant - all containers have same .size()
   std::tuple<container_t<Is>...> parts;
 
@@ -228,14 +228,20 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     constexpr iterator_& operator=(const iterator_&) = default;
     constexpr iterator_& operator=(iterator_&&) = default;
 
-    // ranges::iter_move customization point object
-    friend constexpr value_type iter_move(iterator_ it) requires (!IsConst) {
+    // have friend access to owner->parts...
+    constexpr value_type do_iter_move() const requires (!IsConst) {
       // clang breaks on arg(a,b,c) is arg is aggregate (december 2022)
 #if __cpp_aggregate_paren_init >= 201902L
-      return value_type(std::move(std::get<Is>(it.owner->parts)[it.index])...);
+      return value_type(std::move(std::get<Is>(owner->parts)[index])...);
 #else
-      return value_type{std::move(std::get<Is>(it.owner->parts)[it.index])...};
+      return value_type{std::move(std::get<Is>(owner->parts)[index])...};
 #endif
+    }
+    // ranges::iter_move customization point object
+    friend value_type iter_move(iterator_ it)
+      requires(!IsConst)
+    {
+      return it.do_iter_move();
     }
     // ranges::iter_swap customization point object
     friend constexpr void iter_swap(iterator_ l, iterator_ r)
