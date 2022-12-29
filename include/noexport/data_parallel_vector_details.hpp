@@ -39,7 +39,18 @@ consteval auto field_count(std::index_sequence<Is...>) {
 template <typename T>
 constexpr std::size_t fields_count_v = field_count<std::remove_cvref_t<T>>(std::make_index_sequence<30>{});
 
-#define frwd(name) std::forward<decltype(name)>(name)
+// returns lvalue ref to Field if T is not rvalue
+// otherwise behaves as std::forward
+template<typename T, typename Field>
+constexpr inline decltype(auto) forward_save_prvalues(Field& val) noexcept {
+  if constexpr (std::is_rvalue_reference_v<T&&>)
+    return std::forward<Field>(val);
+  else if constexpr (!std::is_reference_v<Field>)
+    return static_cast<Field&>(val);
+  else
+    return static_cast<Field&&>(val);
+}
+#define frwd(name) forward_save_prvalues<T, decltype(name)>(name)
 
 // do not work for C arrays in aggregates
 template <typename T>
@@ -279,8 +290,16 @@ struct bool_ {
     b = x;
     return *this;
   }
-
-  constexpr operator bool() const noexcept {
+  constexpr operator bool&&() && noexcept {
+    return std::move(b);
+  }
+  constexpr operator const bool&&() const&& noexcept {
+    return std::move(b);
+  }
+  constexpr operator bool&() & noexcept {
+    return b;
+  }
+  constexpr operator const bool&() const & noexcept {
     return b;
   }
   // removes ambiguity
