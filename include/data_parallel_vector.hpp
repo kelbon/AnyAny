@@ -94,9 +94,13 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     constexpr const proxy& operator=(proxy&& other) const {
       return *this = other;
     }
-    friend void swap(const proxy& l, const proxy& r) {
+    // have friend access to owner->parts(so no error on gcc...)
+    void swap(const proxy& other) const {
       using std::swap;
-      (swap(std::get<Is>(l.owner->parts)[l.index], std::get<Is>(r.owner->parts)[r.index]), ...);
+      (swap(std::get<Is>(owner->parts)[index], std::get<Is>(other.owner->parts)[other.index]), ...);
+    }
+    friend void swap(const proxy& l, const proxy& r) {
+      l.swap(r);
     }
 
     constexpr auto compare_by_fields(const value_type& v) const {
