@@ -88,7 +88,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
       return *this;
     }
     constexpr const proxy& operator=(const proxy& other) const {
-      ((std::get<Is>(owner->parts)[index] = std::get<Is>(other.owner->parts)[index]), ...);
+      ((std::get<Is>(owner->parts)[index] = std::get<Is>(other.owner->parts)[other.index]), ...);
       return *this;
     }
     constexpr const proxy& operator=(proxy&& other) const {
