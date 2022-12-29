@@ -201,6 +201,8 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   };
 
   // Iterator impl
+  template<bool>
+  friend struct iterator_; // access for iter_move etc
 
   template <bool IsConst>
   struct iterator_ {
