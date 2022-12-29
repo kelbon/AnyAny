@@ -36,14 +36,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   using value_type = T;
   using allocator_type = Alloc;
   using difference_type = std::ptrdiff_t;
-
+  using size_type = std::vector<int>::size_type;
  protected:
   using Traits = noexport::tl_traits;
-  // it may be much prettier with second default arg-alias, but MSVC cant expand it in function declaration
-  // like foo(element_t<Is>...)
+
   template <std::size_t I>
-  using element_t = std::conditional_t<std::is_same_v<bool, typename Traits::template tuple_element<I, T>>,
-                                       noexport::bool_, typename Traits::template tuple_element<I, T>>;
+  using element_t = typename Traits::template tuple_element<I, T>;
 
   // disables specialization std::vector<bool>
   template <typename X>
@@ -62,47 +60,55 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   // invariant - all containers have same .size()
   std::tuple<container_t<Is>...> parts;
 
+ private:
   // Iterator helpers
   struct proxy {
-    std::tuple<element_t<Is>&...> ref;
+    data_parallel_impl* owner;
+    size_type index;
 
-    constexpr operator value_type() const noexcept
-      requires(noexport::is_constructible_v<value_type, element_t<Is>...>)
-    {
-      // clang breaks on arg(a,b,c) is arg is aggregate (december 2022)
+    constexpr proxy(data_parallel_impl* owner, size_type index) noexcept : owner(owner), index(index) {
+      assert(owner != nullptr && owner->size() > index);
+    }
+    constexpr operator value_type() const {
+      // clang breaks on arg(a,b,c) if arg is aggregate (december 2022)
 #if __cpp_aggregate_paren_init >= 201902L
-      return std::make_from_tuple<value_type>(ref);
+      return value_type(static_cast<element_t<Is>&>(std::get<Is>(owner->parts)[index])...);
 #else
-      return value_type{std::get<Is>(ref)...};
+      return value_type{static_cast<element_t<Is>&>(std::get<Is>(owner->parts)[index])...};
 #endif
     }
-    template <typename U = value_type>
-    constexpr const proxy& operator=(U&& val) const {
-      // multi forward valid, because each field accesed only once
-      if constexpr (std::is_same_v<std::remove_cvref_t<U>, T>) {
-        ((std::get<Is>(ref) = Traits::template get<Is>(std::forward<U>(val))), ...);
-      } else {
-        value_type v = std::forward<U>(val);
-        ((std::get<Is>(ref) = Traits::template get<Is>(std::move(v))), ...);
-      }
+
+    constexpr const proxy& operator=(value_type&& val) const {
+      // multi move is valid, because each field accesed only once
+      ((std::get<Is>(owner->parts)[index] = Traits::template get<Is>(std::move(val))), ...);
       return *this;
     }
-
-    // NOTE: behaves as defauled(=default) operator== for T
-    // template for remove ambiguity
-    template <std::same_as<value_type> X>
-    constexpr bool operator==(const X& v) const {
-      return ((std::get<Is>(ref) == Traits::template get<Is>(v)) && ...);
+    constexpr const proxy& operator=(const value_type& val) const {
+      ((std::get<Is>(owner->parts)[index] = Traits::template get<Is>(val)), ...);
+      return *this;
     }
-    constexpr bool operator==(const proxy&) const = default;
+    constexpr const proxy& operator=(const proxy& other) const {
+      ((std::get<Is>(owner->parts)[index] = std::get<Is>(other.owner->parts)[other.index]), ...);
+      return *this;
+    }
+    constexpr const proxy& operator=(proxy&& other) const {
+      return *this = other;
+    }
+    // have friend access to owner->parts(so no error on gcc...)
+    void swap(const proxy& other) const {
+      using std::swap;
+      (swap(std::get<Is>(owner->parts)[index], std::get<Is>(other.owner->parts)[other.index]), ...);
+    }
+    friend void swap(const proxy& l, const proxy& r) {
+      l.swap(r);
+    }
 
-    // NOTE: behaves as defauled(=default) operator<=> for T
-    constexpr auto operator<=>(const value_type& v) const {
+    constexpr auto compare_by_fields(const value_type& v) const {
       using result_type =
           std::common_comparison_category_t<std::compare_three_way_result_t<element_t<Is>>...>;
       result_type cmp_res = static_cast<result_type>(std::strong_ordering::equal);
       auto is_equal_field = [&]<std::size_t I>(std::integral_constant<std::size_t, I>) {
-        cmp_res = std::get<I>(ref) <=> Traits::template get<I>(v);
+        cmp_res = std::get<I>(owner->parts)[index] <=> Traits::template get<I>(v);
         return cmp_res == std::strong_ordering::equal;
       };
       bool unequal_finded = false;
@@ -111,6 +117,39 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
         (unequal_finded = true)),
        ...);
       return cmp_res;
+    }
+    constexpr auto compare_by_fields(const proxy& other) const {
+      using result_type =
+          std::common_comparison_category_t<std::compare_three_way_result_t<element_t<Is>>...>;
+      result_type cmp_res = static_cast<result_type>(std::strong_ordering::equal);
+      auto is_equal_field = [&]<std::size_t I>(std::integral_constant<std::size_t, I>) {
+        cmp_res = std::get<I>(owner->parts)[index] <=> std::get<I>(other.owner->parts)[other.index];
+        return cmp_res == std::strong_ordering::equal;
+      };
+      bool unequal_finded = false;
+      // finds first UNEQUAL fields and sets result of their comparison into 'cmp_res'
+      ((unequal_finded || is_equal_field(std::integral_constant<std::size_t, Is>{}) ||
+        (unequal_finded = true)),
+       ...);
+      return cmp_res;
+    }
+
+    // NOTE: compares by fields - behaves as defauled(=default) operator== / <=> for value_type
+
+    // template removes ambiguity here
+    template <std::same_as<value_type> X>
+    constexpr bool operator==(const X& val) const {
+      return (*this <=> val) == std::strong_ordering::equal;
+    }
+
+    constexpr bool operator==(const proxy& v) const {
+      return (*this <=> v) == std::strong_ordering::equal;
+    }
+    constexpr auto operator<=>(const value_type& v) const {
+      return compare_by_fields(v);
+    }
+    constexpr auto operator<=>(const proxy& v) const {
+      return compare_by_fields(v);
     }
   };
   struct proxy_ptr {
@@ -121,12 +160,41 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     }
   };
   struct const_proxy {
-    std::tuple<std::add_const_t<element_t<Is>>&...> ref;
+   private:
+    proxy p;
 
-    constexpr operator T() const noexcept
-      requires(std::constructible_from<T, element_t<Is>...>)
-    {
-      return std::make_from_tuple<T>(ref);
+   public:
+    constexpr const_proxy(const data_parallel_impl* owner, size_type index) noexcept
+        : p(const_cast<data_parallel_impl*>(owner), index) {
+    }
+    constexpr const_proxy(const proxy& p) noexcept : p(p) {
+    }
+
+    void operator=(const value_type&) = delete;
+    void operator=(value_type&&) = delete;
+    void operator=(const const_proxy&) = delete;
+    void operator=(const_proxy&&) = delete;
+
+    constexpr operator value_type() const {
+      return static_cast<value_type>(p);
+    }
+
+    // NOTE: compares by fields - behaves as defauled(=default) operator== / <=> for value_type
+
+    // template removes ambiguity here
+    template <std::same_as<value_type> X>
+    constexpr bool operator==(const X& val) const {
+      return p == val;
+    }
+
+    constexpr bool operator==(const const_proxy& v) const {
+      return p == v.p;
+    }
+    constexpr auto operator<=>(const value_type& v) const {
+      return p <=> v;
+    }
+    constexpr auto operator<=>(const const_proxy& v) const {
+      return p <=> v.p;
     }
   };
   struct const_proxy_ptr {
@@ -143,8 +211,11 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   struct iterator_ {
     using iters_t = std::tuple<
         std::ranges::iterator_t<std::conditional_t<IsConst, const container_t<Is>, container_t<Is>>>...>;
+    using index_t = std::vector<int>::size_type;
+    using owner_t = std::conditional_t<IsConst, const data_parallel_impl, data_parallel_impl>;
 
-    iters_t iters;
+    owner_t* owner = nullptr;
+    index_t index;
 
     using value_type = T;
     using reference = std::conditional_t<IsConst, const_proxy, proxy>;
@@ -153,70 +224,108 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     using iterator_category = std::random_access_iterator_tag;
 
     constexpr iterator_() = default;
-    constexpr iterator_(iters_t init) : iters(std::move(init)) {
+    constexpr iterator_(owner_t* owner, index_t i) noexcept : owner(owner), index(i) {
+      assert(owner && index <= owner->size());
     }
     constexpr iterator_(const iterator_&) = default;
     constexpr iterator_(iterator_&&) = default;
     constexpr iterator_& operator=(const iterator_&) = default;
     constexpr iterator_& operator=(iterator_&&) = default;
 
+    // have friend access to owner->parts...
+    constexpr value_type do_iter_move() const requires (!IsConst) {
+      // clang breaks on arg(a,b,c) is arg is aggregate (december 2022)
+#if __cpp_aggregate_paren_init >= 201902L
+      return value_type(std::move(std::get<Is>(owner->parts)[index])...);
+#else
+      return value_type{std::move(std::get<Is>(owner->parts)[index])...};
+#endif
+    }
+    // ranges::iter_move customization point object
+    friend value_type iter_move(iterator_ it)
+      requires(!IsConst)
+    {
+      return it.do_iter_move();
+    }
+    // ranges::iter_swap customization point object
+    friend constexpr void iter_swap(iterator_ l, iterator_ r)
+      requires(!IsConst)
+    {
+      using std::swap;
+      ((swap(std::get<Is>(l.owner->parts)[l.index], std::get<Is>(r.owner->parts)[r.index])), ...);
+    }
     // const iterator must be constructible from non-const
     // it is const & only because MSVC bug thinks its 'illegal copy ctor'
-    constexpr iterator_(const iterator_<false>& it)
+    constexpr iterator_(const iterator_<false>& it) noexcept 
       requires(IsConst)
-        : iters(std::make_from_tuple<decltype(iters)>(it.iters)) {
+        : owner(it.owner), index(it.index) {
     }
-    constexpr reference operator*() const {
-      return std::apply([](auto&... its) { return reference({std::tie(*its...)}); }, iters);
+    constexpr reference operator*() const noexcept {
+      return reference(owner, index);
     }
-    constexpr iterator_& operator++() {
-      std::apply([](auto&... its) { (++its, ...); }, iters);
+    constexpr iterator_& operator++() noexcept {
+      assert(owner != nullptr && index != owner->size());
+      ++index;
       return *this;
     }
-    constexpr iterator_ operator++(int) {
+    constexpr iterator_ operator++(int) noexcept {
       auto copy = *this;
       ++(*this);
       return copy;
     }
-    constexpr iterator_& operator--() {
-      std::apply([](auto&... its) { (--its, ...); }, iters);
+    constexpr iterator_& operator--() noexcept {
+      assert(index != 0);
+      --index;
       return *this;
     }
-    constexpr iterator_ operator--(int) {
+    constexpr iterator_ operator--(int) noexcept {
       auto copy = *this;
       --(*this);
       return copy;
     }
     constexpr iterator_& operator+=(difference_type dif) noexcept {
-      std::apply([&](auto&... its) { ((its += dif), ...); }, iters);
+      assert(owner != nullptr);
+      index += dif;
       return *this;
     }
     constexpr iterator_ operator+(difference_type dif) const noexcept {
       auto copy = *this;
-      return copy += dif;
+      copy += dif;
+      return copy;
     }
     friend constexpr iterator_ operator+(difference_type dif, const iterator_& it) noexcept {
       return it + dif;
     }
     constexpr iterator_& operator-=(difference_type dif) noexcept {
-      std::apply([&](auto&... its) { ((its -= dif), ...); }, iters);
+      assert(dif <= index);
+      index -= dif;
       return *this;
     }
     constexpr iterator_ operator-(difference_type dif) const noexcept {
       auto copy = *this;
-      return copy -= dif;
+      copy -= dif;
+      return copy;
     }
     constexpr difference_type operator-(const iterator_& other) const noexcept {
-      return std::distance(std::get<0>(other.iters), std::get<0>(iters));
+      return index - other.index;
     }
     constexpr reference operator[](difference_type dif) const noexcept {
       return *(*this + dif);
     }
-    constexpr auto operator<=>(const iterator_&) const = default;
+    constexpr auto operator==(std::default_sentinel_t) const noexcept {
+      return !owner || owner->size() == index;
+    }
+    constexpr bool operator==(const iterator_& other) const noexcept {
+      assert(owner == other.owner);
+      return index == other.index;
+    }
+    constexpr auto operator<=>(const iterator_& other) const noexcept {
+      assert(owner == other.owner);
+      return index <=> other.index;
+    };
   };
 
  public:
-  using size_type = std::size_t;
   using reference = proxy;
   using const_reference = const_proxy;
 
@@ -271,22 +380,22 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   using const_iterator = iterator_<true>;
 
   constexpr iterator begin() noexcept {
-    return std::apply([](auto&... conts) { return iterator(std::tuple{conts.begin()...}); }, parts);
+    return iterator(this, 0);
   }
   constexpr const_iterator begin() const noexcept {
-    return std::apply([](auto&... conts) { return const_iterator(std::tuple{conts.begin()...}); }, parts);
+    return const_iterator(this, 0);
   }
   constexpr iterator end() noexcept {
-    return std::apply([](auto&... conts) { return iterator(std::tuple{conts.end()...}); }, parts);
+    return iterator(this, size());
   }
   constexpr const_iterator end() const noexcept {
-    return std::apply([](auto&... conts) { return const_iterator(std::tuple{conts.end()...}); }, parts);
+    return iterator(this, size());
   }
   constexpr const_iterator cbegin() const noexcept {
-    return begin();
+    return const_iterator(this, 0);
   }
   constexpr const_iterator cend() const noexcept {
-    return end();
+    return const_iterator(this, size());
   }
 
   // ELEMENT ACCESS
@@ -392,19 +501,26 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   constexpr bool operator==(const data_parallel_impl&) const = default;
 
   // MODIFIERS
+ private:
+  static constexpr std::size_t last_index = (Is, ...);
+  constexpr iterator iter_from_last_iter(typename container_t<last_index>::iterator last_it) noexcept {
+    return iterator(this, std::distance(std::get<last_index>(parts).begin(), last_it));
+  }
+  constexpr const_iterator iter_from_last_iter(
+      typename container_t<last_index>::const_iterator last_it) const noexcept {
+    return const_iterator(this, std::distance(std::get<last_index>(parts).begin(), last_it));
+  }
 
+ public:
   // emplace
 
   constexpr iterator emplace(const_iterator pos, element_t<Is>... fields) {
-    return std::apply(
-        [&](auto&... conts) {
-          return iterator(std::tuple{conts.emplace(std::get<Is>(pos.iters), fields)...});
-        },
-        parts);
+    std::apply([&](auto&... conts) { (conts.emplace(conts.begin() + pos.index, fields), ...); }, parts);
+    return iterator(this, pos.index);
   }
   constexpr reference emplace_back(element_t<Is>... fields) {
-    return std::apply([&](auto&... conts) { return reference{std::tie(conts.emplace_back(fields)...)}; },
-                      parts);
+    std::apply([&](auto&... conts) { (conts.emplace_back(fields), ...); }, parts);
+    return back();
   }
 
   // push_back
@@ -420,15 +536,15 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   // erase
 
   constexpr iterator erase(const_iterator pos) {
-    return std::apply(
-        [&](auto&... conts) { return iterator(std::tuple{conts.erase(std::get<Is>(pos.iters))...}); }, parts);
+    auto last_it =
+        std::apply([&](auto&... conts) { return (conts.erase(conts.begin() + pos.index), ...); }, parts);
+    return iter_from_last_iter(last_it);
   }
   constexpr iterator erase(const_iterator b, const_iterator e) {
-    return std::apply(
-        [&](auto&... conts) {
-          return iterator(std::tuple{conts.erase(std::get<Is>(b.iters), std::get<Is>(e.iters))...});
-        },
+    auto last_it = std::apply(
+        [&](auto&... conts) { return (conts.erase(std::get<Is>(b.iters), std::get<Is>(e.iters)), ...); },
         parts);
+    return iter_from_last_iter(last_it);
   }
 
   // insert
@@ -443,12 +559,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   }
 
   constexpr iterator insert(const_iterator pos, size_type count, const T& value) {
-    return std::apply(
+    auto last_it = std::apply(
         [&](auto&... conts) {
-          return iterator(
-              std::tuple{conts.insert(std::get<Is>(pos.iters), count, Traits::template get<Is>(value))...});
+          return (conts.insert(conts.begin() + pos.index, count, Traits::template get<Is>(value)), ...);
         },
         parts);
+    return iter_from_last_iter(last_it);
   }
 
   template <std::input_iterator It>
@@ -521,12 +637,14 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
 
 namespace aa {
 
-// random_access_range, behaves as vector of T, but stores its fields separately
-// ignores specialization for bool
-// NOTE: iterator::reference compares with T as if T has = default operator<=>
-// Supports tuple-like objects(for which exist std::tuple_element/std::tuple_size/std::get)
-// and aggregates with less then 30 fields
-// NOTE: aggregate with C array in it is BAD(use std::array)
+// random_access_range, behaves as vector of T, but stores fields separately
+//
+// NOTES:
+// * T will be compared by fields by default(similar to default operator<=>)
+// * ignores specialization vector<bool>
+// * ::reference is a proxy object convertible to T
+// * supports tuple-like objects and aggregates with less then 30 fields
+// * aggregate with C array in it is BAD(use std::array)
 template <typename T, typename Alloc = std::allocator<T>>
 struct data_parallel_vector
     : noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {

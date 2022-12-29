@@ -927,12 +927,24 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     *this = std::move(value);
     return *this;
   }
+  // has strong exception guarantee
+  // you can use .emplace() without exception guarantees
+  // and without any requirements
   template<typename V>
     requires(!any_x<V>)
-  basic_any& operator=(V&& val) {
-    basic_any temp{std::forward<V>(val)};
-    std::destroy_at(this);
-    std::construct_at(this, std::move(temp));
+  basic_any& operator=(V&& val)
+    requires(has_method<move> ||
+             (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> && any_is_small_for<std::decay_t<V>>))
+  {
+    if constexpr (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
+                  any_is_small_for<std::decay_t<V>>) {
+      reset();
+      emplace_in_empty<std::decay_t<V>>(std::forward<V>(val));
+    } else {
+      basic_any temp{std::forward<V>(val)};
+      std::destroy_at(this);
+      std::construct_at(this, std::move(temp));
+    }
     return *this;
   }
 

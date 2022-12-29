@@ -6,6 +6,7 @@
 #include <ranges>
 #include <algorithm>
 #include <utility>
+#include <random>
 
 #include "data_parallel_vector.hpp"
 
@@ -181,25 +182,79 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   ASSERT(x4.empty());
   ASSERT(x5.empty());
 }
-#undef ASSERT
-
 struct field_4 {
   int x;
   float y;
   double z;
   bool l;
+  std::string s = "hello";
+  auto operator<=>(const field_4&) const = default;
 };
+
+void algo_test() {
+  std::vector<field_4> vec;
+  vec.push_back({1, 2.f, 3, true, "hello"});
+  vec.push_back({3, 2.f, 1, false, "hello"});
+  vec.push_back({3, 2.f, 1, false, "hello"});
+  vec.push_back({10, 3.14f, 1, false, "hello"});
+  vec.push_back({10, 3.14f, 1, false, "hello"});
+  vec.push_back({-10, 3.14f, 1, false, "hello"});
+  vec.push_back({-10, 3.16f, 1, false, "hello"});
+  vec.push_back({-10, 3.16f, 1, true, "hello"});
+  vec.push_back({-10, 3.16f, 11, true, "hello"});
+  vec.push_back({-10, 3.16f, 1, true, "hello"});
+  aa::data_parallel_vector<field_4> test_dpvec(vec.begin(), vec.end());
+  ASSERT(test_dpvec.front() == vec.front());
+  ASSERT(test_dpvec.back() == vec.back());
+  ASSERT(test_dpvec.front() <=> vec.front() == std::partial_ordering::equivalent);
+  ASSERT(test_dpvec.front() <=> vec[1] == std::partial_ordering::less);
+  ASSERT(std::ranges::equal(vec, test_dpvec));
+  auto print = [](const field_4& val) {
+    std::cout << val.x << ' ' << val.y << ' ' << val.z << ' ' << val.l << '\n';
+  };
+  std::cout << "BEFORE:\n";
+  std::cout << "DPVEC:\n";
+  for (field_4 val : test_dpvec)
+    print(val);
+  std::cout << "VEC:\n";
+  for (auto& val : vec)
+    print(val);
+  using std::swap;
+  swap(test_dpvec.front(), test_dpvec.back());
+  ASSERT(test_dpvec.front() == vec.back());
+  ASSERT(test_dpvec.back() == vec.front());
+  std::ranges::sort(vec);
+  std::ranges::sort(test_dpvec);
+  std::cout << "AFTER:\n";
+  std::cout << "DPVEC:\n";
+  for (field_4 val : test_dpvec)
+    print(val);
+  std::cout << "VEC:\n";
+  for (auto& val : vec)
+    print(val);
+  ASSERT(std::ranges::equal(vec, test_dpvec));
+  std::ranges::swap_ranges(vec, test_dpvec);
+  std::ranges::shuffle(test_dpvec, std::mt19937(std::random_device()()));
+  std::ranges::sort(test_dpvec);
+  ASSERT(std::ranges::equal(test_dpvec.cbegin(), test_dpvec.cend(), vec.begin(), vec.end()));
+  aa::data_parallel_vector<field_4> move_into_me(std::make_move_iterator(vec.begin()),
+                                               std::make_move_iterator(vec.end()));
+  ASSERT(vec.front().s.empty()); // moved out
+}
+#undef ASSERT
+
 int main() {
   std::cout << "start test\n";
-  static_assert(aa::noexport::fields_count_v<field_4> == 4);
+  static_assert(aa::noexport::fields_count_v<field_4> == 5);
   static_assert(std::is_same_v<aa::noexport::field_type_t<1, field_4>, float>);
+  algo_test();
   aa::data_parallel_vector<field_4> magic;
-  auto [f_1, f_2, f_3, f_4] = magic;
-  magic.emplace_back(5, 6.f, 3.14, true);
+  auto [f_1, f_2, f_3, f_4, _] = magic;
+  magic.emplace_back(5, 6.f, 3.14, true, "why");
   if (*magic.begin() <= field_4{5, 6., 3., true})
     return -15;
   static_assert(std::random_access_iterator<decltype(magic)::iterator>);
-  if (magic.begin() != std::find(magic.begin(), magic.end(), field_4{5, 6., 3.14, true}))
+  if (magic.begin() != std::find(magic.begin(), magic.end(), field_4{5, 6., 3.14, true, "why"}))
     return -20;
   using tt1 = std::tuple<int, float, double, char>;
   std::vector<tt1> vec(15, {5, 3.14f, 66., 'c'});
