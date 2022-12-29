@@ -56,14 +56,11 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   template <std::size_t I>
   using container_t = container_for_t<element_t<I>>;
 
- protected:
+ public:
   // invariant - all containers have same .size()
   std::tuple<container_t<Is>...> parts;
 
-  template <bool>
-  friend struct iterator_;  // access for iter_move etc
-  friend struct proxy;
-
+ private:
   // Iterator helpers
   struct proxy {
     data_parallel_impl* owner;
