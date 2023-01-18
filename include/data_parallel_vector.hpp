@@ -693,8 +693,8 @@ struct data_parallel_vector
 };
 // helper concept
 template<typename T>
-concept dp_vector_ref =
-    requires { typename T::aa_proxy_tag; } || requires { typename T::aa_const_proxy_tag; };
+concept dp_vector_ref = requires { typename std::remove_cvref_t<T>::aa_proxy_tag; } ||
+                        requires { typename std::remove_cvref_t<T>::aa_const_proxy_tag; };
 
 }  // namespace aa
 
