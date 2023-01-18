@@ -204,6 +204,16 @@ void algo_test() {
   vec.push_back({-10, 3.16f, 11, true, "hello"});
   vec.push_back({-10, 3.16f, 1, true, "hello"});
   aa::data_parallel_vector<field_4> test_dpvec(vec.begin(), vec.end());
+  auto [a, b, c, d, e] = test_dpvec.front();
+  auto [ca, cb, cc, cd, ce] = *test_dpvec.cbegin();
+  static_assert(std::is_same_v<decltype(a), int&> && std::is_same_v<decltype(b), float&> &&
+                std::is_same_v<decltype(c), double&> && std::is_same_v<decltype(d), bool&> &&
+                std::is_same_v<decltype(e), std::string&>);
+  static_assert(std::is_same_v<decltype(ca), const int&> && std::is_same_v<decltype(cb), const float&> &&
+                std::is_same_v<decltype(cc), const double&> && std::is_same_v<decltype(cd), const bool&> &&
+                std::is_same_v<decltype(ce), const std::string&>);
+  ASSERT(a == 1 && b == 2.f && c == 3 && d == true && e == "hello");
+  ASSERT(ca == 1 && cb == 2.f && cc == 3 && cd == true && ce == "hello");
   ASSERT(test_dpvec.front() == vec.front());
   ASSERT(test_dpvec.back() == vec.back());
   ASSERT(test_dpvec.front() <=> vec.front() == std::partial_ordering::equivalent);
