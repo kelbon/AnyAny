@@ -63,6 +63,13 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
  private:
   // Iterator helpers
   struct proxy {
+    // for tuple-like interface specializations
+    using aa_proxy_tag = int;
+    // returns tuple of references to fields of referenced obj
+    constexpr auto tie() const noexcept {
+      return std::tie(static_cast<element_t<Is>&>(std::get<Is>(owner->parts)[index])...);
+    }
+
     data_parallel_impl* owner;
     size_type index;
 
@@ -160,6 +167,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     }
   };
   struct const_proxy {
+    // for tuple-like interface specializations
+    using aa_const_proxy_tag = int;
+    // returns tuple of const references to fields of referenced obj
+    constexpr auto tie() const noexcept {
+      return std::tie(static_cast<const element_t<Is>&>(std::get<Is>(std::as_const(p.owner)->parts)[p.index])...);
+    }
    private:
     proxy p;
 
@@ -247,12 +260,16 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     {
       return it.do_iter_move();
     }
+    // have friend access to owner->parts...
+    constexpr void do_iter_swap(iterator_ other) {
+      using std::swap;
+      ((swap(std::get<Is>(owner->parts)[index], std::get<Is>(other.owner->parts)[other.index])), ...);
+    }
     // ranges::iter_swap customization point object
     friend constexpr void iter_swap(iterator_ l, iterator_ r)
       requires(!IsConst)
     {
-      using std::swap;
-      ((swap(std::get<Is>(l.owner->parts)[l.index], std::get<Is>(r.owner->parts)[r.index])), ...);
+      l.do_iter_swap(r);
     }
     // const iterator must be constructible from non-const
     // it is const & only because MSVC bug thinks its 'illegal copy ctor'
@@ -674,6 +691,10 @@ struct data_parallel_vector
 
   constexpr bool operator==(const data_parallel_vector&) const = default;
 };
+// helper concept
+template<typename T>
+concept dp_vector_ref =
+    requires { typename T::aa_proxy_tag; } || requires { typename T::aa_const_proxy_tag; };
 
 }  // namespace aa
 
@@ -711,6 +732,19 @@ constexpr auto get(::aa::data_parallel_vector<T, Alloc>&& value) {
 template <size_t I, typename T, typename Alloc>
 constexpr auto get(const ::aa::data_parallel_vector<T, Alloc>&& value) {
   return get<0>(value.template view<I>());
+}
+
+// specializations for data_parallel_vector<T>::reference/const_reference
+
+template <::aa::dp_vector_ref T>
+struct tuple_size<T> : tuple_size<decltype(std::declval<T>().tie())> {};
+
+template <size_t I, ::aa::dp_vector_ref T>
+struct tuple_element<I, T> : tuple_element<I, decltype(std::declval<T>().tie())> {};
+
+template<size_t I>
+constexpr auto& get(::aa::dp_vector_ref auto&& proxy) noexcept {
+  return ::std::get<I>(proxy.tie());
 }
 
 }  // namespace std
