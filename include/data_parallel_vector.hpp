@@ -69,7 +69,10 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     constexpr auto tie() const noexcept {
       return std::tie(static_cast<element_t<Is>&>(std::get<Is>(owner->parts)[index])...);
     }
-
+    template<size_t I>
+    friend constexpr auto& get(const proxy& p) noexcept {
+      return std::get<I>(p.tie());
+    }
     data_parallel_impl* owner;
     size_type index;
 
@@ -169,9 +172,14 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   struct const_proxy {
     // for tuple-like interface specializations
     using aa_const_proxy_tag = int;
+
     // returns tuple of const references to fields of referenced obj
     constexpr auto tie() const noexcept {
       return std::tie(static_cast<const element_t<Is>&>(std::get<Is>(std::as_const(p.owner)->parts)[p.index])...);
+    }
+    template <size_t I>
+    friend constexpr const auto& get(const const_proxy& p) noexcept {
+      return std::get<I>(p.p.tie());
     }
    private:
     proxy p;
@@ -741,10 +749,5 @@ struct tuple_size<T> : tuple_size<decltype(std::declval<T>().tie())> {};
 
 template <size_t I, ::aa::dp_vector_ref T>
 struct tuple_element<I, T> : tuple_element<I, decltype(std::declval<T>().tie())> {};
-
-template<size_t I>
-constexpr auto& get(::aa::dp_vector_ref auto&& proxy) noexcept {
-  return ::std::get<I>(proxy.tie());
-}
 
 }  // namespace std
