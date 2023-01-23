@@ -19,7 +19,7 @@ struct flat_map {
  public:
   constexpr flat_map(std::array<std::pair<Key, Value>, N> arr) {
     // sort by keys
-    std::ranges::sort(arr, [](auto& l, auto& r) { return l.first < r.first; });
+    std::ranges::sort(arr, [](auto& l, auto& r) { return Compare{}(l.first, r.first); });
     auto kb = keys.begin();
     auto kv = values.begin();
     // clang do not supports views like 'keys' now =(
