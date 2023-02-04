@@ -313,7 +313,7 @@ struct vtable_with_metainfo {
   // usage example: you store vtable separatelly and guarantees
   // that ptr_to_value match type in vtable(but dont know which
   // type exactly it is)
-  // returns 'poly_ref<Methods...>
+  // returns 'poly_ref<Methods...>'
   auto create_ref_to(void* ptr_to_value) const noexcept;
 };
 
