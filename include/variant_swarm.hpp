@@ -78,7 +78,8 @@ struct basic_variant_swarm
   template<tt::one_of<Ts...> T, typename... Args>
   constexpr decltype(auto) emplace(Args&&... args) {
     auto [c] = view<T>();
-    constexpr bool emplace_backable = requires { c.emplace_back(std::forward<Args>(args)...); };
+    // decltype(c) here because clang cant 'capture' structured binding...
+    constexpr bool emplace_backable = requires (decltype(c) s) { s.emplace_back(std::forward<Args>(args)...); };
     if constexpr (emplace_backable)
       return c.emplace_back(std::forward<Args>(args)...);
     else
