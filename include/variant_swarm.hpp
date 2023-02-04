@@ -75,6 +75,16 @@ struct basic_variant_swarm
   using inserters_type::erase;
   using inserters_type::insert;
 
+  template<tt::one_of<Ts...> T, typename... Args>
+  constexpr decltype(auto) emplace(Args&&... args) {
+    auto [c] = view<T>();
+    constexpr bool emplace_backable = requires { c.emplace_back(std::forward<Args>(args)...); };
+    if constexpr (emplace_backable)
+      return c.emplace_back(std::forward<Args>(args)...);
+    else
+      return c.emplace(std::forward<Args>(args)...);
+  }
+
   // observe
 
   constexpr bool empty() const noexcept {

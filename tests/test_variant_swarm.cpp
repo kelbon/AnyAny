@@ -16,6 +16,12 @@ using map = std::map<T, std::size_t>;
 int main() {
   std::cout << "start test\n";
   aa::variant_swarm<int, double, std::string> f;
+  aa::variant_swarm<int, double, std::string> f1;
+  f1.emplace<int>(5);
+  f1.emplace<double>(15);
+  f1.emplace<std::string>("hello");
+  if (f1.size() != 3 || f1.count<std::string>() != 1 || f1.empty())
+    return -10;
   if (!f.empty())
     return -1;
   if (f.size() != 0)

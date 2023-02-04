@@ -498,7 +498,18 @@ using Ttvar = std::variant<int, float, double, bool>;
 template<typename T, typename U>
 using acvar_res = decltype(aa::any_cast<T, aa::std_variant_poly_traits>(std::declval<U>()));
 
+template<typename T>
+struct test_method {
+  static int do_invoke(T self, double x) {
+    return self + x;
+  }
+};
 int main() {
+  auto vtable = aa::vtable_for<int, test_method>;
+  int tval = 10;
+  auto tval_ref = vtable.create_ref_to((void*)&tval);
+  if (aa::invoke<test_method>(tval_ref, 15.) != 25)
+    return -222;
   static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
