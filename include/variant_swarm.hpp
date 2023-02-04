@@ -75,6 +75,19 @@ struct basic_variant_swarm
   using inserters_type::erase;
   using inserters_type::insert;
 
+  template<tt::one_of<Ts...> T, typename... Args>
+  constexpr decltype(auto) emplace(Args&&... args) {
+    auto [c] = view<T>();
+    // it is here, because clang cannot 'capture' structured binding into requires...(bug)
+    static_assert(std::is_same_v<container_for<T>&, decltype(c)>);
+    constexpr bool emplace_backable =
+        requires(container_for<T> & s) { s.emplace_back(std::forward<Args>(args)...); };
+    if constexpr (emplace_backable)
+      return c.emplace_back(std::forward<Args>(args)...);
+    else
+      return c.emplace(std::forward<Args>(args)...);
+  }
+
   // observe
 
   constexpr bool empty() const noexcept {

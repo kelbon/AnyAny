@@ -305,6 +305,16 @@ struct vtable_with_metainfo {
   descriptor_t type_descriptor;
   const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
   vtable<Methods...> table;
+
+  // USE ONLY IF YOU KNOW WHAT ARE YOU DOING
+  // preconditions:
+  // * ptr_to_value points to value of type for which vtable was created,
+  // * ptr_to_value != nullptr
+  // usage example: you store vtable separatelly and guarantees
+  // that ptr_to_value match type in vtable(but dont know which
+  // type exactly it is)
+  // returns 'poly_ref<Methods...>'
+  auto create_ref_to(void* ptr_to_value) const noexcept;
 };
 
 namespace noexport {
@@ -384,6 +394,9 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   friend struct const_poly_ptr;
   template <TTA...>
   friend struct const_poly_ref;
+  template<TTA...>
+  friend struct vtable_with_metainfo;
+
   // uninitialized for pointer implementation
   constexpr poly_ref(std::nullptr_t) noexcept : vtable_ptr{nullptr}, value_ptr{nullptr} {
   }
@@ -426,6 +439,15 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
     return noexport::get_type_descriptor(vtable_ptr);
   }
 };
+
+template <TTA... Methods>
+auto vtable_with_metainfo<Methods...>::create_ref_to(void* ptr_to_value) const noexcept {
+  assert(ptr_to_value != nullptr);
+  poly_ref<Methods...> result(nullptr);
+  result.value_ptr = ptr_to_value;
+  result.vtable_ptr = std::addressof(this->table);
+  return result;
+}
 
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
@@ -551,6 +573,9 @@ struct poly_ptr {
 
   constexpr void* raw() const noexcept {
     return poly_.value_ptr;
+  }
+  constexpr const vtable<Methods...>* raw_vtable_ptr() const noexcept {
+    return poly_.vtable_ptr;
   }
   constexpr bool has_value() const noexcept {
     return poly_.value_ptr != nullptr;
