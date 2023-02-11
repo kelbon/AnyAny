@@ -415,7 +415,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     return iterator(this, size());
   }
   constexpr const_iterator end() const noexcept {
-    return iterator(this, size());
+    return const_iterator(this, size());
   }
   constexpr const_iterator cbegin() const noexcept {
     return const_iterator(this, 0);
@@ -523,10 +523,12 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   // there are no operator <=> because its ambigious how to compare
   // by first field, second etc? lexicographical compare like vector<value_type>?
   // But we need to construct them first, which is inefficient
-
-  constexpr bool operator==(const data_parallel_impl&) const
+  // note: compares T values by fields
+  constexpr bool operator==(const data_parallel_impl& other) const
     requires((std::equality_comparable<element_t<Is>> && ...))
-  = default;
+  {
+    return std::ranges::equal(*this, other);
+  }
 
   // MODIFIERS
  private:
@@ -675,10 +677,12 @@ namespace aa {
 // * aggregate with C array in it is BAD(use std::array)
 template <typename T, typename Alloc = std::allocator<T>>
 struct data_parallel_vector
-    : noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
+    : noexport::data_parallel_impl<T, Alloc,
+                                   std::make_index_sequence<noexport::tl_traits::template tuple_size<T>>> {
  private:
   using tl_traits = noexport::tl_traits;
-  using base_t = noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<tl_traits::template tuple_size<T>>>;
+  using base_t =
+      noexport::data_parallel_impl<T, Alloc, std::make_index_sequence<tl_traits::template tuple_size<T>>>;
 
  public:
   using base_t::base_t;
@@ -700,7 +704,9 @@ struct data_parallel_vector
     a.swap(b);
   }
 
-  constexpr bool operator==(const data_parallel_vector&) const = default;
+  constexpr bool operator==(const data_parallel_vector&) const
+    requires(std::equality_comparable<base_t>)  // weird gcc behavior with = default operators
+  = default;
 };
 // helper concept
 template<typename T>
