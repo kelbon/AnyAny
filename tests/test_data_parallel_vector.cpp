@@ -13,6 +13,34 @@
 #define ASSERT(...)   \
   if (!(__VA_ARGS__)) \
     throw "false";
+struct mass {
+  float value;
+};
+struct position {
+  float value;
+};
+struct velocity {
+  float value;
+};
+struct shift {
+  float value;
+};
+struct entity_id {
+  int i;
+};
+struct physic_obj {
+  entity_id id;
+  mass m;
+  position pos;
+  velocity speed;
+  shift push;
+};
+
+void compilable_test() {
+  aa::data_parallel_vector<physic_obj> parts;
+  auto [a, b, c, d, e] = parts;
+  static_assert(aa::noexport::fields_count_v<physic_obj> == 5);
+}
 
 template <typename T, typename Alloc>
 void test_data_parallel(Alloc a, auto it, auto sent) {
@@ -255,6 +283,7 @@ void algo_test() {
 
 int main() {
   std::cout << "start test\n";
+  compilable_test();
   static_assert(aa::noexport::fields_count_v<field_4> == 5);
   static_assert(std::is_same_v<aa::noexport::field_type_t<1, field_4>, float>);
   algo_test();

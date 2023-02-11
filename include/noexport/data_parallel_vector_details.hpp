@@ -18,8 +18,8 @@ using any_type_t = any_type;
 // but i stil uusing is_constructible_v because of types which accept std::initalizer_list
 // ( because it would break code, it accept any count of arguments)
 
-// clang do not support this C++20 featuure yet(almost 2023 now...)
-#if __cpp_aggregate_paren_init >= 201902L
+// MSVC intrinsic for is_constructible has bug, nice(no)
+#if __cpp_aggregate_paren_init >= 201902L && !defined(_MSC_VER)
 template <typename T, typename... Ts>
 constexpr bool is_constructible_v = std::is_constructible_v<T, Ts...>;
 #else
