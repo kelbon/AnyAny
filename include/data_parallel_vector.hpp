@@ -23,6 +23,7 @@
 #include <cassert>
 #include <compare>
 #include <span>
+#include <concepts>
 
 #include "noexport/data_parallel_vector_details.hpp"
 
@@ -523,7 +524,9 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   // by first field, second etc? lexicographical compare like vector<value_type>?
   // But we need to construct them first, which is inefficient
 
-  constexpr bool operator==(const data_parallel_impl&) const = default;
+  constexpr bool operator==(const data_parallel_impl&) const
+    requires((std::equality_comparable<element_t<Is>> && ...))
+  = default;
 
   // MODIFIERS
  private:
