@@ -1,5 +1,9 @@
 #pragma once
 
+#include <vector>
+#include <ranges>
+#include <tuple>
+
 namespace aa::noexport {
 
 // binds std::allocator so 'vector' has only one template arg(or error on clang)
