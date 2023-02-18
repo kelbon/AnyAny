@@ -80,10 +80,10 @@ struct null_memory_resource {
 struct new_delete_resource_t {
   void* allocate(std::size_t sz, std::size_t align = alignof(std::max_align_t)) const {
     // fuck msvc if this is not working
-    return ::operator new(sz, static_cast<std::align_val_t>(align));
+    return ::operator new(sz, std::align_val_t(align));
   }
   void deallocate(void* p, std::size_t sz, std::size_t align = alignof(std::max_align_t)) const noexcept {
-    ::operator delete(p, sz, static_cast<std::align_val_t>(align));
+    ::operator delete(p, sz, std::align_val_t(align));
   }
   constexpr bool operator==(const new_delete_resource_t& other) const noexcept {
     return this == &other;
