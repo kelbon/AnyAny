@@ -38,6 +38,16 @@ struct physic_obj {
 
 void compilable_test() {
   aa::data_parallel_vector<physic_obj> parts;
+  auto [aa, bb, cc, dd] = parts.view<const entity_id, const position, mass, shift>();
+  static_assert(std::is_same_v<decltype(aa), std::span<const entity_id>> &&
+                std::is_same_v<decltype(bb), std::span<const position>> &&
+                std::is_same_v<decltype(cc), std::span<mass>> &&
+                std::is_same_v<decltype(dd), std::span<shift>>);
+  auto [aaa, bbb, ccc, ddd] = std::as_const(parts).view<const entity_id, const position, mass, shift>();
+  static_assert(std::is_same_v<decltype(aaa), std::span<const entity_id>> &&
+                std::is_same_v<decltype(bbb), std::span<const position>> &&
+                std::is_same_v<decltype(ccc), std::span<const mass>> &&
+                std::is_same_v<decltype(ddd), std::span<const shift>>);
   auto [a, b, c, d, e] = parts;
   static_assert(aa::noexport::fields_count_v<physic_obj> == 5);
 }

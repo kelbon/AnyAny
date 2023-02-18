@@ -463,19 +463,21 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
  private:
   template <typename X>
   std::span<X> get_span() noexcept {
-    auto& c = std::get<container_for_t<X>>(parts);
+    auto& c = std::get<container_for_t<std::remove_const_t<X>>>(parts);
     if constexpr (std::is_same_v<bool, X>)
       return std::span<bool>(reinterpret_cast<bool*>(c.data()), c.size());
+    else if constexpr (std::is_same_v<const bool, X>)
+      return std::span<const bool>(reinterpret_cast<const bool*>(c.data()), c.size());
     else
-      return std::span(c);
+      return std::span<X>(c);
   }
   template <typename X>
   std::span<const X> get_span() const noexcept {
-    auto& c = std::get<container_for_t<X>>(parts);
-    if constexpr (std::is_same_v<bool, X>)
-      return std::span<bool>(reinterpret_cast<const bool*>(c.data()), c.size());
+    auto& c = std::get<container_for_t<std::remove_const_t<X>>>(parts);
+    if constexpr (std::is_same_v<bool, std::remove_const_t<X>>)
+      return std::span<const bool>(reinterpret_cast<const bool*>(c.data()), c.size());
     else
-      return std::span(c);
+      return std::span<const X>(c);
   }
   template <std::size_t I>
   auto get_span() noexcept {
@@ -489,12 +491,20 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   auto get_span() const noexcept {
     auto& c = std::get<I>(parts);
     if constexpr (std::is_same_v<bool, typename Traits::template tuple_element<I, value_type>>)
-      return std::span<bool>(reinterpret_cast<const bool*>(c.data()), c.size());
+      return std::span<const bool>(reinterpret_cast<const bool*>(c.data()), c.size());
     else
       return std::span(c);
   }
 
  public:
+  template <typename X>
+  constexpr std::span<X> view_only() noexcept {
+    return get_span<X>();
+  }
+  template<typename X>
+  constexpr std::span<const X> view_only() const noexcept {
+    return get_span<X>();
+  }
   template <typename... Types>
   constexpr auto view() noexcept {
     return std::tuple(get_span<Types>()...);
