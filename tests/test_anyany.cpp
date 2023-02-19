@@ -504,7 +504,45 @@ struct test_method {
     return self + x;
   }
 };
+
+bool test_cmp() {
+  int v1 = 10;
+  int v2 = 11;
+  {
+    aa::any_with<aa::equal_to>::ref ref = v1;
+    aa::any_with<aa::equal_to>::const_ref cref = v2;
+    if (ref != ref || cref != cref || ref == cref)
+      return false;
+  }
+  {
+    using test_t = aa::any_with<aa::equal_to, aa::spaceship>;
+    test_t::ref ref = v1;
+    aa::any_with<aa::equal_to>::ref ref1 = v1;
+    test_t::const_ref cref = v2;
+    if (ref != ref || cref != cref || ref == cref)
+      return false;
+    using r_t = decltype(ref1);
+    if (ref1 != r_t(ref) || r_t(ref) != ref1 || r_t(ref1) == cref.const_casted() ||
+        cref.const_casted() == r_t(ref1))
+      return false;
+    if (ref >= cref)
+      return false;
+    if (cref.const_casted() != v2 || ref != v1)
+      return false;
+    if (!(cref > 5))
+      return false;
+  }
+  {
+    aa::any_with<aa::spaceship>::ref ref = v1;
+    aa::any_with<aa::spaceship>::const_ref cref = v2;
+    if (ref != ref || cref != cref || ref == cref)
+      return false;
+  }
+  return true;
+}
 int main() {
+  if (!test_cmp())
+    return -100500;
   auto vtable = aa::vtable_for<int, test_method>;
   int tval = 10;
   auto tval_ref = vtable.create_ref_to((void*)&tval);

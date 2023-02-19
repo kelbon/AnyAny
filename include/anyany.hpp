@@ -441,36 +441,34 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
 
  private:
   template <TTA Method>
-  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
+  static consteval bool has_method() {
+    return vtable<Methods...>::template has_method<Method>;
+  }
 
  public:
-// defines operator== and operator spaceship for TYPENAME,
-// if it has methods equal_to/spaceship in template arguments
-#define COMPARASION_IMPL(TYPENAME)                                                                  \
-  [[nodiscard]] bool operator==(const TYPENAME& other) const                                        \
-    requires(has_method<equal_to> || has_method<spaceship>)                                         \
-  {                                                                                                 \
-    auto desc = type_descriptor();                                                                  \
-    if (desc != other.type_descriptor())                                                            \
-      return false;                                                                                 \
-    if (desc == descriptor_v<void>) [[unlikely]]                                                    \
-      return true;                                                                                  \
-    if constexpr (has_method<equal_to>)                                                             \
-      return invoke_unsafe<equal_to>(*this, other.value_ptr);                                       \
-    else                                                                                            \
-      return invoke_unsafe<spaceship>(*this, other.value_ptr) == std::partial_ordering::equivalent; \
-  }                                                                                                 \
-  std::partial_ordering operator<=>(const TYPENAME& other) const                                    \
-    requires(has_method<spaceship>)                                                                 \
-  {                                                                                                 \
-    auto desc = type_descriptor();                                                                  \
-    if (desc != other.type_descriptor())                                                            \
-      return std::partial_ordering::unordered;                                                      \
-    if (desc == descriptor_v<void>) [[unlikely]]                                                    \
-      return std::partial_ordering::equivalent;                                                     \
-    return invoke_unsafe<spaceship>(*this, other.value_ptr);                                        \
+  // references are equal if they reference to equal objects
+  [[nodiscard]] bool operator==(const poly_ref& other) const
+    requires(has_method<equal_to>() || has_method<spaceship>())
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
+      return false;
+    assert(desc != descriptor_v<void>);
+    if constexpr (has_method<equal_to>())
+      return vtable_ptr->template invoke<equal_to>(value_ptr, static_cast<const void*>(other.value_ptr));
+    else
+      return vtable_ptr->template invoke<spaceship>(value_ptr, static_cast<const void*>(other.value_ptr)) ==
+             std::partial_ordering::equivalent;
   }
-  COMPARASION_IMPL(poly_ref)
+  std::partial_ordering operator<=>(const poly_ref& other) const
+    requires(has_method<spaceship>())
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
+      return std::partial_ordering::unordered;
+    assert(desc != descriptor_v<void>);
+    return vtable_ptr->template invoke<spaceship>(value_ptr, static_cast<const void*>(other.value_ptr));
+  }
 };
 
 template <TTA... Methods>
@@ -549,13 +547,42 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   descriptor_t type_descriptor() const noexcept {
     return noexport::get_type_descriptor(vtable_ptr);
   }
+  // unsafe operation, similar to just const_cast
+  poly_ref<Methods...> const_casted() const noexcept {
+    poly_ref<Methods...> me = nullptr;
+    me.value_ptr = const_cast<void*>(value_ptr);
+    me.vtable_ptr = vtable_ptr;
+    return me;
+  }
 
  private:
   template <TTA Method>
-  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
+  static consteval bool has_method() {
+    return vtable<Methods...>::template has_method<Method>;
+  }
 
  public:
-  COMPARASION_IMPL(const_poly_ref)
+  // references are equal if they reference to equal objects
+  [[nodiscard]] bool operator==(const poly_ref<Methods...>& ref) const
+    requires(has_method<equal_to>() || has_method<spaceship>())
+  {
+    return const_casted() == ref;
+  }
+  [[nodiscard]] bool operator==(const const_poly_ref& ref) const
+    requires(has_method<equal_to>() || has_method<spaceship>())
+  {
+    return const_casted() == ref.const_casted();
+  }
+  std::partial_ordering operator<=>(const poly_ref<Methods...> ref) const
+    requires(has_method<spaceship>())
+  {
+    return const_casted() <=> ref;
+  }
+  std::partial_ordering operator<=>(const const_poly_ref& ref) const
+    requires(has_method<spaceship>())
+  {
+    return const_casted() <=> ref.const_casted();
+  }
 };
 
 template <TTA... Methods>
@@ -742,6 +769,10 @@ struct const_poly_ptr {
   // returns descriptor for void if *this == nullptr
   descriptor_t type_descriptor() const noexcept {
     return has_value() ? poly_.type_descriptor() : descriptor_t{};
+  }
+  // unsafe operation, similar to just const_cast
+  poly_ptr<Methods...> const_casted() const noexcept {
+    return &poly_.const_casted();
   }
 };
 
@@ -1108,8 +1139,30 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   // * it will be less effective(useless branching) if you 90% sure its this type
   // * it will cause compilation time, obj file increasing
 
- COMPARASION_IMPL(basic_any)
- #undef COMPARASION_IMPL
+  [[nodiscard]] bool operator==(const basic_any& other) const
+    requires(has_method<equal_to> || has_method<spaceship>)
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
+      return false;
+    if (desc == descriptor_v<void>) [[unlikely]]
+      return true;
+    if constexpr (has_method<equal_to>)
+      return invoke_unsafe<equal_to>(*this, other.value_ptr);
+    else
+      return invoke_unsafe<spaceship>(*this, other.value_ptr) == std::partial_ordering::equivalent;
+  }
+
+  std::partial_ordering operator<=>(const basic_any& other) const
+    requires(has_method<spaceship>)
+  {
+    auto desc = type_descriptor();
+    if (desc != other.type_descriptor())
+      return std::partial_ordering::unordered;
+    if (desc == descriptor_v<void>) [[unlikely]]
+      return std::partial_ordering::equivalent;
+    return invoke_unsafe<spaceship>(*this, other.value_ptr);
+  }
  private:
 
   // precodition - has_value() == false

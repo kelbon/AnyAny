@@ -4,13 +4,7 @@
 
 #include <atomic>
 #include <new>
-
-namespace aa::noexport {
-
-template <typename>
-constexpr inline bool always_true = true;
-
-}
+#include <bit>
 
 namespace aa::pmr {
 // TODO - беру мелкий пример из стд либы, переписываю ресурс сюда в невиртуальной форме,
@@ -21,14 +15,16 @@ namespace aa::pmr {
 // TODO - сравнение сгенерированного кода/бенчмарки
 
 template <typename T>
-concept memory_resource = std::equality_comparable<T> &&
-                          requires(T value, void* p, std::size_t sz, std::size_t align) {
-                            { value.allocate(sz) } -> std::same_as<void*>;
-                            { value.allocate(sz, align) } -> std::same_as<void*>;
-                            { value.deallocate(p, sz) } -> std::same_as<void>;
-                            { value.deallocate(p, sz, align) } -> std::same_as<void>;
-                            { value == value } noexcept -> std::convertible_to<bool>;
-                          };
+concept memory_resource =
+    std::equality_comparable<T> && requires(T value, void* p, std::size_t sz, std::size_t align) {
+                                     { value.allocate(sz) } -> std::same_as<void*>;
+                                     { value.allocate(sz, align) } -> std::same_as<void*>;
+                                     { value.deallocate(p, sz) } -> std::same_as<void>;
+                                     { value.deallocate(p, sz, align) } -> std::same_as<void>;
+                                     { value == value } -> std::convertible_to<bool>;
+                                     // must be noexcept/ but for any_memory_resource it is not possible to
+                                     // declare
+                                   };
 
 // anyany Methods
 
@@ -80,10 +76,10 @@ struct null_memory_resource {
 struct new_delete_resource_t {
   void* allocate(std::size_t sz, std::size_t align = alignof(std::max_align_t)) const {
     // fuck msvc if this is not working
-    return ::operator new(sz, std::align_val_t(align));
+    return ::operator new(sz, std::bit_cast<std::align_val_t>(align));
   }
   void deallocate(void* p, std::size_t sz, std::size_t align = alignof(std::max_align_t)) const noexcept {
-    ::operator delete(p, sz, std::align_val_t(align));
+    ::operator delete(p, sz, std::bit_cast<std::align_val_t>(align));
   }
   constexpr bool operator==(const new_delete_resource_t& other) const noexcept {
     return this == &other;
@@ -98,7 +94,7 @@ struct new_delete_res_t {
 };
 
 }  // namespace noexport
-
+// TODO возвращать сразу аллокатор?(чтобы он знал из чего создан в точке создания...)
 constexpr inline any_memory_resource::ref new_delete_resource() noexcept {
   // there are no mutable operations for this type, so its correct
   return *const_cast<new_delete_resource_t*>(&noexport::new_delete_res_t::value);
@@ -122,6 +118,17 @@ inline any_memory_resource::ref set_default_resource(any_memory_resource::ref re
 
 // allocator
 
+// TODO всё же нужно ресурс базед видимо... Хм. И интерфейс нужно другой нежели у стандартных немного
+// в частности как можно ближе доносить реальный тип без стирания(в идеале стирания либо вовсе нет, либо только на входе в создание аллокатора)
+
+// TODO
+// Может ресурс ещё с N штуками ресурсов под 1 2 4 8 и т.д. байт + фалбек?
+// template<memory_resource Fallback>
+// struct monothonic_buffer_resource {
+// ...
+// };
+// TODO крч компилятор не оптимизирует, так что нужно типизировать, а на ребинде потенциально делать any?
+// основная проблема это дефолт конструктор
 template <typename T = std::byte>
 struct polymorphic_allocator {
  private:
@@ -136,7 +143,9 @@ struct polymorphic_allocator {
   constexpr polymorphic_allocator(const polymorphic_allocator<Other>& other) noexcept
       : _res(other.resource()) {
   }
-  constexpr polymorphic_allocator(any_memory_resource::ref res) noexcept : _res(res) {
+  // TODO может быть borrowed ресурс или чет такое, в общем те которые empty можно и на rvalue брать
+  template<memory_resource R>
+  constexpr polymorphic_allocator(R& res) noexcept : _res(res) {
   }
   void operator=(const polymorphic_allocator&) = delete;
 
