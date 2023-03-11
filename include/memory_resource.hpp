@@ -7,12 +7,6 @@
 #include <bit>
 
 namespace aa::pmr {
-// TODO - беру мелкий пример из стд либы, переписываю ресурс сюда в невиртуальной форме,
-// TODO - any_memory_resource на аниани
-// TODO - сделать аллокатор с шаблонным ресурсом (нужно как то сделать поинтер на него... трейты или чет
-// такое)
-// TODO - вставить в аллокатор с предыдущего шага any_memory_resource
-// TODO - сравнение сгенерированного кода/бенчмарки
 
 template <typename T>
 concept memory_resource =
@@ -22,8 +16,6 @@ concept memory_resource =
                                      { value.deallocate(p, sz) } -> std::same_as<void>;
                                      { value.deallocate(p, sz, align) } -> std::same_as<void>;
                                      { value == value } -> std::convertible_to<bool>;
-                                     // must be noexcept/ but for any_memory_resource it is not possible to
-                                     // declare
                                    };
 
 // anyany Methods
@@ -63,58 +55,30 @@ using any_memory_resource = aa::any_with<Allocate, Deallocate, equal_to>;
 // never_used_resource
 
 struct null_memory_resource {
-  [[noreturn]] void* allocate(std::size_t, std::size_t = alignof(std::max_align_t)) const {
+  [[noreturn]] static void* allocate(std::size_t, std::size_t = alignof(std::max_align_t)) {
     throw std::bad_alloc{};
   }
-  // TODO? не писать везде = alignof(std::max_align_t) и вместо этого внутри аниани метода вызывать с 3 аргументами?
-  void deallocate(void*, std::size_t, std::size_t = alignof(std::max_align_t)) const noexcept {
+  // TODO? не писать везде = alignof(std::max_align_t) и вместо этого внутри аниани метода вызывать с 3
+  // аргументами?
+  static void deallocate(void*, std::size_t, std::size_t = alignof(std::max_align_t)) noexcept {
   }
   constexpr bool operator==(const null_memory_resource& other) const noexcept {
     return this == &other;
   }
 };
-struct new_delete_resource_t {
-  void* allocate(std::size_t sz, std::size_t align = alignof(std::max_align_t)) const {
+struct new_delete_resource {
+  static void* allocate(std::size_t sz, std::size_t align = alignof(std::max_align_t)) {
     // fuck msvc if this is not working
     return ::operator new(sz, std::bit_cast<std::align_val_t>(align));
   }
-  void deallocate(void* p, std::size_t sz, std::size_t align = alignof(std::max_align_t)) const noexcept {
+  static void deallocate(void* p, std::size_t sz,
+                         std::size_t align = alignof(std::max_align_t)) noexcept {
     ::operator delete(p, sz, std::bit_cast<std::align_val_t>(align));
   }
-  constexpr bool operator==(const new_delete_resource_t& other) const noexcept {
+  constexpr bool operator==(const new_delete_resource& other) const noexcept {
     return this == &other;
   }
 };
-
-namespace noexport {
-
-// workaround for static constexpr variable in constexpr function before C++23
-struct new_delete_res_t {
-  static constexpr inline new_delete_resource_t value = {};
-};
-
-}  // namespace noexport
-// TODO возвращать сразу аллокатор?(чтобы он знал из чего создан в точке создания...)
-constexpr inline any_memory_resource::ref new_delete_resource() noexcept {
-  // there are no mutable operations for this type, so its correct
-  return *const_cast<new_delete_resource_t*>(&noexport::new_delete_res_t::value);
-}
-
-namespace noexport {
-
-struct default_res_t {
-  static inline constinit std::atomic<any_memory_resource::ptr> value =
-      any_memory_resource::ptr(&new_delete_resource());
-};
-
-}  // namespace noexport
-
-inline any_memory_resource::ref get_default_resource() noexcept {
-  return *noexport::default_res_t::value.load(std::memory_order_acquire); // acquire
-}
-inline any_memory_resource::ref set_default_resource(any_memory_resource::ref ref) noexcept {
-  return *noexport::default_res_t::value.exchange(&ref, std::memory_order_acq_rel);
-}
 
 // allocator
 
@@ -124,28 +88,34 @@ inline any_memory_resource::ref set_default_resource(any_memory_resource::ref re
 // TODO
 // Может ресурс ещё с N штуками ресурсов под 1 2 4 8 и т.д. байт + фалбек?
 // template<memory_resource Fallback>
+// span resource
 // struct monothonic_buffer_resource {
 // ...
 // };
+// TODO не писать свои ресурсы, а сделать только стирание и аллокатор с шаблонным ресурсом, так чтобы стандартные
+// ресурсы можно было использовать(но компилятор понимал, что это их реальный тип и можно девиртуализировать)
+// + поддержка allocate atleast
 // TODO крч компилятор не оптимизирует, так что нужно типизировать, а на ребинде потенциально делать any?
 // основная проблема это дефолт конструктор
-template <typename T = std::byte>
+template <typename T, memory_resource R>
 struct polymorphic_allocator {
  private:
-  any_memory_resource::ref _res = get_default_resource();
+  [[no_unique_address]] R _res;
 
  public:
   using value_type = T;
 
-  constexpr polymorphic_allocator() noexcept = default;
+  constexpr polymorphic_allocator() noexcept
+    requires(std::default_initializable<R>)
+  = default;
   constexpr polymorphic_allocator(const polymorphic_allocator&) = default;
   template <typename Other>
-  constexpr polymorphic_allocator(const polymorphic_allocator<Other>& other) noexcept
+  constexpr polymorphic_allocator(const polymorphic_allocator<Other, R>& other) noexcept
       : _res(other.resource()) {
   }
-  // TODO может быть borrowed ресурс или чет такое, в общем те которые empty можно и на rvalue брать
-  template<memory_resource R>
-  constexpr polymorphic_allocator(R& res) noexcept : _res(res) {
+  template<typename T>
+    requires(std::convertible_to<R, T&&>)
+  constexpr polymorphic_allocator(T&& res) noexcept : _res(std::forward<T>(res)) {
   }
   void operator=(const polymorphic_allocator&) = delete;
 
@@ -156,22 +126,25 @@ struct polymorphic_allocator {
   void deallocate(T* p, std::size_t n) {
     resource().deallocate(p, n * sizeof(T), alignof(T));
   }
-  constexpr any_memory_resource::ref resource() const noexcept {
+  constexpr R& resource() noexcept {
+    return _res;
+  }
+  constexpr const R& resource() const noexcept {
     return _res;
   }
   // TODO остальные методы
+  // result 
   polymorphic_allocator select_on_container_copy_construction() const noexcept {
     return {};
   }
   bool operator==(const polymorphic_allocator&) const = default;
 };
 
-
 // TODO
-template<>
-struct polymorphic_allocator<std::byte> {
-
-};
+//template<>
+//struct polymorphic_allocator<std::byte> {
+//
+//};
 // TODO static assert any_memory_resource::ref is a memory resource
 
 }  // namespace aa::pmr

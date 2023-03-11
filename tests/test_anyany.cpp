@@ -540,7 +540,75 @@ bool test_cmp() {
   }
   return true;
 }
+// TODO алиасы cref / cptr вместо const_poly_ptr ? И внутри аниани и снаружи
+// даже мб сделать это именами, а нынешние const_poly_ptr и проч. алиасами
+// и хочется таки поддержку нескольких методов... Может быть как-то через вручную созданный массив поинтеров?
+// И специализацию для плагина, чтобы получать интерфейс... Да и хотелось бы шаблонные "Методы" легче
+// создавать
+// ...
+//
+// И ещё с аллокатором проблемы, тоже хотелось бы улучшить(copy_with например)
+// TODO - проверить как поведёт себя компилятор если в одной ветке if constexpr функция корутина, а в другой
+// нет
+// TODO - сделать на конструкторах requires invocable Method<A>::do_invoke(declval<T>()) ??? таким образом
+// если там есть ограничение оно будет подхвачено
+// TODO чек работает ли scoped allocator adaptor с аниани(выбирается ли нужный конструктор)
+
+#define trait_impl(CONST, NAME, ...) \
+template<typename> \
+struct make_method_##NAME {};\
+\
+template<typename Ret, typename... Args>\
+struct make_method_##NAME<Ret(Args...)> {\
+    template <typename Self>\
+    struct NAME {\
+      static Ret do_invoke(CONST Self& self, Args... args)                             \
+        requires requires {                                                            \
+                   { self.NAME(static_cast<Args&&>(args)...) }->std::convertible_to<Ret>;                                                     \
+                 }                                                                     \
+      {\
+        return self.NAME(static_cast<Args&&>(args)...);\
+      }\
+    };\
+    template <::std::same_as<::aa::interface_t> Self>\
+    struct NAME<Self> {\
+    static Ret do_invoke(CONST Self& self, Args... args) {\
+      return self.NAME(static_cast<Args&&>(args)...);\
+    }\
+    template <typename CRTP>\
+    struct plugin {\
+      Ret NAME(Args... args) CONST {\
+        return ::aa::invoke_unsafe<make_method_##NAME<Ret(Args...)>::template NAME>(                         \
+                                           *static_cast<CONST CRTP*>(this),\
+                                                                              static_cast<Args&&>(args)...);\
+      }\
+    };\
+    };\
+};\
+template<typename T>\
+using NAME = make_method_##NAME<__VA_ARGS__>::template NAME<T>;
+#define trait(NAME, ... /*Signature like void(int, float)*/) trait_impl(, NAME, __VA_ARGS__)
+#define const_trait(NAME, ... /*Signature like void(int, float)*/) trait_impl(const, NAME, __VA_ARGS__)
+
+trait(hik, void(int));
+    // TODO сделать максимально притивный макрос принимающий типы которые нужно принять и название метода, генерящий метод с плагином
+
+// TODO перейти на сфинае с лямбдой вместо концепта у do_invoke
+// пример визитора на ани виз(из лямбды например), было бы классно https://www.youtube.com/watch?v=PEcy1vYHb8A&ab_channel=CppCon
+
+struct hihi {
+  void hik(int) const {
+  }
+};
+// TODO при sizeof SooS <= sizeof(size_t) можно аллоцировать больше и хранить там размер
+// TODO пример operator+ какой то, который через plugin реализован и принимает CRTP&, проверяет type_descriptor и т.д.
+// TODO? может быть alignas(max_align_t) заменить на alignas(void*), чтобы выигрывать в некоторых ситуация на линуксе(получить 24 байта размер)
+// и почему блять на мсвц 32 ?! Вообще ничерта непонятно
 int main() {
+    // TODO check operator-> у поинтеров
+ // static_assert(satisfies_Hik<hihi> && !satisfies_Hik<int>);
+  aa::basic_any_with<std::allocator<std::byte>, 8, hik> hmda = hihi{};
+  hmda.hik(5);
   if (!test_cmp())
     return -100500;
   auto vtable = aa::vtable_for<int, test_method>;
@@ -606,6 +674,7 @@ int main() {
 
   std::atomic<aa::poly_ptr<>> a;
   std::atomic<aa::const_poly_ptr<>> afff;
+  (void)afff;
   static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
   static_assert(std::is_trivially_copyable_v<aa::const_poly_ref<>>);
   aa::poly_ref<> refa = a;
