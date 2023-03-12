@@ -522,12 +522,12 @@ bool test_cmp() {
     if (ref != ref || cref != cref || ref == cref)
       return false;
     using r_t = decltype(ref1);
-    if (ref1 != r_t(ref) || r_t(ref) != ref1 || r_t(ref1) == cref.const_casted() ||
-        cref.const_casted() == r_t(ref1))
+    if (ref1 != r_t(ref) || r_t(ref) != ref1 || r_t(ref1) == *aa::const_pointer_cast(&cref) ||
+        *aa::const_pointer_cast(&cref) == r_t(ref1))
       return false;
     if (ref >= cref)
       return false;
-    if (cref.const_casted() != v2 || ref != v1)
+    if (*aa::const_pointer_cast(&cref) != v2 || ref != v1)
       return false;
     if (!(cref > 5))
       return false;
