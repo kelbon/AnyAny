@@ -599,6 +599,7 @@ struct ptr {
   }
   // from mutable pointer enable_if removes potential ambigious
   template <not_const_type T, typename = std::enable_if_t<do_invokable<T, Methods...>>>
+    requires(!any_x<T>)
   constexpr ptr(T* ptr) noexcept {
     poly_.value_ptr = ptr;
     poly_.vtable_ptr = addr_vtable_for<T, Methods...>;
@@ -686,6 +687,7 @@ struct cptr {
   }
   // from pointer to value
   template <typename T, typename = std::enable_if_t<do_invokable<T, Methods...>>>
+    requires(!any_x<T>)
   constexpr cptr(const T* ptr) noexcept {
     poly_.value_ptr = ptr;
     // if ptr == nullptr no matter what stored in vtable_ptr and i dont want branching here
