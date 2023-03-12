@@ -274,27 +274,25 @@ using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template me
 // enables std::hash specialization for polymorphic value and reference
 template <typename T>
 struct hash {
-  static auto do_invoke(const T& self) -> decltype(std::hash<T>{}(self)) {
+  static size_t do_invoke(const T& self) {
     return std::hash<T>{}(self);
   }
 };
 
 // enables operator== for any_with
-template <typename T>
+template <std::equality_comparable T>
 struct equal_to {
-  static bool do_invoke(const T& first, const void* second) requires(std::equality_comparable<T>) {
+  static bool do_invoke(const T& first, const void* second) {
     return first == *reinterpret_cast<const T*>(second);
   }
 };
 
 // enables operator<=> and operator== for any_with
-template <typename T>
+template <std::three_way_comparable T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static std::partial_ordering do_invoke(const T& first, const void* second)
-    requires(std::three_way_comparable<T>)
-  {
+  static std::partial_ordering do_invoke(const T& first, const void* second){
     return first <=> *reinterpret_cast<const T*>(second);
   }
 };
