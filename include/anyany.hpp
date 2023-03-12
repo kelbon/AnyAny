@@ -20,6 +20,7 @@
 #include <cstddef>      // max_align_t
 #include <optional>     // for type_switch
 #include <functional>   // std::invoke
+#include <compare>
 
 #include "type_descriptor.hpp"
 #include "noexport/anyany_details.hpp"
@@ -34,7 +35,13 @@ namespace aa {
 // this means all methods must be specializable for interface_t
 // typical error - concept on Method's template argument, which is false for interface_t
 // (in this case you can explciitly specialize Method for interface_t)
-struct interface_t {};
+struct interface_t {
+  // these operators just for satisfying concepts of equal_to/spaceship/call methods
+  constexpr bool operator==(const interface_t&) const noexcept;
+  constexpr std::strong_ordering operator<=>(const interface_t&) const noexcept;
+  constexpr void operator()(auto&&...) noexcept;
+  constexpr void operator()(auto&&...) const noexcept;
+};
 
 // ######################## explicit_interface support ########################
 
@@ -267,7 +274,7 @@ using copy = copy_with<std::allocator<std::byte>, default_any_soos>::template me
 // enables std::hash specialization for polymorphic value and reference
 template <typename T>
 struct hash {
-  static size_t do_invoke(const T& self) {
+  static auto do_invoke(const T& self) -> decltype(std::hash<T>{}(self)) {
     return std::hash<T>{}(self);
   }
 };
@@ -275,7 +282,7 @@ struct hash {
 // enables operator== for any_with
 template <typename T>
 struct equal_to {
-  static bool do_invoke(const T& first, const void* second) {
+  static bool do_invoke(const T& first, const void* second) requires(std::equality_comparable<T>) {
     return first == *reinterpret_cast<const T*>(second);
   }
 };
@@ -285,7 +292,9 @@ template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static std::partial_ordering do_invoke(const T& first, const void* second) {
+  static std::partial_ordering do_invoke(const T& first, const void* second)
+    requires(std::three_way_comparable<T>)
+  {
     return first <=> *reinterpret_cast<const T*>(second);
   }
 };
@@ -469,7 +478,6 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   }
 };
 
-// TODO const cast as free function? transmutate for basic_any
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
 template<TTA... Methods>
@@ -500,7 +508,6 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   // cannot implicitly rebind reference
   void operator=(auto&&) = delete;
 
-  // TODO check что не шадоувит копи конструктор
   // from non-polymorphic const reference
   template <do_invokable<Methods...> T>
     requires(!any_x<T>)
@@ -1108,7 +1115,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   // but:
   // * it will be less effective(useless branching) if you 90% sure its this type
   // * it will cause compilation time, obj file increasing
-  // TODO как эффективное сравнение с другими типами намутить хм...
   [[nodiscard]] bool operator==(const basic_any& other) const
     requires(has_method<equal_to> || has_method<spaceship>)
   {
@@ -1303,6 +1309,9 @@ using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
 template<TTA... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
+#define trait(NAME, ... /*Signature like void(int, float)*/) trait_impl(, NAME, __VA_ARGS__)
+#define const_trait(NAME, ... /*Signature like void(int, float)*/) trait_impl(const, NAME, __VA_ARGS__)
+
 template<TTA... Methods>
 using cref = const_poly_ref<Methods...>;
 
@@ -1475,7 +1484,7 @@ struct call<Ret(Args...) const noexcept> {
     };
   };
 };
-// TODO remove?
+
 // Creates a Method from invocable object with given signature
 // usage example:
 // template<typename T>
@@ -1509,6 +1518,13 @@ template <TTA Method>
 
 namespace std {
 
+// for satisfiying Method ::aa::hash
+template<>
+struct hash<::aa::interface_t> {
+  size_t operator()(const ::aa::interface_t&) const {
+    return 0;
+  }
+};
 template <::aa::any_x T>
   requires(T::template has_method<::aa::hash>)
 struct hash<T> {

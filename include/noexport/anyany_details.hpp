@@ -173,4 +173,36 @@ consteval size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, T
     return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
 }
 
+#define trait_impl(CONST, NAME, ...)                                                              \
+  template <typename>                                                                             \
+  struct make_method_##NAME {};                                                                   \
+                                                                                                  \
+  template <typename AA_Ret, typename... AA_Args>                                                 \
+  struct make_method_##NAME<AA_Ret(AA_Args...)> {                                                 \
+    template <typename AA_Self>                                                                   \
+    struct NAME {                                                                                 \
+      static AA_Ret do_invoke(CONST AA_Self& self, AA_Args... args)                               \
+        requires requires {                                                                       \
+                   { self.NAME(static_cast<AA_Args&&>(args)...) } -> std::convertible_to<AA_Ret>; \
+                 }                                                                                \
+      {                                                                                           \
+        return self.NAME(static_cast<AA_Args&&>(args)...);                                        \
+      }                                                                                           \
+    };                                                                                            \
+    template <::std::same_as<::aa::interface_t> AA_Self>                                          \
+    struct NAME<AA_Self> {                                                                        \
+      static AA_Ret do_invoke(CONST AA_Self& self, AA_Args... args) {                             \
+        return self.NAME(static_cast<AA_Args&&>(args)...);                                        \
+      }                                                                                           \
+      template <typename AA_CRTP>                                                                 \
+      struct plugin {                                                                             \
+        AA_Ret NAME(AA_Args... args) CONST {                                                      \
+          return ::aa::invoke<make_method_##NAME<AA_Ret(AA_Args...)>::template NAME>(             \
+              *static_cast<CONST AA_CRTP*>(this), static_cast<AA_Args&&>(args)...);               \
+        }                                                                                         \
+      };                                                                                          \
+    };                                                                                            \
+  };                                                                                              \
+  template <typename AA_T>                                                                        \
+  using NAME = typename make_method_##NAME<__VA_ARGS__>::template NAME<AA_T>
 }  // namespace aa::noexport
