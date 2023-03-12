@@ -249,7 +249,7 @@ size_t TestConstructors() {
 }
 
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
-static_assert(std::is_same_v<any_compare::ref, aa::ref<aa::copy, aa::spaceship, aa::move>> &&
+static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::cref, aa::cref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::cptr, aa::cptr<aa::copy, aa::spaceship, aa::move>>);
@@ -671,10 +671,10 @@ int main() {
   static_assert(std::is_same_v<ac_res<const int&, Tt::cptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::cptr>, const int*>);
 
-  std::atomic<aa::ptr<>> a;
+  std::atomic<aa::poly_ptr<>> a;
   std::atomic<aa::cptr<>> afff;
   (void)afff;
-  static_assert(std::is_trivially_copyable_v<aa::ref<aa::copy, aa::destroy>>);
+  static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
   static_assert(std::is_trivially_copyable_v<aa::cref<>>);
   aa::poly_ref<> refa = a;
   // explicit rebind ref
@@ -790,7 +790,7 @@ int main() {
   aa::invoke<M1>(cfi, -1);
   aa::cref<M2, aa::move> cfi2 = cfi;
   aa::cptr<M2, aa::move> cfi2p = &cfi;
-  aa::cptr copy = cfi2p;
+  aa::const_poly_ptr copy = cfi2p;
   (void)copy;
   aa::invoke<M2>(cfi2, 3.14, -2);
   aa::invoke<M2>(*cfi2p, 3.14, -2);
@@ -807,7 +807,7 @@ int main() {
   aa::poly_ref<M2, aa::copy> fi2 = fi;
   aa::poly_ref<M2> fi3 = fi2;
   aa::poly_ptr<M2> fi3p = &fi2;
-  aa::ptr copy2 = fi3p;
+  aa::poly_ptr copy2 = fi3p;
   (void)copy2;
   aa::invoke<M1>(fi, 10);
   aa::invoke<M2>(fi, 11., 12);
@@ -865,9 +865,9 @@ int main() {
       return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
-    aa::ptr p_1 = pp1;
-    aa::cptr p_2 = pp1;
-    aa::cptr p_3 = pp2;
+    aa::poly_ptr p_1 = pp1;
+    aa::const_poly_ptr p_2 = pp1;
+    aa::const_poly_ptr p_3 = pp2;
     (void)p_1, (void)p_2, (void)p_3;
     // invoke
     aa::invoke<Drawi>(*pp1, 150);
