@@ -37,8 +37,14 @@ struct visit_invoke_fn {
 
   // map of overloads sorted by type descriptors of decayed types in signature
   noexport::flat_map<key_type, value_type, overload_count> map;
-  AA_NO_UNIQUE_ADDRESS Traits poly_traits;
-
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-attributes"
+#endif
+  [[no_unique_address]] Traits poly_traits;
+#if __clang__
+#pragma clang diagnostic pop
+#endif
   static_assert((... && std::is_convertible_v<typename traits<Foos>::result_type, result_type>),
                 "invoke_match overloads result types must be convertible to result type");
 

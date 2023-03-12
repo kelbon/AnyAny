@@ -249,10 +249,10 @@ size_t TestConstructors() {
 }
 
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
-static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
-              std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
+static_assert(std::is_same_v<any_compare::ref, aa::ref<aa::copy, aa::spaceship, aa::move>> &&
+              std::is_same_v<any_compare::cref, aa::cref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::spaceship, aa::move>> &&
-              std::is_same_v<any_compare::const_ptr, aa::const_poly_ptr<aa::copy, aa::spaceship, aa::move>>);
+              std::is_same_v<any_compare::cptr, aa::cptr<aa::copy, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::move>;
 
 size_t TestCompare() {
@@ -409,11 +409,11 @@ struct drawable1 {
 };
 void Foobar(idrawable::ptr v) {
   std::cout << v->draw(150);
-  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+  std::cout << aa::invoke<Drawi>(*v, 150);
 }
-void Foobar(idrawable::const_ptr v) {
+void Foobar(idrawable::cptr v) {
   std::cout << v->draw(150);
-  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+  std::cout << aa::invoke<Drawi>(*v, 150);
 }
 
 struct A1 {
@@ -436,7 +436,7 @@ struct M2 {
 };
 
 template<typename T>
-using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
+using Size = aa::from_callable<std::size_t() const, std::ranges::size>::method<T>;
 
 struct base {
   int i;
@@ -510,7 +510,7 @@ bool test_cmp() {
   int v2 = 11;
   {
     aa::any_with<aa::equal_to>::ref ref = v1;
-    aa::any_with<aa::equal_to>::const_ref cref = v2;
+    aa::any_with<aa::equal_to>::cref cref = v2;
     if (ref != ref || cref != cref || ref == cref)
       return false;
   }
@@ -518,7 +518,7 @@ bool test_cmp() {
     using test_t = aa::any_with<aa::equal_to, aa::spaceship>;
     test_t::ref ref = v1;
     aa::any_with<aa::equal_to>::ref ref1 = v1;
-    test_t::const_ref cref = v2;
+    test_t::cref cref = v2;
     if (ref != ref || cref != cref || ref == cref)
       return false;
     using r_t = decltype(ref1);
@@ -534,7 +534,7 @@ bool test_cmp() {
   }
   {
     aa::any_with<aa::spaceship>::ref ref = v1;
-    aa::any_with<aa::spaceship>::const_ref cref = v2;
+    aa::any_with<aa::spaceship>::cref cref = v2;
     if (ref != ref || cref != cref || ref == cref)
       return false;
   }
@@ -578,7 +578,7 @@ struct make_method_##NAME<Ret(Args...)> {\
     template <typename CRTP>\
     struct plugin {\
       Ret NAME(Args... args) CONST {\
-        return ::aa::invoke_unsafe<make_method_##NAME<Ret(Args...)>::template NAME>(                         \
+        return ::aa::invoke<make_method_##NAME<Ret(Args...)>::template NAME>(                         \
                                            *static_cast<CONST CRTP*>(this),\
                                                                               static_cast<Args&&>(args)...);\
       }\
@@ -591,7 +591,11 @@ using NAME = make_method_##NAME<__VA_ARGS__>::template NAME<T>;
 #define const_trait(NAME, ... /*Signature like void(int, float)*/) trait_impl(const, NAME, __VA_ARGS__)
 
 trait(hik, void(int));
-    // TODO сделать максимально притивный макрос принимающий типы которые нужно принять и название метода, генерящий метод с плагином
+// TODO проверить trait/const_trait в шаблонах
+// TODO все deprecated вещи вынести куда-то вниз
+// TODO мб убрать invoke_unsafe и оставить invoke и никогда не кидать исключение
+// invoke_unsafe оставить как deprecated алиас
+// TODO поддержка atomic указателей на vtable чтобы менять его?..
 
 // TODO перейти на сфинае с лямбдой вместо концепта у do_invoke
 // пример визитора на ани виз(из лямбды например), было бы классно https://www.youtube.com/watch?v=PEcy1vYHb8A&ab_channel=CppCon
@@ -611,11 +615,6 @@ int main() {
   hmda.hik(5);
   if (!test_cmp())
     return -100500;
-  auto vtable = aa::vtable_for<int, test_method>;
-  int tval = 10;
-  auto tval_ref = vtable.create_ref_to((void*)&tval);
-  if (aa::invoke<test_method>(tval_ref, 15.) != 25)
-    return -222;
   static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
@@ -648,13 +647,13 @@ int main() {
   static_assert(std::is_same_v<ac_res<const int&, Tt::ref>, const int&>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::ref>, int>);
 
-  static_assert(std::is_same_v<ac_res<int, Tt::const_ref>, int>);
-  static_assert(std::is_same_v<ac_res<int&, Tt::const_ref>, const int&>);
-  static_assert(std::is_same_v<ac_res<int&&, Tt::const_ref>, const int&>);
+  static_assert(std::is_same_v<ac_res<int, Tt::cref>, int>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::cref>, const int&>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::cref>, const int&>);
 
-  static_assert(std::is_same_v<ac_res<const int, Tt::const_ref>, int>);
-  static_assert(std::is_same_v<ac_res<const int&, Tt::const_ref>, const int&>);
-  static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ref>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int, Tt::cref>, int>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::cref>, const int&>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::cref>, const int&>);
 
   static_assert(std::is_same_v<ac_res<int, Tt::ptr>, int*>);
   static_assert(std::is_same_v<ac_res<int&, Tt::ptr>, int*>);
@@ -664,19 +663,19 @@ int main() {
   static_assert(std::is_same_v<ac_res<const int&, Tt::ptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::ptr>, const int*>);
 
-  static_assert(std::is_same_v<ac_res<int, Tt::const_ptr>, const int*>);
-  static_assert(std::is_same_v<ac_res<int&, Tt::const_ptr>, const int*>);
-  static_assert(std::is_same_v<ac_res<int&&, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<int, Tt::cptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<int&, Tt::cptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<int&&, Tt::cptr>, const int*>);
 
-  static_assert(std::is_same_v<ac_res<const int, Tt::const_ptr>, const int*>);
-  static_assert(std::is_same_v<ac_res<const int&, Tt::const_ptr>, const int*>);
-  static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int, Tt::cptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&, Tt::cptr>, const int*>);
+  static_assert(std::is_same_v<ac_res<const int&&, Tt::cptr>, const int*>);
 
-  std::atomic<aa::poly_ptr<>> a;
-  std::atomic<aa::const_poly_ptr<>> afff;
+  std::atomic<aa::ptr<>> a;
+  std::atomic<aa::cptr<>> afff;
   (void)afff;
-  static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
-  static_assert(std::is_trivially_copyable_v<aa::const_poly_ref<>>);
+  static_assert(std::is_trivially_copyable_v<aa::ref<aa::copy, aa::destroy>>);
+  static_assert(std::is_trivially_copyable_v<aa::cref<>>);
   aa::poly_ref<> refa = a;
   // explicit rebind ref
   refa = aa::poly_ref<>(a);
@@ -743,7 +742,7 @@ int main() {
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
-  aa::invoke<example::Print>(p, 4);
+  aa::invoke<example::Print>(p);
   static constexpr int for_r = 0;
   constexpr aa::const_poly_ref<> r = for_r;
   std::string X;
@@ -789,9 +788,9 @@ int main() {
   aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
   aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
   aa::invoke<M1>(cfi, -1);
-  aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
-  aa::const_poly_ptr<M2, aa::move> cfi2p = &cfi;
-  aa::const_poly_ptr copy = cfi2p;
+  aa::cref<M2, aa::move> cfi2 = cfi;
+  aa::cptr<M2, aa::move> cfi2p = &cfi;
+  aa::cptr copy = cfi2p;
   (void)copy;
   aa::invoke<M2>(cfi2, 3.14, -2);
   aa::invoke<M2>(*cfi2p, 3.14, -2);
@@ -808,7 +807,7 @@ int main() {
   aa::poly_ref<M2, aa::copy> fi2 = fi;
   aa::poly_ref<M2> fi3 = fi2;
   aa::poly_ptr<M2> fi3p = &fi2;
-  aa::poly_ptr copy2 = fi3p;
+  aa::ptr copy2 = fi3p;
   (void)copy2;
   aa::invoke<M1>(fi, 10);
   aa::invoke<M2>(fi, 11., 12);
@@ -830,18 +829,13 @@ int main() {
     // with plugin
     drawable0 v0;
     const drawable1 v1;
-    // invoke on non polymorphic values for same interface
-    aa::invoke<Drawi>(v0, 1);
-    aa::invoke_unsafe<Drawi>(v0, 2);
-    aa::invoke<Drawi>(v1, 3);
-    aa::invoke_unsafe<Drawi>(v1, 4);
     // create
     idrawable::ptr pp1 = &v0;
-    idrawable::const_ptr pp2 = &v0;
+    idrawable::cptr pp2 = &v0;
     idrawable::ref pr1 = v0;
-    idrawable::const_ref pr2 = v0;
-    idrawable::const_ptr pp3 = &v1;
-    idrawable::const_ref pr3 = v1;
+    idrawable::cref pr2 = v0;
+    idrawable::cptr pp3 = &v1;
+    idrawable::cref pr3 = v1;
     (void)aa::any_cast<const drawable1>(pr3);
     (void)aa::any_cast<drawable1>(pr3);
     (void)aa::any_cast<const drawable1&>(pr3);
@@ -864,26 +858,18 @@ int main() {
     auto pip2 = &cpval;
     (void)pip1, (void)pip2;
     idrawable::ref pr4 = v0;
-    idrawable::const_ref pr5 = v0;
+    idrawable::cref pr5 = v0;
     idrawable::ptr pp4 = &v0;
-    idrawable::const_ptr pp5 = &v0;
+    idrawable::cptr pp5 = &v0;
     if (aa::any_cast<drawable0>(pp1) == nullptr || aa::any_cast<const drawable0>(pp1) == nullptr)
       return -1;
     (void)pr4, (void)pr5, (void)pp4, (void)pp5;
     // deduction guides
-    aa::poly_ptr p_1 = pp1;
-    aa::const_poly_ptr p_2 = pp1;
-    aa::const_poly_ptr p_3 = pp2;
+    aa::ptr p_1 = pp1;
+    aa::cptr p_2 = pp1;
+    aa::cptr p_3 = pp2;
     (void)p_1, (void)p_2, (void)p_3;
     // invoke
-    aa::invoke_unsafe<Drawi>(*pp1, 150);
-    aa::invoke_unsafe<Drawi>(pr1, 150);
-    aa::invoke_unsafe<Drawi>(*&pr1, 150);
-    aa::invoke_unsafe<Drawi>(*pp2, 150);
-    aa::invoke_unsafe<Drawi>(*pp3, 150);
-    aa::invoke_unsafe<Drawi>(pr2, 150);
-    aa::invoke_unsafe<Drawi>(*&pr2, 150);
-    aa::invoke_unsafe<Drawi>(*&pr3, 150);
     aa::invoke<Drawi>(*pp1, 150);
     aa::invoke<Drawi>(pr1, 150);
     aa::invoke<Drawi>(*&pr1, 150);
@@ -926,20 +912,12 @@ int main() {
     const Circle v1{5, "hello world"};
     // create
     any_drawable::ptr pp1 = &v0;
-    any_drawable::const_ptr pp2 = &v0;
+    any_drawable::cptr pp2 = &v0;
     any_drawable::ref pr1 = v0;
-    any_drawable::const_ref pr2 = v0;
-    any_drawable::const_ptr pp3 = &v1;
-    any_drawable::const_ref pr3 = v1;
+    any_drawable::cref pr2 = v0;
+    any_drawable::cptr pp3 = &v1;
+    any_drawable::cref pr3 = v1;
     // invoke
-    aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
-    aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
     aa::invoke<Draw>(*pp1, std::cout, 150);
     aa::invoke<Draw>(pr1, std::cout, 150);
     aa::invoke<Draw>(*&pr1, std::cout, 150);

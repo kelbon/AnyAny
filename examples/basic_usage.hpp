@@ -52,7 +52,7 @@ void example_draw() {
   d0 = d1;
   d0 = std::move(d1);
   // invoke knows what type Draw accepts, so you can use {} and implicit conversations!
-  aa::invoke_unsafe<Draw>(d0, std::cout, {});
+  aa::invoke<Draw>(d0, std::cout, {});
   // If you sure that any containts value (like here)
   // it can be more effective to use aa::invoke_unsafe
   // but if any do not contain a value it causes undefined behaviour

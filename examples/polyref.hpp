@@ -15,13 +15,13 @@ namespace example {
 
 template <typename T>
 struct Print {
-  static void do_invoke(const T& self, int i) {
-    std::cout << self << i << std::endl;
+  static void do_invoke(const T& self) {
+    std::cout << self << std::endl;
   }
   template <typename CRTP>
   struct plugin {
-    void print(int i) const {
-      aa::invoke<Print>(*static_cast<const CRTP*>(this), i);
+    void print() const {
+      aa::invoke<Print>(*static_cast<const CRTP*>(this));
     }
   };
 };
@@ -31,19 +31,19 @@ struct Print {
 void print(std::initializer_list<aa::const_poly_ref<Print>> l) {
   // aa::invoke<Method> is a functional object with operator()
   // .with method binds arguments and returns invocable
-  std::ranges::for_each(l, aa::invoke<Print>.with(15));
+  std::ranges::for_each(l, aa::invoke<Print>);
 }
 
 using any_printable = aa::any_with<Print>;
 // all types created by any_with<Methods...>
 // have inner aliases ptr/ref/const_ptr/const_ref
 // which are aa::polymorphic_ptr/ref
-void print_one(any_printable::const_ref p) {
-  p.print(10);
+void print_one(any_printable::cref p) {
+  p.print();
 }
-void may_be_print(any_printable::const_ptr p) {
+void may_be_print(any_printable::cptr p) {
   if (p != nullptr)
-    p->print(20);
+    p->print();
 }
 
 }  // namespace example

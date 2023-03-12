@@ -5,8 +5,6 @@
 
 namespace aa::noexport {
 
-#define AA_NO_UNIQUE_ADDRESS [[no_unique_address]]
-
 // name 'n' because need to reduce name size
 template <typename T>
 consteval const char* n() {
