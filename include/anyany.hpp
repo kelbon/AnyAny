@@ -21,6 +21,7 @@
 #include <optional>     // for type_switch
 #include <functional>   // std::invoke
 #include <compare>
+#include <concepts>
 
 #include "type_descriptor.hpp"
 #include "noexport/anyany_details.hpp"
@@ -35,13 +36,7 @@ namespace aa {
 // this means all methods must be specializable for interface_t
 // typical error - concept on Method's template argument, which is false for interface_t
 // (in this case you can explciitly specialize Method for interface_t)
-struct interface_t {
-  // these operators just for satisfying concepts of equal_to/spaceship/call methods
-  constexpr bool operator==(const interface_t&) const noexcept;
-  constexpr std::strong_ordering operator<=>(const interface_t&) const noexcept;
-  constexpr void operator()(auto&&...) noexcept;
-  constexpr void operator()(auto&&...) const noexcept;
-};
+struct interface_t {};
 
 // ######################## explicit_interface support ########################
 
@@ -146,17 +141,25 @@ struct invoker_for<T, Method, type_list<Args...>> {
 
 namespace noexport {
 
-template <typename, typename, TTA...>
-struct do_invocable_impl : std::false_type {};
-template <typename T, TTA... Methods>
-struct do_invocable_impl<T, std::void_t<decltype(&Methods<T>::do_invoke)...>, Methods...> : std::true_type {};
+    // TODO вместо do_invocable херни можно сделать validator<T, Method возвращающий true/false, который мои методы будут специализировать
+    // (вероятно через функцию, иначе как?
+template<typename T, TTA Method>
+consteval bool do_invocable_impl() noexcept {
+  using Interface = Method<aa::interface_t>;
+  constexpr bool has_validate = requires {
+                                  { Interface::template validate<T>() };
+                                };
+  if constexpr (has_validate)
+    return Interface::template validate<T>();
+  return true;
+}
 
 }  // namespace noexport
 
 // checks if each of Methods has addressable do_invoke for T
 // it provides a way to restrict constructors in SFINAE-friendly way
 template <typename T, TTA... Methods>
-concept do_invokable = noexport::do_invocable_impl<std::decay_t<T>, void, Methods...>::value;
+concept do_invokable = (noexport::do_invocable_impl<std::decay_t<T>, Methods>() && ...);
 
 // concept of any value inherited from basic_any<Args...>
 template <typename T>
@@ -277,23 +280,38 @@ struct hash {
   static size_t do_invoke(const T& self) {
     return std::hash<T>{}(self);
   }
+  template <typename U>
+  static consteval bool validate() noexcept {
+    constexpr bool result = requires(const U& self) {
+                              { std::hash<U>{}(self) } -> std::same_as<std::size_t>;
+                            };
+    return result;
+  }
 };
 
 // enables operator== for any_with
-template <std::equality_comparable T>
+template <typename T>
 struct equal_to {
   static bool do_invoke(const T& first, const void* second) {
     return first == *reinterpret_cast<const T*>(second);
   }
+  template <typename U>
+  static consteval bool validate() noexcept {
+    return std::equality_comparable<U>;
+  }
 };
 
 // enables operator<=> and operator== for any_with
-template <std::three_way_comparable T>
+template <typename T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
-  static std::partial_ordering do_invoke(const T& first, const void* second){
+  static std::partial_ordering do_invoke(const T& first, const void* second) {
     return first <=> *reinterpret_cast<const T*>(second);
+  }
+  template <typename U>
+  static consteval bool validate() noexcept {
+    return std::three_way_comparable<U>;
   }
 };
 
