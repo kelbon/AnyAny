@@ -557,7 +557,40 @@ struct hihi {
 };
 // TODO требования типа если мувается тип то требуем мув конструктибл и всё такое с копированием также, иначе
 // какие то рекурсивные проблемы
+
+template<typename T>
+struct Visit {
+  template <typename Visitor>
+  struct method {
+    static void do_invoke(Visitor& visitor, T& value) {
+      visitor(value);
+    }
+  };
+};
+
+template<typename... Ts>
+struct visitor_for : aa::any_with<Visit<Ts>::template method...> {
+ private:
+  using base_t = aa::any_with<Visit<Ts>::template method...>;
+
+ public:
+  using base_t::base_t;
+  using base_t::operator=;
+
+  template <typename T>
+  void operator()(T& value) {
+    return aa::invoke<Visit<T>::template method>((base_t&)*this, value);
+  }
+};
+// вернуть sizeof_now()
+// исправить copy зная sizeof_now
+// сделать конструктор и оператор= от basic_any с другими методами
 int main() {
+  visitor_for<int, float, double, std::string> vtor = [](auto&& val) {
+    std::cout << val << '\n';
+  };
+  int vtor_val_i = 5;
+  vtor(vtor_val_i);
   aa::any_with<kekable<std::string>::hik, kekable<std::string>::nick, aa::move> hmda = hihi{};
   using check_t = decltype(hmda);
   hmda = hihi{};

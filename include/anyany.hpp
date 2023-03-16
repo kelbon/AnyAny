@@ -965,7 +965,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     return {this};
   }
   constexpr basic_any() = default;
-  basic_any(Alloc alloc) noexcept : alloc(std::move(alloc)) {
+  constexpr basic_any(Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
 
   constexpr ~basic_any() {
@@ -984,6 +984,14 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
         value_ptr = invoke<copy_with<Alloc, SooS>::template method>(other, value_ptr, alloc);
     }
     vtable_ptr = other.vtable_ptr;
+  }
+  // TODO same move ctors..., operator= etc
+  template <
+      TTA... FromMethods,
+      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
+  basic_any(const basic_any<Alloc, SooS, FromMethods...>&) {
+
+      // TODO
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
