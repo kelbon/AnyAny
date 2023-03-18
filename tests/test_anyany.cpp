@@ -20,7 +20,7 @@
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc, aa::default_any_soos>::template method, aa::move, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -206,8 +206,7 @@ size_t TestConstructors() {
   }
   error_if(leaked_resource_count != 0);
   {
-    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> vec(
-        std::pmr::new_delete_resource());
+    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> vec(std::pmr::new_delete_resource());
     vec.emplace_back(5);
     vec.emplace_back("hello world");
     vec.emplace_back(std::vector<int>(10, 1));
@@ -374,7 +373,7 @@ size_t TestCasts() {
 
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 
-using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy_with<std::allocator<std::byte>, 8>::method, aa::move, aa::equal_to>;
+using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::move, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
 template<typename T>
@@ -409,11 +408,11 @@ struct drawable1 {
 };
 void Foobar(idrawable::ptr v) {
   std::cout << v->draw(150);
-  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+  std::cout << aa::invoke<Drawi>(*v, 150);
 }
 void Foobar(idrawable::const_ptr v) {
   std::cout << v->draw(150);
-  std::cout << aa::invoke_unsafe<Drawi>(*v, 150);
+  std::cout << aa::invoke<Drawi>(*v, 150);
 }
 
 struct A1 {
@@ -436,7 +435,7 @@ struct M2 {
 };
 
 template<typename T>
-using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
+using Size = aa::from_callable<std::size_t() const, std::ranges::size>::method<T>;
 
 struct base {
   int i;
@@ -504,7 +503,41 @@ struct test_method {
     return self + x;
   }
 };
+// TODO - операторы= и конструкторы от basic_any с другими методами
+// TODO - кажется materialize можно сделать зная sizeof_now() (хотя бы верхнюю границу)
+
+template<typename T>
+struct visit {
+  trait(method, void(const T&), self(args...));
+};
+template<typename... Ts>
+using visitor_for = aa::any_with<visit<Ts>::template method...>;
+
+trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
+
+using any_kekable_ = aa::any_with<Kekab>;
+
+struct kekabl1 {
+  std::string s = "abc";
+  std::string kekab(int i, char k) {
+    return s + std::string(i, (char)k);
+  }
+};
+
 int main() {
+  any_kekable_ kek_0 = kekabl1{"str"};
+  if (kek_0.Kekab(5, 'c') != "strccccc")
+    return -200;
+  static_assert(std::is_constructible_v<any_kekable_, kekabl1>);
+  static_assert(std::is_assignable_v<any_kekable_&, kekabl1>);
+  static_assert(!std::is_constructible_v<any_kekable_, std::string>);
+  static_assert(!std::is_assignable_v<any_kekable_&, std::string>);
+
+  visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
+    std::cout << arg << '\n';
+  };
+  aa::invoke<visit<int>::method>(vtor, 5);
+  aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
   auto vtable = aa::vtable_for<int, test_method>;
   int tval = 10;
   auto tval_ref = vtable.create_ref_to((void*)&tval);
@@ -568,6 +601,7 @@ int main() {
 
   std::atomic<aa::poly_ptr<>> a;
   std::atomic<aa::const_poly_ptr<>> afff;
+  (void)afff;
   static_assert(std::is_trivially_copyable_v<aa::poly_ref<aa::copy, aa::destroy>>);
   static_assert(std::is_trivially_copyable_v<aa::const_poly_ref<>>);
   aa::poly_ref<> refa = a;
@@ -636,7 +670,7 @@ int main() {
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
-  aa::invoke<example::Print>(p, 4);
+  aa::invoke<example::Print>(p);
   static constexpr int for_r = 0;
   constexpr aa::const_poly_ref<> r = for_r;
   std::string X;
@@ -675,6 +709,7 @@ int main() {
   vec.emplace_back(fef);
   using any_sized_range = aa::any_with<Size>;
   std::vector<int> v(10, 15);
+  static_assert(aa::exist_for<std::vector<int>, Size>::value);
   any_sized_range rng = v;
   std::cout << aa::invoke<Size>(rng);
   A1 u;
@@ -725,9 +760,7 @@ int main() {
     const drawable1 v1;
     // invoke on non polymorphic values for same interface
     aa::invoke<Drawi>(v0, 1);
-    aa::invoke_unsafe<Drawi>(v0, 2);
     aa::invoke<Drawi>(v1, 3);
-    aa::invoke_unsafe<Drawi>(v1, 4);
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;
@@ -769,14 +802,6 @@ int main() {
     aa::const_poly_ptr p_3 = pp2;
     (void)p_1, (void)p_2, (void)p_3;
     // invoke
-    aa::invoke_unsafe<Drawi>(*pp1, 150);
-    aa::invoke_unsafe<Drawi>(pr1, 150);
-    aa::invoke_unsafe<Drawi>(*&pr1, 150);
-    aa::invoke_unsafe<Drawi>(*pp2, 150);
-    aa::invoke_unsafe<Drawi>(*pp3, 150);
-    aa::invoke_unsafe<Drawi>(pr2, 150);
-    aa::invoke_unsafe<Drawi>(*&pr2, 150);
-    aa::invoke_unsafe<Drawi>(*&pr3, 150);
     aa::invoke<Drawi>(*pp1, 150);
     aa::invoke<Drawi>(pr1, 150);
     aa::invoke<Drawi>(*&pr1, 150);
@@ -825,14 +850,6 @@ int main() {
     any_drawable::const_ptr pp3 = &v1;
     any_drawable::const_ref pr3 = v1;
     // invoke
-    aa::invoke_unsafe<Draw>(*pp1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(pr1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr1, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*pp2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*pp3, std::cout, 150);
-    aa::invoke_unsafe<Draw>(pr2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr2, std::cout, 150);
-    aa::invoke_unsafe<Draw>(*&pr3, std::cout, 150);
     aa::invoke<Draw>(*pp1, std::cout, 150);
     aa::invoke<Draw>(pr1, std::cout, 150);
     aa::invoke<Draw>(*&pr1, std::cout, 150);
