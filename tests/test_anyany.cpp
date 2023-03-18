@@ -503,8 +503,6 @@ struct test_method {
     return self + x;
   }
 };
-// TODO - операторы= и конструкторы от basic_any с другими методами
-// TODO - кажется materialize можно сделать зная sizeof_now() (хотя бы верхнюю границу)
 
 template<typename T>
 struct visit {
@@ -524,7 +522,17 @@ struct kekabl1 {
   }
 };
 
+void transmute_test() {
+  aa::any_with<aa::move, aa::copy> v1;
+  v1 = std::string("abc");
+  aa::any_with<aa::move> v2 = v1;
+  auto copyv2 = std::move(v2);
+  auto copyv1 = v1;
+  if (copyv2.type_descriptor() != copyv1.type_descriptor())
+    throw false;
+}
 int main() {
+  transmute_test();
   any_kekable_ kek_0 = kekabl1{"str"};
   if (kek_0.Kekab(5, 'c') != "strccccc")
     return -200;

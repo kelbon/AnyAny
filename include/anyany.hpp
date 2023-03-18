@@ -795,6 +795,8 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   friend struct const_poly_ptr;
   template <TTA, typename>
   friend struct invoke_fn;
+  template<typename, size_t, TTA...>
+  friend struct basic_any;
 
  public:
   template <TTA Method>
@@ -969,6 +971,23 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : alloc(std::move(alloc)) {
     emplace_in_empty<std::decay_t<T>>(std::forward<T>(value));
+  }
+
+  // 'transmutate' constructors (from basic_any with more Methods)
+
+  template <TTA... OtherMethods>
+    requires(vtable<OtherMethods...>::template has_method<copy> &&
+             noexport::find_subset(methods_list{}, type_list<OtherMethods<interface_t>...>{}) != npos)
+  basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other) {
+    std::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this), other);
+    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+  }
+  template <TTA... OtherMethods>
+    requires(vtable<OtherMethods...>::template has_method<move> &&
+             noexport::find_subset(methods_list{}, type_list<OtherMethods<interface_t>...>{}) != npos)
+  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
+    std::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this), std::move(other));
+    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
   }
 
   // force allocate versions
