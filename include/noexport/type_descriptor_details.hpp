@@ -4,11 +4,6 @@
 #include <string_view>
 
 namespace aa::noexport {
-#ifdef __clang__
-#define AA_NO_UNIQUE_ADDRESS
-#else
-#define AA_NO_UNIQUE_ADDRESS [[no_unique_address]]
-#endif
 
 // name 'n' because need to reduce name size
 template <typename T>
@@ -16,7 +11,6 @@ consteval const char* n() {
 #if defined(__GNUC__) && !defined(__clang__)
   return __PRETTY_FUNCTION__ + sizeof("consteval const char* aa::noexport::n() [with T =");
 #elif defined(__clang__)
-#define AA_NO_UNIQUE_ADDRESS
   return __PRETTY_FUNCTION__ + sizeof("const char *aa::noexport::n() [T =");
 #elif defined(_MSC_VER)
   const char* res = __FUNCSIG__ + sizeof("const char *__cdecl aa::noexport::n<") - 1;

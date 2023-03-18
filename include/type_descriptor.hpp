@@ -78,23 +78,25 @@ concept poly_traits = requires(T val, int some_val) {
                         { val.to_address(some_val) };
                       };
 
+template<typename T>
+struct is_polymorphic {
+  static constexpr inline bool value = requires(T v) {
+                                         { v.type_descriptor() } -> std::same_as<descriptor_t>;
+                                       };
+};
+template<typename T>
+using is_not_polymorphic = std::negation<is_polymorphic<T>>;
+
 // these traits poly_ptr/ref/any_with are polymorphic values with dynamic type
 // all other types considered as non-polymorphic
 struct anyany_poly_traits {
- private:
-  template <typename T>
-  static constexpr bool is_polymorphic = requires(T v) {
-                                           { v.type_descriptor() } -> std::same_as<descriptor_t>;
-                                         };
-
- public:
   // default case for non-polymorphic types like 'int', 'string' etc
   template <typename T>
   static constexpr descriptor_t get_type_descriptor(T&&) noexcept {
     return descriptor_v<T>;
   }
   template <typename T>
-    requires(is_polymorphic<T>)  // case for /const/ poly_ptr/ref and any_with and its inheritors
+    requires(is_polymorphic<T>::value)  // case for /const/ poly_ptr/ref and any_with and its inheritors
   static descriptor_t get_type_descriptor(T&& x) noexcept {
     return x.type_descriptor();
   }
@@ -106,7 +108,7 @@ struct anyany_poly_traits {
         std::addressof(v));
   }
   template <typename T>
-    requires(is_polymorphic<T>)
+    requires(is_polymorphic<T>::value)
   static auto* to_address(T&& v) noexcept {
     // for /const/poly_ptr
     if constexpr (requires { v.raw(); })
