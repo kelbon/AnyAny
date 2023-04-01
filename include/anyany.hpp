@@ -471,15 +471,15 @@ namespace statefull {
 template <TTA... Methods>
 struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
   void* value_ptr;
-  vtable<Methods...> vtable;
+  vtable<Methods...> vtable_value;
 
   template <not_const_type T>
-    requires(std::conjunction_v<exist_for<T, Methods>...>)
+    requires(std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods>...>)
   constexpr ref(T& value) noexcept
-      : value_ptr(std::addressof(value)), vtable(vtable_for<std::remove_cvref_t<T>, Methods...>) {
+      : value_ptr(std::addressof(value)), vtable_value(vtable_for<std::remove_cvref_t<T>, Methods...>) {
   }
   constexpr ref(const ::aa::poly_ref<Methods...>& r) noexcept
-      : value_ptr((&r).raw()), vtable(*(&r).raw_vtable_ptr()) {
+      : value_ptr((&r).raw()), vtable_value(*(&r).raw_vtable_ptr()) {
   }
   constexpr ref(const ref&) noexcept = default;
   constexpr ref(ref&&) noexcept = default;
@@ -494,20 +494,20 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
 template <TTA... Methods>
 struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   const void* value_ptr;
-  vtable<Methods...> vtable;
+  vtable<Methods...> vtable_value;
 
   template <typename T>
-    requires(std::conjunction_v<exist_for<T, Methods>...>)
+    requires(std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods>...>)
   constexpr cref(const T& value) noexcept
-      : value_ptr(std::addressof(value)), vtable(vtable_for<std::remove_cvref_t<T>, Methods...>) {
+      : value_ptr(std::addressof(value)), vtable_value(vtable_for<std::remove_cvref_t<T>, Methods...>) {
   }
   constexpr cref(const ::aa::statefull::ref<Methods...>& r) noexcept
-      : value_ptr(r.value_ptr), vtable(r.vtable) {
+      : value_ptr(r.value_ptr), vtable_value(r.vtable_value) {
   }
   constexpr cref(const ::aa::poly_ref<Methods...>& r) noexcept : cref(aa::const_poly_ref(r)) {
   }
   constexpr cref(const ::aa::const_poly_ref<Methods...>& r) noexcept
-      : value_ptr((&r).raw()), vtable(*(&r).raw_vtable_ptr()) {
+      : value_ptr((&r).raw()), vtable_value(*(&r).raw_vtable_ptr()) {
   }
   constexpr cref(const cref&) noexcept = default;
   constexpr cref(cref&&) noexcept = default;
@@ -763,12 +763,12 @@ struct invoke_fn<Method, type_list<Args...>> {
 
   template <TTA... Methods>
   result_t<Method> operator()(const statefull::ref<Methods...>& r, Args... args) const {
-    return r.vtable.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
+    return r.vtable_value.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
   }
   template <TTA... Methods>
   result_t<Method> operator()(const statefull::cref<Methods...>& r, Args... args) const {
     static_assert(const_method<Method>);
-    return r.vtable.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
+    return r.vtable_value.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
   }
 };
 
