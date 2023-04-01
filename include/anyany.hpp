@@ -50,7 +50,7 @@ struct interface_t {
   };
 
  public:
-  constexpr convertible_to_all operator()(auto&&...) noexcept {
+  constexpr convertible_to_all operator()(auto&&...) const noexcept {
     return {};
   }
 };
@@ -201,7 +201,7 @@ struct copy {
 };
 
 template<typename T>
-concept hashable_by_std_hash = requires { typename std::hash<T>; };
+concept hashable_by_std_hash = requires { std::hash<T>{}; };
 
 // enables std::hash specialization for polymorphic value and reference
 template <hashable_by_std_hash T>
@@ -243,11 +243,10 @@ struct vtable {
 
   template <TTA Method>
   static inline constexpr bool has_method = number_of_method<Method> != npos;
-  // clang-format off
+
   template <TTA Method, typename... Args>
-  requires(has_method<Method>)
-  constexpr decltype(auto) invoke(Args&&... args) const {
-    // clang-format on
+    requires(has_method<Method>)
+  constexpr result_t<Method> invoke(Args&&... args) const {
     return noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
@@ -464,6 +463,61 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
 template <TTA... Methods>
 const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
 
+namespace statefull {
+
+// stores vtable in the reference, so better cache locality.
+// for example it may be used as function arguments with 1-2 Methods
+// also can reference arrays and functions without decay
+template <TTA... Methods>
+struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
+  void* value_ptr;
+  vtable<Methods...> vtable;
+
+  template <not_const_type T>
+    requires(std::conjunction_v<exist_for<T, Methods>...>)
+  constexpr ref(T& value) noexcept
+      : value_ptr(std::addressof(value)), vtable(vtable_for<std::remove_cvref_t<T>, Methods...>) {
+  }
+  constexpr ref(const ::aa::poly_ref<Methods...>& r) noexcept
+      : value_ptr((&r).raw()), vtable(*(&r).raw_vtable_ptr()) {
+  }
+  constexpr ref(const ref&) noexcept = default;
+  constexpr ref(ref&&) noexcept = default;
+  ref& operator=(const ref&) = default;
+  ref& operator=(ref&&) = default;
+  void operator=(auto&&) = delete;  // no implicit rebind
+};
+
+// stores vtable in the reference, so better cache locality.
+// for example it may be used as function arguments with 1-2 Methods
+// also can reference arrays and functions without decay
+template <TTA... Methods>
+struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
+  const void* value_ptr;
+  vtable<Methods...> vtable;
+
+  template <typename T>
+    requires(std::conjunction_v<exist_for<T, Methods>...>)
+  constexpr cref(const T& value) noexcept
+      : value_ptr(std::addressof(value)), vtable(vtable_for<std::remove_cvref_t<T>, Methods...>) {
+  }
+  constexpr cref(const ::aa::statefull::ref<Methods...>& r) noexcept
+      : value_ptr(r.value_ptr), vtable(r.vtable) {
+  }
+  constexpr cref(const ::aa::poly_ref<Methods...>& r) noexcept : cref(aa::const_poly_ref(r)) {
+  }
+  constexpr cref(const ::aa::const_poly_ref<Methods...>& r) noexcept
+      : value_ptr((&r).raw()), vtable(*(&r).raw_vtable_ptr()) {
+  }
+  constexpr cref(const cref&) noexcept = default;
+  constexpr cref(cref&&) noexcept = default;
+  cref& operator=(const cref&) = default;
+  cref& operator=(cref&&) = default;
+  void operator=(auto&&) = delete;  // no implicit rebind
+};
+
+}  // namespace statefull
+
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
 template <TTA... Methods>
 struct poly_ptr {
@@ -617,6 +671,9 @@ struct const_poly_ptr {
   constexpr const void* raw() const noexcept {
     return poly_.value_ptr;
   }
+  constexpr const vtable<Methods...>* raw_vtable_ptr() const noexcept {
+    return poly_.vtable_ptr;
+  }
   constexpr bool has_value() const noexcept {
     return poly_.value_ptr != nullptr;
   }
@@ -701,13 +758,17 @@ struct invoke_fn<Method, type_list<Args...>> {
     static_assert(const_method<Method>);
     return p.vtable_ptr->template invoke<Method>(p.value_ptr, static_cast<Args&&>(args)...);
   }
-  // FOR NON POLYMORPHIC VALUE (common interface with all types)
-  // clang-format off
-  template<typename T>
-  requires (!any_x<T>)
-  result_t<Method> operator()(T&& value, Args... args) const {
-    // clang-format on
-    return Method<std::decay_t<T>>::do_invoke(std::forward<T>(value), static_cast<Args&&>(args)...);
+
+  // FOR STATEFULL REFS
+
+  template <TTA... Methods>
+  result_t<Method> operator()(const statefull::ref<Methods...>& r, Args... args) const {
+    return r.vtable.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
+  }
+  template <TTA... Methods>
+  result_t<Method> operator()(const statefull::cref<Methods...>& r, Args... args) const {
+    static_assert(const_method<Method>);
+    return r.vtable.template invoke<Method>(r.value_ptr, static_cast<Args&&>(args)...);
   }
 };
 
@@ -726,6 +787,23 @@ struct force_stable_pointers_t {
   explicit force_stable_pointers_t() = default;
 };
 constexpr inline force_stable_pointers_t force_stable_pointers{};
+
+// compilation error when allocate, so 'basic_any' with this allocator will never allocate
+// usefull for compile time checking, that you dont have allocations(+some optimizations)
+struct unreachable_allocator {
+  using value_type = std::byte;
+
+  template <typename>
+  using rebind = unreachable_allocator;
+
+  template <typename X = void>
+  [[noreturn]] std::byte* allocate(size_t) const noexcept {
+    static_assert(noexport::always_false<X>, "must never allocate");
+  }
+  [[noreturn]] void deallocate(void*, size_t) {
+    std::terminate(); // TODO unreachable
+  }
+};
 
 // SooS == Small Object Optimization Size
 // strong exception guarantee for all constructors and assignments,
@@ -856,16 +934,21 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     if (!other.has_value())
       return;
     vtable_ptr = other.vtable_ptr;
-    if (other.memory_allocated()) {
-      size_allocated = other.size_allocated;
-      value_ptr = alloc.allocate(other.size_allocated);
-      try {
+    if constexpr (!std::is_same_v<unreachable_allocator, Alloc>) {
+      if (other.memory_allocated()) {
+        size_allocated = other.size_allocated;
+        value_ptr = alloc.allocate(other.size_allocated);
+        try {
+          invoke<copy>(other, value_ptr);
+        } catch (...) {
+          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), size_allocated);
+          throw;
+        }
+      } else {
         invoke<copy>(other, value_ptr);
-      } catch (...) {
-        alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), size_allocated);
-        throw;
       }
     } else {
+      // unreachable allocator, so 100% other not allocated
       invoke<copy>(other, value_ptr);
     }
   }
@@ -1079,7 +1162,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
  private:
 
   // precodition - has_value() == false
-  void move_value_from(basic_any&& other) {
+  void move_value_from(basic_any&& other) noexcept {
     if (!other.has_value())
       return;
     // `move` is noexcept (invariant of small state)
@@ -1251,7 +1334,7 @@ using cref = const_poly_ref<Methods...>;
 //  f.foo(5, 3.14f);
 #define trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(, NAME, SIGNATURE, __VA_ARGS__)
 #define const_trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(const, NAME, SIGNATURE, __VA_ARGS__)
-// used when creating a trait in body
+// used when creating a trait, in body (see 'trait' example)
 #define AA_ARGS static_cast<AA_Args&&>(args)
 
 namespace noexport {

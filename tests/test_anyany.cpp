@@ -246,7 +246,15 @@ size_t TestConstructors() {
   error_if(leaked_resource_count != 0);
   return error_count;
 }
+void noallocate_test() {
+  using any_noallocate =
+      aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos, aa::copy, aa::move>;
 
+  any_noallocate x = 5;
+  auto y = std::move(x);
+  y = x;
+  auto z = y;
+}
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
@@ -532,8 +540,16 @@ void transmute_test() {
     throw false;
 }
 int main() {
+  noallocate_test();
   transmute_test();
   any_kekable_ kek_0 = kekabl1{"str"};
+  aa::statefull::ref st_r = *&kek_0;
+  aa::statefull::cref st_cr = *&kek_0;
+  aa::statefull::cref st_cr1 = st_r;
+  static_assert(std::is_same_v<decltype(st_cr), decltype(st_cr1)> &&
+                std::is_same_v<decltype(st_cr), aa::statefull::cref<Kekab>>);
+  if (st_r.Kekab(5, 'c') != kek_0.Kekab(5, 'c'))
+    return -500;
   if (kek_0.Kekab(5, 'c') != "strccccc")
     return -200;
   static_assert(std::is_constructible_v<any_kekable_, kekabl1>);
@@ -674,11 +690,11 @@ int main() {
     return -17;
   auto x = std::bit_cast<std::array<void*, 2>>(cpdd);
   (void)x;
-  aa::any_with<example::Print> p = "hello world";
+  aa::any_with<example::print> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
-  aa::invoke<example::Print>(p);
+  aa::invoke<example::print>(p);
   static constexpr int for_r = 0;
   constexpr aa::const_poly_ref<> r = for_r;
   std::string X;
@@ -766,9 +782,6 @@ int main() {
     // with plugin
     drawable0 v0;
     const drawable1 v1;
-    // invoke on non polymorphic values for same interface
-    aa::invoke<Drawi>(v0, 1);
-    aa::invoke<Drawi>(v1, 3);
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;

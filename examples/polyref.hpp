@@ -13,6 +13,9 @@
 /// 
 namespace example {
 
+/*
+Macros generates +- this code
+
 template <typename T>
 struct Print {
   static void do_invoke(const T& self) {
@@ -25,32 +28,42 @@ struct Print {
     }
   };
 };
+*/
+const_trait(print, void(), std::cout << self << std::endl);
+
 // all arguments erased, so we dont create a print function for any
 // set of types like in case with void print(auto&&... args) signature
 // and only create a single erase for every type
-void print(std::initializer_list<aa::const_poly_ref<Print>> l) {
+void print_all(std::initializer_list<aa::cref<print>> l) {
   // aa::invoke<Method> is a functional object with operator()
-  // .with method binds arguments and returns invocable
-  std::ranges::for_each(l, aa::invoke<Print>);
+  std::ranges::for_each(l, aa::invoke<print>);
 }
 
-using any_printable = aa::any_with<Print>;
+using any_printable = aa::any_with<print>;
 // all types created by any_with<Methods...>
 // have inner aliases ptr/ref/const_ptr/const_ref
 // which are aa::polymorphic_ptr/ref
-void print_one(any_printable::const_ref p) {
+void print_one(any_printable::cref p) {
   p.print();
 }
-void may_be_print(any_printable::const_ptr p) {
+void may_be_print(any_printable::cptr p) {
   if (p != nullptr)
     p->print();
 }
 
+// statefull ref contains vtable in itself, so it is most effective way to type erase 1 Method
+// 
+void statefull_print(const aa::statefull::cref<print>& ref) {
+  ref.print();
+}
 }  // namespace example
 
 void example_polyref() {
+  struct no_print {};
+  // trait created from macro enables SFINAE friend construct
+  static_assert(!std::is_constructible_v<example::any_printable, no_print>);
   example::any_printable value = std::string{"Im a polymorphic value"};
-  may_be_print(&value); // operator& returns polymorphic_ptr / const_polymorphic_ptr
-  print_one(*&value);   // operator* of polymorphic_ptr returns polymorphic_ref
-  example::print({5, 10, std::string{"abc"}, std::string_view{"hello world"}});
+  example::may_be_print(&value);  // operator& of poly_ref returns poly_ptr
+  print_one(*&value);             // operator* of poly_ptr returns poly_ref
+  example::print_all({5, 10, std::string{"abc"}, std::string_view{"hello world"}});
 }
