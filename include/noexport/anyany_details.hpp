@@ -165,29 +165,31 @@ consteval size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, T
     return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
 }
 
-#define trait_impl(CONST, NAME, SIGNATURE, ... /*body*/)                                    \
-  template <typename>                                                                       \
-  struct make_method_##NAME {};                                                             \
-                                                                                            \
-  template <typename AA_Ret, typename... AA_Args>                                           \
-  struct make_method_##NAME<AA_Ret(AA_Args...)> {                                           \
-    template <typename AA_Self>                                                             \
-    static constexpr bool requirement = requires(CONST AA_Self & self, AA_Args... args) {   \
-                                          { __VA_ARGS__ } -> ::std::convertible_to<AA_Ret>; \
-                                        };                                                  \
-    template <typename AA_Self>                                                             \
-      requires(::std::is_same_v<AA_Self, ::aa::interface_t> || requirement<AA_Self>)        \
-    struct aa_method {                                                                      \
-      static AA_Ret do_invoke(CONST AA_Self& self, AA_Args... args) { return __VA_ARGS__; } \
-      template <typename AA_CRTP>                                                           \
-      struct plugin {                                                                       \
-        AA_Ret NAME(AA_Args... args) CONST {                                                \
-          return ::aa::invoke<make_method_##NAME<AA_Ret(AA_Args...)>::template aa_method>(  \
-              *static_cast<CONST AA_CRTP*>(this), static_cast<AA_Args&&>(args)...);         \
-        }                                                                                   \
-      };                                                                                    \
-    };                                                                                      \
-  };                                                                                        \
-  template <typename AA_T>                                                                  \
+#define trait_impl(CONST, NAME, SIGNATURE, ... /*body*/)                                       \
+  template <typename>                                                                          \
+  struct make_method_##NAME {};                                                                \
+                                                                                               \
+  template <typename AA_Ret, typename... AA_Args>                                              \
+  struct make_method_##NAME<AA_Ret(AA_Args...)> {                                              \
+    template <typename AA_Self>                                                                \
+    static constexpr bool requirement =                                                        \
+        requires(CONST AA_Self & self, AA_Args... args) { static_cast<AA_Ret>(__VA_ARGS__); }; \
+    template <typename AA_Self>                                                                \
+      requires(::std::is_same_v<AA_Self, ::aa::interface_t> || requirement<AA_Self>)           \
+    struct aa_method {                                                                         \
+      static AA_Ret do_invoke(CONST AA_Self& self, AA_Args... args) {                          \
+        return static_cast<AA_Ret>(__VA_ARGS__);                                               \
+      }                                                                                        \
+      template <typename AA_CRTP>                                                              \
+      struct plugin {                                                                          \
+        AA_Ret NAME(AA_Args... args) CONST {                                                   \
+          return static_cast<AA_Ret>(                                                          \
+              ::aa::invoke<make_method_##NAME<AA_Ret(AA_Args...)>::template aa_method>(        \
+                  *static_cast<CONST AA_CRTP*>(this), static_cast<AA_Args&&>(args)...));       \
+        }                                                                                      \
+      };                                                                                       \
+    };                                                                                         \
+  };                                                                                           \
+  template <typename AA_T>                                                                     \
   using NAME = typename make_method_##NAME<SIGNATURE>::template aa_method<AA_T>
 }  // namespace aa::noexport
