@@ -11,8 +11,6 @@ https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml/badge.svg?branch=main
 https://github.com/kelbon/AnyAny/actions/workflows/gcc.yml)
 (MSVC works too)
 
-Also there are tools for polymorphism such as multidispatching [`visit_invoke`](#visit_invoke) or [`type_switch`](#type_switch)
-
 ### See /examples folder for fast start!
 
 * [`How to build?`](#build)
@@ -22,6 +20,31 @@ Also there are tools for polymorphism such as multidispatching [`visit_invoke`](
 Foundation of library'a type erase part is a _Methods_ - a description which part of the type we want to use after erasing.
 
 Let's create one for erasing types with `void draw()`:
+
+<details>
+  <summary>click here to see short syntax with macros</summary>
+  
+  There are two macros: `trait` and `const_trait`.
+
+  They create _Method_ with support for short invoke syntax like `obj.foo(args...);`
+  
+  Also this adds sfinae friendliness to all constructors of aa::* types
+  
+  For example, for Method 'foo', which accepts int and double + returns float
+  
+  ```C++
+  trait(foo, float(int, double), self.foo(AA_ARGS...));
+  
+  void example(aa::any_with<foo> obj) {
+    // type 'int' does not contains method .foo, which accepts int and double, so it is 'false'
+    static_assert(!std::is_constructible_v<aa::any_with<foo>, int>);
+    if(obj.has_value())
+      float x = obj.foo(5, 3.14); // all works
+  }
+  ```
+  
+</details>
+
 
 ```C++
 // For each type T do value.draw()
@@ -145,19 +168,6 @@ Predefined _Methods_:
 </details>
 
 <details>
-  <summary>copy_with&ltAlloc, SooS&gt</summary>
-  
-  used for creation copyable `basic_any_with` with custom `Allocator`
-  
-  example:
-  ```C++
-  // 16 here is a Small Object Optimization buffer size
-  using my_any_with_alloc = aa::basic_any_with<MyAlloc, 16, aa::copy_with<MyAlloc, 16>::template method>;
-  ```
-
-</details>
-
-<details>
   <summary>More formally about Methods</summary>
   
 _Method_ is a template class/alias with one type argument, such that specializations of _Method_ for each type `T` contains addressable static method `do_invoke`
@@ -192,14 +202,15 @@ Polymorphic types:
 * [`basic_any_with<Methods...>`](#basic_any_with)
 * [`poly_ref<Methods...>`](#poly_ref)
 * [`poly_ptr<Methods...>`](#poly_ptr)
-* [`const_poly_ref<Methods...>`](#const_poly_ref)
-* [`const_poly_ptr<Methods...>`](#const_poly_ptr)
+* [`cref<Methods...>`](#const_poly_ref)
+* [`cptr<Methods...>`](#const_poly_ptr)
+* [`statefull::ref<Methods...>`](#statefull_ref)
+* [`statefull::cref<Methods...>`](#statefull_cref)
 
 Actions:
 
 * [`any_cast<T>`](#any_cast)
 * [`invoke<Method>`](#invoke)
-* [`invoke_unsafe<Method>`](#invoke_unsafe)
 * [`type_switch`](#type_switch)
 * [`visit_invoke`](#visit_invoke)
 
@@ -294,6 +305,11 @@ any_with<Foo> y = GoodType{};
 ### `any_with`
 Accepts any number of _Methods_ and creates a type which can hold any value, which supports those _Methods_. Similar to runtime concept
 
+There are tags 'aa::force_stable_pointers' to force allocoate, so `poly_ptr/cptr` to `any_with<...>` will not be invalidated after move.
+
+And `aa::unreachable_allocator`, which will break compilation, if `basic_any_with<unreachable_allocator, ...>` tries to allocate memory.
+So you can force no-allocating in types
+
 <details>
 <summary>
 Interface of created type
@@ -337,6 +353,11 @@ struct Any {
   // returns true if poly_ptr/ref to *this will not be invalidated after moving value
   bool is_stable_pointers() const noexcept
  
+  // returns count of bytes sufficient to store current value
+  // (not guaranteed to be smallest)
+  // return 0 if !has_value()
+  size_t sizeof_now() const noexcept;
+  
   // returns descriptor_v<void> if value is empty
   type_descriptor_t type_descriptor() const noexcept;
  
@@ -430,7 +451,10 @@ struct poly_ref {
 </details>
 
 ### `const_poly_ref`
+
 Same as `poly_ref`, but can be created from `poly_ref` and `const T&`
+
+`aa::cref` is a template alias to `aa::const_poly_ref`
 
 Note: do not extends lifetime
 
@@ -473,6 +497,8 @@ struct poly_ptr {
  
   // returns raw pointer to value
   void* raw() const noexcept;
+  // NOTE: returns unspecified value if *this == nullptr
+  const vtable<Methods...>* raw_vtable_ptr() const noexcept;
   
   // returns descriptor_v<void> is nullptr
   descriptor_t type_descriptor() const noexcept;
@@ -492,6 +518,33 @@ struct poly_ptr {
 ### `const_poly_ptr`
 Same as `poly_ptr`, but can be created from `poly_ptr` and `const T*` / `Any*`
 
+`aa::cptr` is a template alias to `aa::const_poly_ptr`
+
+### `statefull_ref`
+`aa::statefull::ref<Methods...>` contains vtable in itself.
+
+Also can contain references to C-arrays and functions without decay
+
+It has pretty simple interface, only creating from `T&/poly_ref` and invoking(by aa::invoke for example)
+
+It will have maximum performance if you need to erase 1-2 _Methods_ and dont need to use `any_cast`.
+
+Typical use-case - creating a function_ref
+
+```C++
+template <typename Signature>
+using function_ref = aa::statefull::cref<aa::call<Signature>::template method>;
+
+bool foo(int) { return true; }
+
+void example() {
+  function_ref<bool(int) const> ref = &foo;
+  ref(5);
+}
+```
+
+### `statefull_cref`
+Same as `statefull::ref`, but may be created from `const T&` and `aa::cref`
 
 # Actions
 
@@ -561,7 +614,7 @@ using any_comparable = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 void Foo() {
   any_comparable value = 5;
   value.emplace<std::vector<int>>({ 1, 2, 3, 4}); // constructed in-place
-  // any_cast returns pointer to vector<int>(or nullptr if any do not containts vector<int>)
+  // any_cast returns pointer to vector<int>(or nullptr if any do not contain vector<int>)
   aa::any_cast<std::vector<int>>(std::addressof(value))->back() = 0;
   // version for reference
   aa::any_cast<std::vector<int>&>(value).back() = 0;
@@ -570,71 +623,28 @@ void Foo() {
 }
 ```
 ### `invoke`
-Functional object with operator().
+Functional object with operator(), which accepts `any_with/ref/cref/statefull::ref/statefull::cref` as first argument and then all _Method_'s arguments and invokes _Method_
 
-Accepts `any_with` or `poly_ref` and _Method_ arguments. Invokes _Method_.
+If arg is const `any_with` or `cref`, then only **const Methods** permitted.
 
-If arg is const `any_with` or `const_poly_ref`, then only **const Methods** permitted.
-
-Throws aa::empty_any_method_call in any is empty
-
-<details>
-<summary>Interface</summary>
-
-```C++
-
-template<TTA Method>
-struct invoke_fn {
-
-  // Here Args... are really Method arguments, so implicit conversions possible
- 
-  template <any_x U>
-  result_t<Method> operator()(U&& any, Args... args) const;
-  
-  template <any_x U>
-  result_t<Method> operator()(const U& any, Args... args) const {
-    static_assert(const_method<Method>);
-    //
-  }
-
-  // ill-formed if p has no Method
-  result_t<Method> operator()(poly_ref<...> p, Args... args) const;
- 
-  result_t<Method> operator()(const_poly_ref<Methods...> p, Args... args) const {
-    static_assert(const_method<Method>);
-    //
-  }
-
-  // invokes Method without type erasure (for common interface for all values)
-  template<typename T>
-  requires (!any_x<T>)
-  result_t<Method> operator()(T&& value, Args... args) const;
- 
-  // binds arguments and returns invocable<result_t<Method>(auto&&)> for passing to algorithms
-  // each invoke of result can create copies of args, because assumes to be invoked more then one time
-  constexpr auto with(Args... args) const;
-
-};
-
-```
-
-</details>
+precondition: any.has_value() == true
 
 Example:
 ```C++
+
+void example(any_with<Say> pet) {
+  if(!pet.has_value())
+    return;
+  // invokes Method `Say`, passes std::cout as first argument
+  aa::invoke<Say>(pet, std::cout);
+}
 void foo(std::vector<aa::poly_ref<Foo>> vec) {
+  // invokes Method `Foo` without arguments for each value in `vec`
   std::ranges::for_each(vec, aa::invoke<Foo>);
 }
 
-any_animal Pet = Cat{};
-// operator & creates poly_ptr,
-// then operator* creates poly_ref
-aa::invoke<Say>(*&Pet, std::cout);
 
 ```
-
-### `invoke_unsafe`
-Same as `invoke`, but undefined behavior if any has no value instead of exception throwing
 
 ### `type_switch`
 
@@ -666,7 +676,7 @@ struct type_switch_fn {
   // if no one case succeded returns 'v'
   Result default_(Result v);
   
-  // if no on ecase succeded returns 'nullopt'
+  // if no one case succeded returns 'nullopt'
   std::optional<Result> no_default();
 
 };
@@ -676,13 +686,15 @@ struct type_switch_fn {
 </details>
 
 Example:
+
 ```C++
   Result val = aa::type_switch<Result>(value)
       .case_<float>(foo1)
       .case_<bool>(foo2)
       .cases<char, int, unsigned char, double>(foo3)
-      .default(15);
+      .default_(15);
 ```
+
 ### `visit_invoke`
 
 Its... runtime overload resolution! `aa::make_visit_invoke<Foos...>` creates overload set object with method `.resolve(Args...)`,
