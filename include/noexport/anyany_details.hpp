@@ -33,6 +33,9 @@ struct tuple_base {};
 
 template <size_t... Is, typename... Ts>
 struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
+  constexpr tuple_base() noexcept
+    requires(sizeof...(Ts) != 0)
+  = default;
   constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
   }
 };

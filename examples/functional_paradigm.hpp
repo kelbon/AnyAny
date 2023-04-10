@@ -56,6 +56,9 @@ using move_only_function = basic_function<Signature, aa::move>;
 template <typename Signature>
 using function_ref = typename function<Signature>::ref;
 
+template <typename Signature>
+using effective_function_ref = aa::statefull::cref<aa::call<Signature>::template method>;
+
 using any = aa::any_with<aa::copy, aa::move>;
 
 void example1_foo(int x, float y, double z) {
@@ -63,7 +66,10 @@ void example1_foo(int x, float y, double z) {
 }
 
 void example1() {
-  function<void(int, float, double)> f0 = example1_foo;
+  auto* fn_ptr = &example1_foo;
+  effective_function_ref<void(int, float, double) const> f1 = fn_ptr;
+  f1(5, 5.f, 5.);
+  function<void(int, float, double)> f0 = &example1_foo;
   f0({5, 5.f, 10.});
   f0(5, 5, 10);
   f0(5)(5, 10);
