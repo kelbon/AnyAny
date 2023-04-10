@@ -514,22 +514,21 @@ struct test_method {
 
 template<typename T>
 struct visit {
-  trait(method, void(const T&), self(args...));
+  constrained_trait(method, requires(std::copy_constructible<Self>), void(const T&), self(args...));
 };
 template<typename... Ts>
 using visitor_for = aa::any_with<visit<Ts>::template method...>;
 
-trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
+const_trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
 
 using any_kekable_ = aa::any_with<Kekab>;
 
 struct kekabl1 {
   std::string s = "abc";
-  std::string kekab(int i, char k) {
+  std::string kekab(int i, char k) const {
     return s + std::string(i, (char)k);
   }
 };
-
 void transmute_test() {
   aa::any_with<aa::move, aa::copy> v1;
   v1 = std::string("abc");
@@ -539,13 +538,78 @@ void transmute_test() {
   if (copyv2.type_descriptor() != copyv1.type_descriptor())
     throw false;
 }
+void statefull_test() {
+  int i = 5;
+  aa::cref<aa::copy, aa::move, aa::equal_to> r = i;
+  aa::statefull::cref sr = r;
+  static_assert(std::is_same_v<decltype(sr), aa::statefull::cref<aa::copy, aa::move, aa::equal_to>>);
+  aa::statefull::cref<aa::move> sr1 = r;
+  aa::statefull::cref<aa::move> sr2 = sr;
+  kekabl1 val;
+  aa::statefull::ref<aa::copy, Kekab, aa::move> rr = val;
+  if (rr.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  auto copyrr = rr;
+  if (copyrr.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::ref<Kekab> rrkk = rr;
+  if (rrkk.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::cref crrkk = rrkk;
+  if (crrkk.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::cref<Kekab> crrkk2 = rr;
+  if (crrkk2.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  (void)sr1, (void)sr2;
+}
+
+void ptr_behavior_test() {
+  std::string s = "hello";
+  int x = 10;
+  aa::poly_ptr<example::print> ptr;
+  if (ptr.raw() != nullptr)
+    throw false;
+  if (ptr.raw_vtable_ptr() != nullptr)
+    throw false;
+  aa::poly_ptr<example::print> ptr1 = &s;
+  ptr1->print();
+  aa::poly_ptr<example::print> ptr2 = &x;
+  ptr2->print();
+  ptr1 = ptr2;
+  ptr2 = nullptr;
+  if (ptr2)
+    throw false;
+  if (ptr2.type_descriptor() != aa::descriptor_v<void>)
+    throw false;
+  aa::const_poly_ptr p = ptr1;
+  if (p != ptr1)
+    throw false;
+}
+
 int main() {
+  ptr_behavior_test();
   noallocate_test();
   transmute_test();
+  statefull_test();
   any_kekable_ kek_0 = kekabl1{"str"};
+  static_assert(
+      std::is_same_v<aa::any_with<aa::copy>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ref<>>>);
+  static_assert(
+      std::is_same_v<aa::any_with<aa::copy, aa::move>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>>>);
+  static_assert(std::is_same_v<aa::cref<aa::copy, aa::move>,
+                               aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>, aa::cref>>);
+  static_assert(std::is_same_v<aa::cref<aa::copy, Kekab, example::print, aa::move>,
+                               aa::merged_any_t<aa::poly_ref<aa::copy, Kekab, example::print>,
+                                                aa::poly_ptr<aa::move, aa::copy, example::print>, aa::cref>>);
+  static_assert(std::is_same_v<aa::cref<aa::copy, aa::move, example::print, Kekab>,
+                               aa::merged_any_t<aa::poly_ref<aa::copy, aa::move, example::print>,
+                                                aa::any_with<Kekab, aa::move, example::print>, aa::cref>>);
   aa::statefull::ref st_r = *&kek_0;
   aa::statefull::cref st_cr = *&kek_0;
   aa::statefull::cref st_cr1 = st_r;
+  aa::statefull::cref<> st_cr2 = *&kek_0;
+  (void)st_cr2;
   static_assert(std::is_same_v<decltype(st_cr), decltype(st_cr1)> &&
                 std::is_same_v<decltype(st_cr), aa::statefull::cref<Kekab>>);
   if (st_r.Kekab(5, 'c') != kek_0.Kekab(5, 'c'))
@@ -560,13 +624,15 @@ int main() {
   visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
     std::cout << arg << '\n';
   };
+  auto copyable_fn = [](auto&&) {
+  };
+  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
+    (void)x;
+  };
   aa::invoke<visit<int>::method>(vtor, 5);
   aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
-  auto vtable = aa::vtable_for<int, test_method>;
-  int tval = 10;
-  auto tval_ref = vtable.create_ref_to((void*)&tval);
-  if (aa::invoke<test_method>(tval_ref, 15.) != 25)
-    return -222;
+  static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);
+  static_assert(std::is_constructible_v<decltype(vtor), decltype(copyable_fn)>);
   static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
@@ -767,9 +833,6 @@ int main() {
   aa::invoke<M2>(fi2, 11., 12);
   aa::invoke<M2>(fi3, 11., 12);
   aa::invoke<M2>(*fi3p, 11., 12);
-  int i = 1;
-  if (i && cfi2.has_value())  // consteval static member function of reference, true always
-    std::cout << "works\n";
   constexpr auto j0 =
       aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
   constexpr auto j1 = aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
@@ -910,7 +973,6 @@ int main() {
   val = std::vector<int>{1, 2, 3, 4};
   aa::example::example1();
   example_draw();
-  example_draw_explicit();
   example_polyref();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});

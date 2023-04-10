@@ -80,9 +80,11 @@ concept poly_traits = requires(T val, int some_val) {
 
 template<typename T>
 struct is_polymorphic {
-  static constexpr inline bool value = requires(T v) {
-                                         { v.type_descriptor() } -> std::same_as<descriptor_t>;
-                                       };
+  static constexpr inline bool value = (
+      requires { typename std::remove_cvref_t<T>::aa_polymorphic_tag; } ||
+      requires(T v) {
+        { v.type_descriptor() } -> std::same_as<descriptor_t>;
+      });
 };
 template<typename T>
 using is_not_polymorphic = std::negation<is_polymorphic<T>>;
