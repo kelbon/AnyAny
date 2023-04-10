@@ -654,7 +654,8 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
             mate::get_vtable_value(r).table)...};
     return result;
   }
-
+  template<typename X>
+  static constexpr bool deduct_guides_disabler = requires(X value) { FOO(value); };
  public:
   using aa_polymorphic_tag = int;
   AA_TRIVIAL_COPY_EXPLICIT_REBIND(ref);
@@ -673,8 +674,9 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
   // accepts poly_ref and statefull::ref with more Methods
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  constexpr ref(const auto& x) noexcept
-    requires requires { FOO(x); }
+  template<typename X>
+  constexpr ref(const X& x) noexcept
+    requires(deduct_guides_disabler<X>)
       : ref(FOO(x)) {
   }
   // operator poly_ref will be wrong, because it breakes any_cast invariant(vtable must be part of
@@ -745,13 +747,15 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
     return FOO(*aa::const_pointer_cast(&p));
   }
-
+  template<typename X>
+  static constexpr bool deduct_guides_disabler = requires(X value) { FOO(value); };
  public:
   // accepts poly_ref/const_poly_ref and statefull::ref/cref with more Methods, effectivelly converts
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  constexpr cref(const auto& x)
-    requires requires { FOO(x); }
+  template<typename X>
+  constexpr cref(const X& x)
+    requires(deduct_guides_disabler<X>)
       : cref(FOO(x)) {
   }
   // operator const_poly_ref will be wrong, because it breakes any_cast invariant(vtable must be
