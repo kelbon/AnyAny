@@ -41,6 +41,12 @@ struct Square {
   int x;
 };
 
+struct Triangle {
+  void draw(std::ostream& out, int val) const {
+    out << val << "Triangle";
+  }
+};
+
 void example_draw() {
   any_drawable d = Circle{};
   d.emplace<Square>();  // event without copy / move methods you can emplace new type into Any 
@@ -53,60 +59,4 @@ void example_draw() {
   d0 = std::move(d1);
   // invoke knows what type Draw accepts, so you can use {} and implicit conversations!
   aa::invoke<Draw>(d0, std::cout, {});
-}
-
-/// 
-/// Same example, but with explicit interface and plugin for inner call of method like Any.method(Args...)
-/// 
-
-
-// OR you can write a method with plugin(part of interface of result Any type)
-// and requirement of explicit interface for types
-template <typename T>
-struct DrawExplicit {
-  // optional, requires all type to explicitly write,
-  // that they are satisfies this method(using satisfies = aa::satisfies<Draw>)
-  using explicit_interface = void;
-
-  // And you can add interface plugin, Any with this method will have methods from plugin
-  template <typename CRTP>
-  struct plugin {
-    void draw(std::ostream& out, int val) const {
-      aa::invoke<DrawExplicit>(*static_cast<const CRTP*>(this), out, val);
-    }
-  };
-
-  static void do_invoke(T self, std::ostream& out, int val) {
-    self.draw(out, val);
-  }
-};
-// If method requires explicit interface you can specialize variable for type or write
-// using satisfies = aa::satisfies<Method1, Method2...>; in type
-namespace aa {
-
-template <>
-constexpr inline bool satisfies_v<Circle, DrawExplicit> = true;
-
-template <>
-constexpr inline bool satisfies_v<Square, DrawExplicit> = true;
-
-}  // namespace aa
-
-struct Triangle {
-  // another way...
-  using satisfies = aa::satisfies<DrawExplicit>;
-
-  void draw(std::ostream& out, int val) const {
-    out << val << "Triangle";
-  }
-};
-
-using any_drawable_v2 = aa::any_with<DrawExplicit>;
-
-void example_draw_explicit() {
-  any_drawable_v2 v2 = Circle{};
-
-  v2.draw(std::cout, 1);  // already has .draw method from plugin
-  v2.emplace<Triangle>();
-  aa::invoke<DrawExplicit>(v2, std::cout, 0);
 }

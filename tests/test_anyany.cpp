@@ -514,7 +514,7 @@ struct test_method {
 
 template<typename T>
 struct visit {
-  trait(method, void(const T&), self(args...));
+  constrained_trait(method, requires(std::copy_constructible<Self>), void(const T&), self(args...));
 };
 template<typename... Ts>
 using visitor_for = aa::any_with<visit<Ts>::template method...>;
@@ -529,9 +529,6 @@ struct kekabl1 {
     return s + std::string(i, (char)k);
   }
 };
-// TODO merge 2 Methods lists? without duplicates
-// TODO contrained trait? With concept... (instead of requirement)
-// TODO ещё copy trait или как то выразить что копируется каждый раз
 void transmute_test() {
   aa::any_with<aa::move, aa::copy> v1;
   v1 = std::string("abc");
@@ -592,7 +589,6 @@ int main() {
   static_assert(std::is_same_v<aa::cref<aa::copy, aa::move, example::print, Kekab>,
                                aa::merged_any_t<aa::poly_ref<aa::copy, aa::move, example::print>,
                                                 aa::any_with<Kekab, aa::move, example::print>, aa::cref>>);
- // TODO static asserts aa::merged_any<
   aa::statefull::ref st_r = *&kek_0;
   aa::statefull::cref st_cr = *&kek_0;
   aa::statefull::cref st_cr1 = st_r;
@@ -612,9 +608,15 @@ int main() {
   visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
     std::cout << arg << '\n';
   };
+  auto copyable_fn = [](auto&&) {
+  };
+  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
+    (void)x;
+  };
   aa::invoke<visit<int>::method>(vtor, 5);
   aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
-
+  static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);
+  static_assert(std::is_constructible_v<decltype(vtor), decltype(copyable_fn)>);
   static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
   static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
@@ -955,7 +957,6 @@ int main() {
   val = std::vector<int>{1, 2, 3, 4};
   aa::example::example1();
   example_draw();
-  example_draw_explicit();
   example_polyref();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});

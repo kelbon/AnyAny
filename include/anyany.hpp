@@ -57,8 +57,6 @@ struct interface_t {
   }
 };
 
-// ######################## explicit_interface support ########################
-
 // just unique type for every Method, because i need to inherit from plugins
 template <TTA Method>
 struct nullplugin {};
@@ -78,30 +76,6 @@ struct plugin<Method, Any> : std::type_identity<typename Method<interface_t>::te
 
 template <TTA Method, typename Any>
 using plugin_t = typename plugin<Method, Any>::type;
-
-template <TTA Method>
-concept has_explicit_interface = requires { typename Method<interface_t>::explicit_interface; };
-
-template <TTA Method>  // no matter nullplugin or what here, it is using for optimization
-using satisfy = nullplugin<Method>;
-
-// used if Method requires explicit subscribe,
-// for example : struct A { using satisfies = aa::satisfies<Fooable, Drawable>; };
-template <TTA... Methods>
-struct satisfies : satisfy<Methods>... {
-  static_assert((has_explicit_interface<Methods> && ...), "It's useless to subscribe if it is not required");
-};
-
-// You can add specialization for your type,
-// so it is equal to 'using satisfies = aa::satisfies<Method>;' in type
-template <typename T, TTA... Methods>
-constexpr inline bool satisfies_v = false;
-template <TTA... Methods>
-constexpr inline bool satisfies_v<interface_t, Methods...> = true;
-
-// true if satisfies_v specialized for T or T has inner 'using satisfies = aa::satisfies<...Method...>'
-template <typename T, TTA Method>
-concept is_satisfies = satisfies_v<T, Method> || std::is_base_of_v<satisfy<Method>, typename T::satisfies>;
 
 // ######################## compilt time information about Methods(Traits) ########################
 
@@ -136,10 +110,6 @@ template <typename T, TTA Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
   static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
     using self_sample = self_sample_t<Method>;
-    if constexpr (has_explicit_interface<Method>)
-      static_assert(is_satisfies<T, Method>,
-                    "Method requires explicit subscribe and your type not satisfies it explicitly(using "
-                    "satisfies = aa::satisfies<MethodName>;");
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
@@ -816,8 +786,8 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR POLYMORPHIC REF
 
   template <TTA... Methods>
-  result_t<Method> operator()(poly_ref<Methods...> ref, Args... args) const {
-    return AA_VTABLE_CALL(ref, vtable_ptr, args, ->);
+  result_t<Method> operator()(poly_ref<Methods...> r, Args... args) const {
+    return AA_VTABLE_CALL(r, vtable_ptr, args, ->);
   }
   template <TTA... Methods>
   result_t<Method> operator()(const_poly_ref<Methods...> ptr, Args... args) const {
@@ -828,13 +798,13 @@ struct invoke_fn<Method, type_list<Args...>> {
   // FOR STATEFULL REF
 
   template <TTA... Methods>
-  result_t<Method> operator()(const statefull::ref<Methods...>& ref, Args... args) const {
-    return AA_VTABLE_CALL(ref, vtable_value, args, .);
+  result_t<Method> operator()(const statefull::ref<Methods...>& r, Args... args) const {
+    return AA_VTABLE_CALL(r, vtable_value, args, .);
   }
   template <TTA... Methods>
-  result_t<Method> operator()(const statefull::cref<Methods...>& ref, Args... args) const {
+  result_t<Method> operator()(const statefull::cref<Methods...>& r, Args... args) const {
     static_assert(const_method<Method>);
-    return AA_VTABLE_CALL(ref, vtable_value, args, .);
+    return AA_VTABLE_CALL(r, vtable_value, args, .);
   }
 #undef AA_VTABLE_CALL
 };
@@ -1393,16 +1363,49 @@ using cptr = const_poly_ptr<Methods...>;
 template <TTA... Methods>
 using cref = const_poly_ref<Methods...>;
 
-// Creates Method with required signature and body, it also have interface
-// with method named NAME
+//
+// HOW TO USE:
+// 
+// Each of these macros creates a Method with required signature and body
+// 
+// paramters:
+// 
+// 'NAME'      - name of resulting Method, which may be used later in aa::any_with/poly_ref etc
+// Also adds methood named 'NAME' in poly_ref/any_with etc types
+// 'SIGNATURE' - what trait accepts and returns. example: int(float, double)
+// 'BODY'      - how to invoke Method on concrete value of erased type
+//    BODY may use defined in macros parameters:
+//      'self' - is an object of type which will be erased
+//      'Self' - type of 'self'
+//      'args' - pack of arguments which trait accepts, for example,
+//              for SIGNATURE int(float, double) 'args' is a pack of float and double
+// 
+// example:
+//      self.foo(args...)
+// 
+// 'REQUIREMENT' - requirement for 'Self' to be erased, trait exist only for types, for which requirement == true
+//      May use 'Self' (type of erased value)
+// example:
+//      requires(std::copy_constructible<Self>)
+// 
+// Note: use macros AA_ARGS in BODY for arguments perfect forwarding
 // Note: 'return' added before BODY anyway
 // Note: If return type contains ',', then you can use alias or write Method by hands
-// Usage example:
+//
+// example:
 //  trait(foo, std::string(int, float), self.foo(AA_ARGS...));
 //  any_with<foo> f = ..;
 //  f.foo(5, 3.14f);
-#define trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(, NAME, SIGNATURE, __VA_ARGS__)
-#define const_trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(const, NAME, SIGNATURE, __VA_ARGS__)
+#define trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(, NAME,, SIGNATURE, __VA_ARGS__)
+// same as for 'trait', but may be invoked on const Any
+#define const_trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(const, NAME,, SIGNATURE, __VA_ARGS__)
+// same as 'trait', but with additional requirement
+// example:
+//  constrained_trait(foo, requires(std::copy_constructible<Self>), int(float, bool), self.do_some(AA_ARGS...)
+#define constrained_trait(NAME, REQUIREMENT, SIGNATURE, ... /*BODY*/) trait_impl(, NAME, REQUIREMENT, SIGNATURE, __VA_ARGS__)
+// same as 'constrained_trait', but may be invoked on const Any
+#define constrained_const_trait(NAME, REQUIREMENT, SIGNATURE, ... /*BODY*/) \
+  trait_impl(const , NAME, REQUIREMENT, SIGNATURE, __VA_ARGS__)
 // used when creating a trait, in body (see 'trait' example)
 #define AA_ARGS static_cast<AA_Args&&>(args)
 
@@ -1564,8 +1567,8 @@ Out<Methods...> insert_ttas(tta_list<Methods...>);
 // removes duplicates, behaves as std::set merge
 // example: merged_any_t<poly_ptr<A, B, C>, poly_ref<D, A, C>> == any_with<A, B, C, D>
 template<typename T, typename U, template<TTA...> typename Out = aa::any_with>
-using merged_any_t = decltype(insert_ttas<Out>(merge_impl(typename noexport::extract_methods<T>::type{},
-                                                          typename noexport::extract_methods<U>::type{})));
+using merged_any_t = decltype(noexport::insert_ttas<Out>(noexport::merge_impl(
+    typename noexport::extract_methods<T>::type{}, typename noexport::extract_methods<U>::type{})));
 
 // Creates a Method from invocable object with given signature
 // usage example:
