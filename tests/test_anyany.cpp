@@ -519,13 +519,13 @@ struct visit {
 template<typename... Ts>
 using visitor_for = aa::any_with<visit<Ts>::template method...>;
 
-trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
+const_trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
 
 using any_kekable_ = aa::any_with<Kekab>;
 
 struct kekabl1 {
   std::string s = "abc";
-  std::string kekab(int i, char k) {
+  std::string kekab(int i, char k) const {
     return s + std::string(i, (char)k);
   }
 };
@@ -545,6 +545,22 @@ void statefull_test() {
   static_assert(std::is_same_v<decltype(sr), aa::statefull::cref<aa::copy, aa::move, aa::equal_to>>);
   aa::statefull::cref<aa::move> sr1 = r;
   aa::statefull::cref<aa::move> sr2 = sr;
+  kekabl1 val;
+  aa::statefull::ref<aa::copy, Kekab, aa::move> rr = val;
+  if (rr.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  auto copyrr = rr;
+  if (copyrr.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::ref<Kekab> rrkk = rr;
+  if (rrkk.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::cref crrkk = rrkk;
+  if (crrkk.Kekab(4, 'a') != "abcaaaa")
+    throw false;
+  aa::statefull::cref<Kekab> crrkk2 = rr;
+  if (crrkk2.Kekab(4, 'a') != "abcaaaa")
+    throw false;
   (void)sr1, (void)sr2;
 }
 
