@@ -1,13 +1,23 @@
 #pragma once
-
+#if __cplusplus >= 202002
+#define AA_HAS_CPP20
+#define AA_CONCEPT(...) __VA_ARGS__
+#define AA_IF_HAS_CPP20(...) __VA_ARGS__
+#define AA_CONSTEVAL_CPP20 consteval
 #include <compare>
+#else
+#define AA_IF_HAS_CPP20(...)
+#define AA_CONSTEVAL_CPP20 constexpr // TODO use everywhere
+#define AA_CONCEPT(...) typename
+#endif
+
 #include <string_view>
 
 namespace aa::noexport {
 
 // name 'n' because need to reduce name size
 template <typename T>
-consteval const char* n() {
+constexpr const char* n() {
 #if defined(__GNUC__) && !defined(__clang__)
   return __PRETTY_FUNCTION__ + sizeof("consteval const char* aa::noexport::n() [with T =");
 #elif defined(__clang__)
@@ -43,12 +53,15 @@ template <typename T>
 constexpr const char* descriptor = n<T>();
 #endif
 
-// inlinable(std::strcmp no)
-// assumes a && b != nullptr
-inline constexpr std::strong_ordering strcmp(const char* l, const char* r) noexcept {
+// precondition: !!a && !!b
+inline constexpr auto strcmp(const char* l, const char* r) noexcept {
   for (; *l == *r && *l != '\0'; ++l, ++r)
     ;
+#ifdef AA_HAS_CPP20
   return *l <=> *r;
+#else
+  return *l == *r;
+#endif
 }
 
 }  // namespace aa::noexport

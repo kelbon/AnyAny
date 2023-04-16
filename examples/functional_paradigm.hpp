@@ -26,25 +26,6 @@ struct basic_function<R(Head, Args...), Methods...>
   using base_t::base_t;
   using base_t::operator=;
   using base_t::operator();
-
-  // support currying and invoking from tuple like in functional languages
-
-  //  all functions just accepts a tuple of arguments if you think about it
-  R operator()(std::tuple<Head, Args...> args_tpl) {
-    return std::apply(
-        [&](Head&& arg, Args&&... args) {
-          return (*this)(static_cast<Head&&>(arg), static_cast<Args&&>(args)...);
-        },
-        std::move(args_tpl));
-  }
-  // exposition only (can be more effective with && versions of operator())
-  [[nodiscard("currying!")]] auto operator()(Head value)
-    requires(sizeof...(Args) > 0)
-  {
-    return [&]<typename... Tail>(aa::type_list<Tail...>) {
-      return basic_function<R(Args...), Methods...>(std::bind_front(*this, static_cast<Head&&>(value)));
-    }(aa::type_list<Head, Args...>{});
-  }
 };
 
 template <typename Signature>
@@ -57,7 +38,7 @@ template <typename Signature>
 using function_ref = typename function<Signature>::ref;
 
 template <typename Signature>
-using effective_function_ref = aa::statefull::cref<aa::call<Signature>::template method>;
+using effective_function_ref = aa::stateful::cref<aa::call<Signature>::template method>;
 
 using any = aa::any_with<aa::copy, aa::move>;
 
@@ -70,10 +51,7 @@ void example1() {
   effective_function_ref<void(int, float, double) const> f1 = fn_ptr;
   f1(5, 5.f, 5.);
   function<void(int, float, double)> f0 = &example1_foo;
-  f0({5, 5.f, 10.});
-  f0(5, 5, 10);
-  f0(5)(5, 10);
-  f0(5)(5)(10);
+
   f0 = [](int, float, double) {
     // some other function
   };

@@ -7,7 +7,36 @@
 #include "type_descriptor.hpp"
 #include "noexport/anyany_details.hpp"
 
+namespace aa {
+template <typename T>
+concept lambda_without_capture =
+    std::default_initializable<std::remove_cvref_t<T>> && requires {
+                                                            { &std::remove_cvref_t<T>::operator() };
+                                                          };
+}
 namespace aa::noexport {
+
+template <typename Class, typename R, typename... Args>
+struct any_method_traits<R (Class::*)(Args...) const> {
+  using result_type = R;
+  static constexpr bool is_noexcept = false;
+  using all_args = aa::type_list<Args...>;
+  using decay_args = aa::type_list<std::decay_t<Args>...>;
+  static constexpr std::size_t args_count = sizeof...(Args);
+  static constexpr std::array args_const = {is_const_arg<Args>()...};
+};
+template <typename Class, typename R, typename... Args>
+struct any_method_traits<R (Class::*)(Args...) const noexcept> {
+  using result_type = R;
+  static constexpr bool is_noexcept = true;
+  using all_args = aa::type_list<Args...>;
+  using decay_args = aa::type_list<std::decay_t<Args>...>;
+  static constexpr std::size_t args_count = sizeof...(Args);
+  static constexpr std::array args_const = {is_const_arg<Args>()...};
+};
+
+template <lambda_without_capture T>
+struct any_method_traits<T> : any_method_traits<decltype(&T::operator())> {};
 
 // minimal flat_map impl for invoke_match
 template <typename Key, typename Value, std::size_t N, typename Compare = std::less<Key>>

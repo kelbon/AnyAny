@@ -1,18 +1,16 @@
 #include "anyany.hpp"
+
 #include <array>
 #include <functional>
 #include <iostream>
-#include <compare>
-#include <ranges>
 #include <algorithm>
 #include <random>
-#include <stop_token>
 #include <list>
 #include <unordered_set>
 #include <memory_resource>
 
-#include "functional_paradigm.hpp" // example 0
-#include "basic_usage.hpp" // example 1
+#include "functional_paradigm.hpp"
+#include "basic_usage.hpp"
 #include "polyref.hpp"
 
 template<typename Alloc = std::allocator<char>>
@@ -33,9 +31,11 @@ struct destroy_me {
   std::shared_ptr<void> ptr;
   destroy_me() : ptr(padding, deleter_resource{}) {
     leaked_resource_count++;
-    std::ranges::fill(padding, 1);
+    std::fill(std::begin(padding), std::end(padding), 1);
   }
-  bool operator==(const destroy_me&) const = default;
+  bool operator==(const destroy_me& x) const {
+    return ptr == x.ptr;
+  }
 
   void check() const {
     for (auto v : padding)
@@ -59,7 +59,13 @@ struct destroy_me_throw : destroy_me<Sz> {
 };
 
 using nomove_any = aa::any_with<>;
-
+struct nomove {
+  template <typename T>
+  nomove(int, T) {
+  }
+  nomove(nomove&&) = delete;
+  void operator=(nomove&&) = delete;
+};
 #define error_if(Cond) error_count += static_cast<bool>((Cond));
 size_t TestConstructors() {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
@@ -68,7 +74,7 @@ size_t TestConstructors() {
   constexpr auto Xy = [] {
   };
   // nomove nocopy construct
-  nomove_any a0(std::in_place_type<std::stop_callback<decltype(Xy)>>, std::stop_token{}, Xy);
+  nomove_any a0(std::in_place_type<nomove>, 5, Xy);
   a0.emplace<int>();
   a0.reset();
 
@@ -96,9 +102,9 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me<110>>);
     vec.emplace_back(std::in_place_type<destroy_me<120>>);
     vec.emplace_back(std::make_unique<destroy_me<120>>());
-    std::ranges::shuffle(vec, generator);
+    std::shuffle(begin(vec), end(vec), generator);
     std::vector<any_movable<>> storage;
-    std::ranges::move(vec, std::back_inserter(storage));
+    std::move(begin(vec), end(vec), std::back_inserter(storage));
   }
   {
     std::vector<any_movable<>> vec;
@@ -121,9 +127,9 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me_throw<110>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
     vec.emplace_back(std::make_unique<destroy_me_throw<120>>());
-    std::ranges::shuffle(vec, generator);
+    std::shuffle(begin(vec), end(vec), generator);
     std::vector<any_movable<>> storage;
-    std::ranges::move(vec, std::back_inserter(storage));
+    std::move(begin(vec), end(vec), std::back_inserter(storage));
   }
   // COPY + MOVE
   error_if(leaked_resource_count != 0);  // changed by destroy_me objects
@@ -146,9 +152,9 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me<100>>);
     vec.emplace_back(std::in_place_type<destroy_me<110>>);
     vec.emplace_back(std::in_place_type<destroy_me<120>>);
-    std::ranges::shuffle(vec, generator);
+    std::shuffle(begin(vec), end(vec), generator);
     std::vector<any_copyable<>> storage;
-    std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
+    std::sample(begin(vec), end(vec), std::back_inserter(storage), vec.size() / 2, generator);
     storage[0].emplace<destroy_me<10>>();
     storage[1].emplace<destroy_me<20>>();
     storage[2].emplace<destroy_me<30>>();
@@ -184,9 +190,9 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me_throw<100>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<110>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
-    std::ranges::shuffle(vec, generator);
+    std::shuffle(begin(vec), end(vec), generator);
     std::vector<any_copyable<>> storage;
-    std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
+    std::sample(begin(vec), end(vec), std::back_inserter(storage), vec.size() / 2, generator);
     storage[0].emplace<destroy_me_throw<10>>();
     storage[1].emplace<destroy_me_throw<20>>();
     storage[2].emplace<destroy_me_throw<30>>();
@@ -222,10 +228,10 @@ size_t TestConstructors() {
     vec.emplace_back(std::in_place_type<destroy_me_throw<100>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<110>>);
     vec.emplace_back(std::in_place_type<destroy_me_throw<120>>);
-    std::ranges::shuffle(vec, generator);
+    std::shuffle(begin(vec), end(vec), generator);
     std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> storage(
         std::pmr::new_delete_resource());
-    std::ranges::sample(vec, std::back_inserter(storage), vec.size() / 2, generator);
+    std::sample(begin(vec), end(vec), std::back_inserter(storage), vec.size() / 2, generator);
     storage[0].emplace<destroy_me_throw<10>>();
     storage[1].emplace<destroy_me_throw<20>>();
     storage[2].emplace<destroy_me_throw<30>>();
@@ -253,6 +259,7 @@ void noallocate_test() {
   y = x;
   auto z = y;
 }
+#ifdef AA_HAS_CPP20
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
@@ -277,6 +284,7 @@ size_t TestCompare() {
   error_if(3.14f != v4);
   return error_count;
 }
+#endif
 
 struct FooAble {
   float foo() const {
@@ -440,9 +448,6 @@ struct M2 {
   }
 };
 
-template<typename T>
-using Size = aa::from_callable<std::size_t() const, std::ranges::size>::method<T>;
-
 struct base {
   int i;
 };
@@ -454,14 +459,6 @@ struct sm {
   int x;
 };
 using Tt = any_copyable<>;
-
-template<typename T, typename U>
-using ac_res = decltype(aa::any_cast<T>(std::declval<U>()));
-
-using Ttvar = std::variant<int, float, double, bool>;
-
-template<typename T, typename U>
-using acvar_res = decltype(aa::any_cast<T, aa::std_variant_poly_traits>(std::declval<U>()));
 
 template<typename T>
 struct test_method {
@@ -490,33 +487,38 @@ struct kekabl1 {
 void transmute_test() {
   aa::any_with<aa::move, aa::copy> v1;
   v1 = std::string("abc");
+  if ((uintptr_t)(&v1).raw() != (uintptr_t)(std::addressof(v1)) + 16)
+    throw false;
+  auto xx = v1;
   aa::any_with<aa::move> v2 = v1;
+  if ((uintptr_t)(&v2).raw() == (uintptr_t)(&v1).raw())
+    throw false;
   auto copyv2 = std::move(v2);
   auto copyv1 = v1;
   if (copyv2.type_descriptor() != copyv1.type_descriptor())
     throw false;
 }
-void statefull_test() {
+void stateful_test() {
   int i = 5;
   aa::cref<aa::copy, aa::move, aa::equal_to> r = i;
-  aa::statefull::cref sr = r;
-  static_assert(std::is_same_v<decltype(sr), aa::statefull::cref<aa::copy, aa::move, aa::equal_to>>);
-  aa::statefull::cref<aa::move> sr1 = r;
-  aa::statefull::cref<aa::move> sr2 = sr;
+  aa::stateful::cref sr = r;
+  static_assert(std::is_same_v<decltype(sr), aa::stateful::cref<aa::copy, aa::move, aa::equal_to>>);
+  aa::stateful::cref<aa::move> sr1 = r;
+  aa::stateful::cref<aa::move> sr2 = sr;
   kekabl1 val;
-  aa::statefull::ref<aa::copy, Kekab, aa::move> rr = val;
+  aa::stateful::ref<aa::copy, Kekab, aa::move> rr = val;
   if (rr.Kekab(4, 'a') != "abcaaaa")
     throw false;
   auto copyrr = rr;
   if (copyrr.Kekab(4, 'a') != "abcaaaa")
     throw false;
-  aa::statefull::ref<Kekab> rrkk = rr;
+  aa::stateful::ref<Kekab> rrkk = rr;
   if (rrkk.Kekab(4, 'a') != "abcaaaa")
     throw false;
-  aa::statefull::cref crrkk = rrkk;
+  aa::stateful::cref crrkk = rrkk;
   if (crrkk.Kekab(4, 'a') != "abcaaaa")
     throw false;
-  aa::statefull::cref<Kekab> crrkk2 = rr;
+  aa::stateful::cref<Kekab> crrkk2 = rr;
   if (crrkk2.Kekab(4, 'a') != "abcaaaa")
     throw false;
   (void)sr1, (void)sr2;
@@ -544,61 +546,10 @@ void ptr_behavior_test() {
   if (p != ptr1)
     throw false;
 }
+template<typename T, typename U>
+using ac_res = decltype(aa::any_cast<T>(std::declval<U>()));
 
-int main() {
-  ptr_behavior_test();
-  noallocate_test();
-  transmute_test();
-  statefull_test();
-  any_kekable_ kek_0 = kekabl1{"str"};
-  static_assert(
-      std::is_same_v<aa::any_with<aa::copy>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ref<>>>);
-  static_assert(
-      std::is_same_v<aa::any_with<aa::copy, aa::move>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>>>);
-  static_assert(std::is_same_v<aa::cref<aa::copy, aa::move>,
-                               aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>, aa::cref>>);
-  static_assert(std::is_same_v<aa::cref<aa::copy, Kekab, example::print, aa::move>,
-                               aa::merged_any_t<aa::poly_ref<aa::copy, Kekab, example::print>,
-                                                aa::poly_ptr<aa::move, aa::copy, example::print>, aa::cref>>);
-  static_assert(std::is_same_v<aa::cref<aa::copy, aa::move, example::print, Kekab>,
-                               aa::merged_any_t<aa::poly_ref<aa::copy, aa::move, example::print>,
-                                                aa::any_with<Kekab, aa::move, example::print>, aa::cref>>);
-  aa::statefull::ref st_r = *&kek_0;
-  aa::statefull::cref st_cr = *&kek_0;
-  aa::statefull::cref st_cr1 = st_r;
-  aa::statefull::cref<> st_cr2 = *&kek_0;
-  (void)st_cr2;
-  static_assert(std::is_same_v<decltype(st_cr), decltype(st_cr1)> &&
-                std::is_same_v<decltype(st_cr), aa::statefull::cref<Kekab>>);
-  if (st_r.Kekab(5, 'c') != kek_0.Kekab(5, 'c'))
-    return -500;
-  if (kek_0.Kekab(5, 'c') != "strccccc")
-    return -200;
-  static_assert(std::is_constructible_v<any_kekable_, kekabl1>);
-  static_assert(std::is_assignable_v<any_kekable_&, kekabl1>);
-  static_assert(!std::is_constructible_v<any_kekable_, std::string>);
-  static_assert(!std::is_assignable_v<any_kekable_&, std::string>);
-
-  visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
-    std::cout << arg << '\n';
-  };
-  auto copyable_fn = [](auto&&) {
-  };
-  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
-    (void)x;
-  };
-  aa::invoke<visit<int>::method>(vtor, 5);
-  aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
-  static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);
-  static_assert(std::is_constructible_v<decltype(vtor), decltype(copyable_fn)>);
-  static_assert(std::is_same_v<acvar_res<int, Ttvar&>, int*>);
-  static_assert(std::is_same_v<acvar_res<int&, Ttvar&>, int*>);
-  static_assert(std::is_same_v<acvar_res<int&&, Ttvar&>, int*>);
-
-  static_assert(std::is_same_v<acvar_res<const int, Ttvar&>, const int*>);
-  static_assert(std::is_same_v<acvar_res<const int&, Ttvar&>, const int*>);
-  static_assert(std::is_same_v<acvar_res<const int&&, Ttvar&>, const int*>);
-
+void any_cast_test() {
   static_assert(std::is_same_v<ac_res<int, Tt&>, int>);
   static_assert(std::is_same_v<ac_res<int&, Tt&>, int&>);
   static_assert(std::is_same_v<ac_res<int&&, Tt&>, int>);
@@ -646,6 +597,43 @@ int main() {
   static_assert(std::is_same_v<ac_res<const int, Tt::const_ptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&, Tt::const_ptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ptr>, const int*>);
+}
+int main() {
+  static_assert(!std::is_trivially_copyable_v<aa::any_with<aa::move, aa::copy>>);
+  ptr_behavior_test();
+  noallocate_test();
+  transmute_test();
+  stateful_test();
+  any_kekable_ kek_0 = kekabl1{"str"};
+  aa::stateful::ref st_r = *&kek_0;
+  aa::stateful::cref st_cr = *&kek_0;
+  aa::stateful::cref st_cr1 = st_r;
+  aa::stateful::cref<> st_cr2 = *&kek_0;
+  (void)st_cr2;
+  static_assert(std::is_same_v<decltype(st_cr), decltype(st_cr1)> &&
+                std::is_same_v<decltype(st_cr), aa::stateful::cref<Kekab>>);
+  if (st_r.Kekab(5, 'c') != kek_0.Kekab(5, 'c'))
+    return -500;
+  if (kek_0.Kekab(5, 'c') != "strccccc")
+    return -200;
+  static_assert(std::is_constructible_v<any_kekable_, kekabl1>);
+  static_assert(std::is_assignable_v<any_kekable_&, kekabl1>);
+#ifdef AA_HAS_CPP20
+  static_assert(!std::is_constructible_v<any_kekable_, std::string>);
+  static_assert(!std::is_assignable_v<any_kekable_&, std::string>);
+#endif
+  visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
+    std::cout << arg << '\n';
+  };
+  auto copyable_fn = [](auto&&) {
+  };
+  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
+    (void)x;
+  };
+  aa::invoke<visit<int>::method>(vtor, 5);
+  aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
+  AA_IF_HAS_CPP20(static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);)
+  static_assert(std::is_constructible_v<decltype(vtor), decltype(copyable_fn)>);
 
   std::atomic<aa::poly_ptr<>> a;
   std::atomic<aa::const_poly_ptr<>> afff;
@@ -681,54 +669,15 @@ int main() {
     return -16;
   if (cpdd != pdd || cpdd1 != pdd1 || cpdd1 == pdd || cpdd == pdd1)
     return -17;
-  auto x = std::bit_cast<std::array<void*, 2>>(cpdd);
-  (void)x;
+  static_assert(std::is_trivially_copyable_v<decltype(cpdd)>);
   aa::any_with<example::print> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
   aa::invoke<example::print>(p);
-  static constexpr int for_r = 0;
-  constexpr aa::const_poly_ref<> r = for_r;
-  std::string X;
-  auto visitor = [&]<typename T>(T v) {
-    std::cout << typeid(T).name();
-    X = typeid(T).name();
-    return sizeof(T);
-  };
-  aa::type_switch(r)
-      .case_<float>(visitor)
-      .case_<bool>(visitor)
-      .cases<char, int, unsigned char, double>(visitor)
-      .no_default();
-  if (X != typeid(int).name())
-    return -10;
-  auto switch_result = aa::type_switch<std::size_t>(r)
-                           .case_<float>(visitor)
-                           .case_<bool>(visitor)
-                           .cases<char, unsigned char, double>(visitor)
-                           .case_<int>(visitor)
-                           .default_(std::size_t(-1));
-  if (switch_result != sizeof(int))
-    return -11;
-  std::string fifa;
-  aa::poly_ref<> rr = fifa;
-  auto switch_result1 = aa::type_switch<std::size_t>(rr)
-                            .case_<float>(visitor)
-                            .case_<bool>(visitor)
-                            .cases<char, unsigned char, double>(visitor)
-                            .case_<int>(visitor)
-                            .default_(std::size_t(-1));
-  if (switch_result1 != -1)
-    return -12;
   std::vector<aa::poly_ref<foox>> vec;
   FooAble fef{};
   vec.emplace_back(fef);
-  using any_sized_range = aa::any_with<Size>;
-  std::vector<int> v(10, 15);
-  static_assert(aa::exist_for<std::vector<int>, Size>::value);
-  any_sized_range rng = v;
-  std::cout << aa::invoke<Size>(rng);
   A1 u;
   A2 u1;
   aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
@@ -906,5 +855,5 @@ int main() {
   set.emplace(5);
   set.emplace(5.);
   srand(time(0));
-  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
+  return TestConstructors() + TestAnyCast() AA_IF_HAS_CPP20(+ TestCompare()) + TestInvoke() + TestCasts();
 }

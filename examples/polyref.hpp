@@ -36,7 +36,8 @@ const_trait(print, void(), std::cout << self << std::endl);
 // and only create a single erase for every type
 void print_all(std::initializer_list<aa::cref<print>> l) {
   // aa::invoke<Method> is a functional object with operator()
-  std::ranges::for_each(l, aa::invoke<print>);
+  for (auto x : l)
+    aa::invoke<print>(x);
 }
 
 using any_printable = aa::any_with<print>;
@@ -51,9 +52,9 @@ void may_be_print(any_printable::cptr p) {
     p->print();
 }
 
-// statefull ref contains vtable in itself, so it is most effective way to type erase 1 Method
+// stateful ref contains vtable in itself, so it is most effective way to type erase 1 Method
 // 
-void statefull_print(const aa::statefull::cref<print>& ref) {
+void statefull_print(const aa::stateful::cref<print>& ref) {
   ref.print();
 }
 }  // namespace example
@@ -61,7 +62,7 @@ void statefull_print(const aa::statefull::cref<print>& ref) {
 void example_polyref() {
   struct no_print {};
   // trait created from macro enables SFINAE friend construct
-  static_assert(!std::is_constructible_v<example::any_printable, no_print>);
+  AA_IF_HAS_CPP20(static_assert(!std::is_constructible_v<example::any_printable, no_print>);)
   example::any_printable value = std::string{"Im a polymorphic value"};
   example::may_be_print(&value);  // operator& of poly_ref returns poly_ptr
   print_one(*&value);             // operator* of poly_ptr returns poly_ref

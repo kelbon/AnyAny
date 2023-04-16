@@ -11,8 +11,6 @@
   * std_variant_poly_traits - examples of poly_traits
 */
 
-#include <concepts>
-#include <variant> // only for std_variant_poly_traits
 #include <type_traits>
 
 #include "noexport/type_descriptor_details.hpp"
@@ -27,9 +25,10 @@ struct descriptor_t {
   // uses name of type as C string by default (its fast to compare < and > which is usefull in 'visit_invoke'
   // And equality compare is faster too, because in many cases i can just check if pointers are equal(because
   // i compare type names) If type names are not available uses pointers
-  using raw_desc_type = std::remove_cvref_t<decltype(noexport::descriptor<int>)>;
+  using raw_desc_type = std::decay_t<decltype(noexport::descriptor<void>)>;
   raw_desc_type _value;
 
+  friend struct std::hash<descriptor_t>;
  public:
   // creates descriptor for 'void' type
   constexpr descriptor_t() noexcept : _value(noexport::descriptor<void>) {
@@ -40,15 +39,19 @@ struct descriptor_t {
 #ifdef AA_CANT_GET_TYPENAME
     return _value == other._value;
 #else
+#ifdef AA_HAS_CPP20
     if (!std::is_constant_evaluated()) {
       // cant compare pointers from different objects on compile time
       if (_value == other._value) [[unlikely]]
         return true;
     }
     return noexport::strcmp(_value, other._value) == std::strong_ordering::equal;
+#else
+    return noexport::strcmp(_value, other._value);
+#endif
 #endif
   }
-
+#ifdef AA_HAS_CPP20
   AA_CONSTEXPR std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
 #ifdef AA_CANT_GET_TYPENAME
     return (uintptr_t)_value <=> (uintptr_t)other._value;
@@ -56,109 +59,75 @@ struct descriptor_t {
     return noexport::strcmp(_value, other._value);
 #endif
   }
+#else
+  constexpr bool operator!=(const descriptor_t& other) const noexcept {
+    return !operator==(other);
+  }
+#endif
 };
 // always decays type
 template <typename T>
 constexpr descriptor_t descriptor_v{noexport::descriptor<std::decay_t<T>>};
-
-template <typename T>
-concept lambda_without_capture =
-    std::default_initializable<std::remove_cvref_t<T>> && requires {
-                                                            { &std::remove_cvref_t<T>::operator() };
-                                                          };
 
 // traits describe 'visit_invoke_fn' which types are polymorphic and which are not
 // -- T::get_type_descriptor must return descriptor for static type of non-polymorphic types and dynamic type
 // descripor for polymorphic types
 // -- T::to_address returns void*/const void* to of runtime value for polymorphic
 // types and just addressof(v) for non-polymorphic 'v'
+#ifdef AA_HAS_CPP20
 template <typename T>
 concept poly_traits = requires(T val, int some_val) {
                         { val.get_type_descriptor(some_val) } -> std::same_as<descriptor_t>;
                         { val.to_address(some_val) };
                       };
 
-template<typename T>
-struct is_polymorphic {
-  static constexpr inline bool value = (
-      requires { typename std::remove_cvref_t<T>::aa_polymorphic_tag; } ||
-      requires(T v) {
-        { v.type_descriptor() } -> std::same_as<descriptor_t>;
-      });
-};
-template<typename T>
+#endif
+
+#define AA_IS_VALID(STRUCT_NAME, EXPR)                                                       \
+  template <typename U>                                                                      \
+  struct STRUCT_NAME {                                                                       \
+   private:                                                                                  \
+    template <typename T, typename = std::void_t<EXPR>>                                      \
+    static std::true_type check_fn_impl(int);                                                \
+    template <typename>                                                                      \
+    static std::false_type check_fn_impl(...);                                               \
+                                                                                             \
+   public:                                                                                   \
+    static constexpr inline bool value = decltype(check_fn_impl<std::decay_t<U>>(0))::value; \
+  }
+
+AA_IS_VALID(is_polymorphic, typename T::aa_polymorphic_tag);
+template <typename T>
 using is_not_polymorphic = std::negation<is_polymorphic<T>>;
 
 // these traits poly_ptr/ref/any_with are polymorphic values with dynamic type
 // all other types considered as non-polymorphic
 struct anyany_poly_traits {
-  // default case for non-polymorphic types like 'int', 'string' etc
   template <typename T>
-  static constexpr descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
+  static constexpr descriptor_t get_type_descriptor(T&& x) noexcept {
+    if constexpr (is_polymorphic<T>::value)
+      return x.type_descriptor();
+    else
+      return descriptor_v<T>;
   }
-  template <typename T>
-    requires(is_polymorphic<T>::value)  // case for /const/ poly_ptr/ref and any_with and its inheritors
-  static descriptor_t get_type_descriptor(T&& x) noexcept {
-    return x.type_descriptor();
-  }
+
+ private:
+  AA_IS_VALID(is_poly_ptr, decltype(std::declval<T>().raw()));
+
+ public:
   // non-polymorphic types, returns /const/ void*
   template <typename T>
   static constexpr auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  template <typename T>
-    requires(is_polymorphic<T>::value)
-  static auto* to_address(T&& v) noexcept {
-    // for /const/poly_ptr
-    if constexpr (requires { v.raw(); })
-      return v.raw();
-    else  // poly_ref/any_with and its inheritors
-      return (&v).raw();
-  }
-};
-
-// those traits may be used for visit many variants without O(n*m*...) instantiating.
-// Its very usefull for pattern matching, but may be slower then matching with visit.
-// All variants are polymorphic types for there traits, all other types considered as non-polymorphic
-struct std_variant_poly_traits {
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(const std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename... Ts>
-  static descriptor_t get_type_descriptor(std::variant<Ts...>&& v) noexcept {
-    return std::visit([]<typename T>(T&& v) { return descriptor_v<T>; }, v);
-  }
-  template <typename T>
-  static descriptor_t get_type_descriptor(T&&) noexcept {
-    return descriptor_v<T>;
-  }
-  template <typename T>
-  static auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
-        std::addressof(v));
-  }
-  // Do not support cases like variant<int, const int> with mixed constness
-  template <typename... Ts>
-  static const void* to_address(const std::variant<Ts...>& v) noexcept {
-    return std::visit([](const auto& v) { return reinterpret_cast<const void*>(std::addressof(v)); },
-                      v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>& v) noexcept {
-    return std::visit([](auto& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
-  }
-  template <typename... Ts>
-  static void* to_address(std::variant<Ts...>&& v) noexcept {
-    return std::visit([](auto&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
+    if constexpr (is_polymorphic<T>::value) {
+      if constexpr (is_poly_ptr<T>::value)
+        return v.raw();
+      else  // poly_ref/any_with and its inheritors
+        return (&v).raw();
+    } else {
+      return static_cast<
+          std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
+          std::addressof(v));
+    }
   }
 };
 

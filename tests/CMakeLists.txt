@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-set(AA_PARTS anyany data_parallel_vector variant_swarm visit_invoke)
+set(AA_PARTS anyany data_parallel_vector variant_swarm visit_invoke utilities)
 foreach(PART ${AA_PARTS})
 	add_executable(${PART} ${CMAKE_CURRENT_SOURCE_DIR}/test_${PART}.cpp)
 	target_include_directories(${PART}
