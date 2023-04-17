@@ -1,10 +1,10 @@
 #pragma once
 
-#include <type_traits>
-#include <cstddef>
 #include <array>
+#include <cstddef>
+#include <type_traits>
 #ifdef AA_HAS_CPP20
-#include <memory>      // construct_at / destroy_at
+#include <memory>  // construct_at / destroy_at
 #endif
 #include "type_descriptor.hpp"
 
@@ -148,25 +148,30 @@ AA_CONSTEVAL_CPP20 bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<H
   return starts_with(aa::type_list<Ts1...>{}, aa::type_list<Ts2...>{});
 }
 
-AA_CONSTEVAL_CPP20 size_t find_subset(aa::type_list<>, aa::type_list<>) {
+AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<>, aa::type_list<>) {
   return 0;
 }
 template <typename A>
-AA_CONSTEVAL_CPP20 size_t find_subset(A, aa::type_list<>) {
+AA_CONSTEVAL_CPP20 size_t find_subset_impl(A, aa::type_list<>) {
   return npos;
 }
-// returns index in list where first typelist starts as subset in second typelist or npos if no such index
+// returns index in list where first typelist starts as subset in second typelist or npos if
+// no such index
 template <typename... Ts1, typename Head, typename... Ts2>
-AA_CONSTEVAL_CPP20 size_t find_subset(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
+AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
                                       size_t n = 0) noexcept {
   if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
     return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
   else if constexpr (starts_with(needle, all))
     return n;
   else
-    return find_subset(needle, aa::type_list<Ts2...>{}, n + 1);
+    return find_subset_impl(needle, aa::type_list<Ts2...>{}, n + 1);
 }
-
+// this wrapper just fixes MSVC bug with overload resolution and aliases
+template<typename T, typename U>
+AA_CONSTEVAL_CPP20 size_t find_subset(T a, U b) noexcept {
+  return find_subset_impl(a, b);
+}
 #ifndef AA_HAS_CPP20
 template <typename T, typename... Args,
           typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
@@ -187,35 +192,29 @@ using ::std::construct_at;
 using ::std::destroy_at;
 using ::std::remove_cvref_t;
 #endif
-
 // TODO? здесь прямо сделать && на аргументах + аттрибутты типа always inline?
-#define trait_impl(CONST, NAME, REQUIREMENT, SIGNATURE, ... /*body*/)                                  \
-  template <typename>                                                                                  \
-  struct make_method_##NAME {};                                                                        \
-                                                                                                       \
-  template <typename AA_Ret, typename... AA_Args>                                                      \
-  struct make_method_##NAME<AA_Ret(AA_Args...)> {                                                      \
-    AA_IF_HAS_CPP20(template <typename Self>                                                           \
-                    static constexpr bool requirement = requires(CONST Self & self, AA_Args... args) { \
-                                                          static_cast<AA_Ret>(__VA_ARGS__);            \
-                                                        };)                                            \
-    template <typename Self>                                                                           \
-    AA_IF_HAS_CPP20(requires(::std::is_same_v<Self, ::aa::interface_t> || requirement<Self>))          \
-    struct aa_method {                                                                                 \
-      static AA_Ret do_invoke(CONST Self& self, AA_Args... args) {                                     \
-        return static_cast<AA_Ret>(__VA_ARGS__);                                                       \
-      }                                                                                                \
-      template <typename AA_CRTP>                                                                      \
-      struct plugin {                                                                                  \
-        AA_Ret NAME(AA_Args... args) CONST {                                                           \
-          return static_cast<AA_Ret>(                                                                  \
-              ::aa::invoke<make_method_##NAME<AA_Ret(AA_Args...)>::template aa_method>(                \
-                  *static_cast<CONST AA_CRTP*>(this), static_cast<AA_Args&&>(args)...));               \
-        }                                                                                              \
-      };                                                                                               \
-    };                                                                                                 \
-  };                                                                                                   \
-  template <typename Self>                                                                             \
-  AA_IF_HAS_CPP20(REQUIREMENT)                                                                         \
-  using NAME = typename make_method_##NAME<SIGNATURE>::template aa_method<Self>
+#define trait_impl(CONST, NAME, REQUIREMENT, SIGNATURE, ... /*body*/)                                      \
+  template <typename>                                                                                      \
+  struct aa_make_method_##NAME {};                                                                         \
+                                                                                                           \
+  template <typename AA_Ret, typename... AA_Args>                                                          \
+  struct aa_make_method_##NAME<AA_Ret(AA_Args...)> {                                                       \
+    template <typename Self>                                                                               \
+    AA_IF_HAS_CPP20(REQUIREMENT)                                                                           \
+    static auto do_invoke(CONST Self& self, AA_Args... args)                                               \
+        -> decltype(std::enable_if_t<(!std::is_same_v<Self, ::aa::interface_t>)>(),                        \
+                    static_cast<AA_Ret>(__VA_ARGS__)) {                                                    \
+      return static_cast<AA_Ret>(__VA_ARGS__);                                                             \
+    }                                                                                                      \
+    template <typename Self, std::enable_if_t<::std::is_same_v<Self, ::aa::interface_t>, int> = 0>         \
+    static AA_Ret do_invoke(CONST ::aa::interface_t&, AA_Args...);                                         \
+    template <typename AA_CRTP>                                                                            \
+    struct plugin {                                                                                        \
+      AA_Ret NAME(AA_Args... args) CONST {                                                                 \
+        return ::aa::invoke<aa_make_method_##NAME<AA_Ret(AA_Args...)>>(*static_cast<CONST AA_CRTP*>(this), \
+                                                                       static_cast<AA_Args&&>(args)...);   \
+      }                                                                                                    \
+    };                                                                                                     \
+  };                                                                                                       \
+  using NAME = aa_make_method_##NAME<SIGNATURE>
 }  // namespace aa::noexport

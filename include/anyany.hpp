@@ -14,20 +14,14 @@
 
 */
 
+#include <array>
+#include <cassert>   // assert
+#include <cstddef>   // max_align_t
+#include <typeinfo>  // bad_cast/exception
+#include <utility>   // std::exchange
 
 #include "noexport/anyany_details.hpp"
 #include "type_descriptor.hpp"
-
-#include <array>
-#include <cassert>     // assert
-#include <cstddef>     // max_align_t
-#include <typeinfo>    // bad_cast/exception
-#include <utility>     // std::exchange
-
-// TTA == template template argument (just for better reading)
-#define TTA           \
-  template <typename> \
-  typename
 
 namespace aa {
 
@@ -36,84 +30,64 @@ namespace aa {
 // this means all methods must be specializable for interface_t
 // typical error - concept on Method's template argument, which is false for interface_t
 // (in this case you can explciitly specialize Method for interface_t)
-struct interface_t {
-#ifdef AA_HAS_CPP20
-  // operators just for satisfying all Methods
-  bool operator==(const interface_t&) const = default;
-  auto operator<=>(const interface_t&) const = default;
-
- private:
-  struct convertible_to_all {
-    template <typename T>
-    operator T&() noexcept;
-    template <typename T>
-    operator T&&() noexcept;
-  };
-
- public:
-  constexpr convertible_to_all operator()(auto&&...) const noexcept {
-    return {};
-  }
-#endif
-};
+// TODO ? break all possible type traits for this type?
+struct interface_t {};
 
 // just unique type for every Method, because i need to inherit from plugins
-template <TTA Method>
+template <typename Method>
 struct nullplugin {};
 
 namespace noexport {
 
-template <typename Any, TTA Method>
-auto get_plugin_for(int) -> typename Method<interface_t>::template plugin<Any>;
-template <typename, TTA Method>
+template <typename Any, typename Method>
+auto get_plugin_for(int) -> typename Method::template plugin<Any>;
+template <typename, typename Method>
 auto get_plugin_for(...) -> nullplugin<Method>;
 
 }  // namespace noexport
 
-template <TTA Method, typename Any>
+template <typename Method, typename Any>
 using plugin_t = decltype(noexport::get_plugin_for<Any, Method>(0));
 
 // ######################## compilt time information about Methods(Traits) ########################
+// TODO почистить то что не нужно здесь(не используется)
+template <typename Method>
+using method_traits = noexport::any_method_traits<decltype(&Method::template do_invoke<interface_t>)>;
 
-template <TTA Method>
-using method_traits = noexport::any_method_traits<decltype(&Method<interface_t>::do_invoke)>;
-
-template <TTA Method>
+template <typename Method>
 using result_t = typename method_traits<Method>::result_type;
 
-template <TTA Method>
+template <typename Method>
 using self_sample_t = typename method_traits<Method>::self_sample_type;
 
-template <TTA Method>
+template <typename Method>
 using signature_t = typename method_traits<Method>::signature_type;
 
-template <TTA Method>
+template <typename Method>
 using type_erased_signature_t = typename method_traits<Method>::type_erased_signature_type;
 
-template <TTA Method>
+template <typename Method>
 using type_erased_self_t = typename method_traits<Method>::type_erased_self_type;
 
-template <TTA Method>
+template <typename Method>
 using args_list = typename method_traits<Method>::args;
 
-template <TTA Method>
+template <typename Method>
 static constexpr inline bool const_method = method_traits<Method>::is_const;
 
-template <typename T, TTA Method, typename = args_list<Method>>
+template <typename T, typename Method, typename = args_list<Method>>
 struct invoker_for {};
 
-template <typename T, TTA Method, typename... Args>
+template <typename T, typename Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static auto value(type_erased_self_t<Method> self, Args&&... args) -> result_t<Method> {
+  static result_t<Method> value(type_erased_self_t<Method> self, Args&&... args) {
     using self_sample = self_sample_t<Method>;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
-      return Method<T>::do_invoke(*std::launder(reinterpret_cast<real_self>(self)),
-                                  static_cast<Args&&>(args)...);
+      return Method::do_invoke(*reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
     } else if constexpr (std::is_copy_constructible_v<T>) {
-      return Method<T>::do_invoke(*std::launder(reinterpret_cast<const T*>(self)),
-                                  static_cast<Args&&>(args)...);
+      return Method::do_invoke(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
     } else {
       static_assert(noexport::always_false<T>,
                     "You pass self by value and it is not a copy constructible... or by rvalue reference");
@@ -126,11 +100,11 @@ AA_IS_VALID(is_any, typename T::base_any_type);
 template <typename T>
 using is_not_any = std::negation<is_any<T>>;
 
-// Not variadic TTA... because it breaks MSVC
-template <typename X, TTA Method>
+// Not variadic typename... because it breaks MSVC
+template <typename X, typename Method>
 struct exist_for {
  private:
-  AA_IS_VALID(check, Method<T>);
+  AA_IS_VALID(check, decltype(&Method::template do_invoke<T>));
 
  public:
   static constexpr inline bool value = check<X>::value;
@@ -138,18 +112,18 @@ struct exist_for {
 
 // ######################## BASIC METHODS for basic_any ########################
 
-template <AA_CONCEPT(std::destructible) T>
 struct destroy {
-  static void do_invoke(const T& self) noexcept {
+  template <typename T>
+  static auto do_invoke(const T& self) noexcept -> std::enable_if_t<std::is_nothrow_destructible_v<T>> {
     noexport::destroy_at(std::addressof(self));
   }
 };
 
-template <AA_CONCEPT(std::move_constructible) T>
 struct move {
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
   // constructible. Actially relocates
-  static void do_invoke(T& src, void* dest) {
+  template <typename T>
+  static auto do_invoke(T& src, void* dest) -> std::enable_if_t<std::is_move_constructible_v<T>> {
     if constexpr (std::is_nothrow_move_constructible_v<T>) {
       noexport::construct_at(reinterpret_cast<T*>(dest), std::move(src));
       noexport::destroy_at(std::addressof(src));
@@ -161,42 +135,44 @@ struct move {
   }
 };
 
-template <AA_CONCEPT(std::copy_constructible) T>
 struct copy {
-  static void do_invoke(const T& src, void* dest) {
+  template <typename T>
+  static auto do_invoke(const T& src, void* dest) -> std::enable_if_t<std::is_copy_constructible_v<T>> {
     noexport::construct_at(reinterpret_cast<T*>(dest), src);
   }
 };
 
-#ifdef AA_HAS_CPP20
-template <typename T>
-concept hashable_by_std_hash = requires { std::hash<T>{}; };
-#endif
 // enables std::hash specialization for polymorphic value and reference
-template <AA_CONCEPT(hashable_by_std_hash) T>
 struct hash {
-  static size_t do_invoke(const T& self) {
-    return std::hash<T>{}(self);
+  template <typename T>
+  static auto do_invoke(const T& self) -> decltype(size_t{std::hash<T>{}(std::declval<T>())}) {
+    return size_t{std::hash<T>{}(self)};
   }
+  template <typename T, std::enable_if_t<std::is_same_v<T, interface_t>, int> = 0>
+  static size_t do_invoke(const interface_t&);
 };
 
 // enables operator== for any_with
-template <AA_CONCEPT(std::equality_comparable) T>
 struct equal_to {
-  static bool do_invoke(const T& first, const void* second) {
-    return first == *reinterpret_cast<const T*>(second);
+  template <typename T>
+  static auto do_invoke(const T& first, const void* second)
+      -> decltype(bool(std::declval<T>() == std::declval<T>())) {
+    return bool{first == *reinterpret_cast<const T*>(second)};
   }
+  template<typename T, std::enable_if_t<std::is_same_v<T, interface_t>, int> = 0>
+  static bool do_invoke(const interface_t&, const void*);
 };
 
 #ifdef AA_HAS_CPP20
 // enables operator<=> and operator== for any_with
-template <std::three_way_comparable T>
 struct spaceship {
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
+  template <std::three_way_comparable T>
   static std::partial_ordering do_invoke(const T& first, const void* second) {
     return first <=> *reinterpret_cast<const T*>(second);
   }
+  static std::partial_ordering do_invoke(const std::same_as<interface_t> auto&, const void*);
 };
 #endif
 
@@ -204,24 +180,23 @@ struct spaceship {
 
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
-template <TTA... Methods>
+template <typename... Methods>
 struct vtable {
   noexport::tuple<type_erased_signature_t<Methods>...> table;
 
-  template <TTA Method>
-  static inline constexpr size_t number_of_method =
-      noexport::number_of_first<Method<interface_t>, Methods<interface_t>...>;
+  template <typename Method>
+  static inline constexpr size_t number_of_method = noexport::number_of_first<Method, Methods...>;
 
-  template <TTA Method>
+  template <typename Method>
   static inline constexpr bool has_method = number_of_method<Method> != npos;
 
-  template <TTA Method, typename... Args, typename = std::enable_if_t<has_method<Method>>>
+  template <typename Method, typename... Args, typename = std::enable_if_t<has_method<Method>>>
   constexpr result_t<Method> invoke(Args&&... args) const {
     return noexport::get_value<number_of_method<Method>>(table)(std::forward<Args>(args)...);
   }
 };
 
-template <TTA... Methods>
+template <typename... Methods>
 struct vtable_with_metainfo {
   descriptor_t type_descriptor;
   const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
@@ -255,26 +230,24 @@ inline descriptor_t get_type_descriptor(const void* vtable_ptr) noexcept {
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
 // first argument only for deducting ToMethods(or internal compiler error on gcc...)
-template <
-    TTA... ToMethods, TTA... FromMethods,
-    typename = std::enable_if_t<(noexport::find_subset(type_list<ToMethods<interface_t>...>{},
-                                                       type_list<FromMethods<interface_t>...>{}) != npos)>>
+template <typename... ToMethods, typename... FromMethods,
+          typename = std::enable_if_t<(noexport::find_subset(type_list<ToMethods...>{},
+                                                             type_list<FromMethods...>{}) != npos)>>
 const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
   assert(ptr != nullptr);
-  constexpr std::size_t Index =
-      noexport::find_subset(type_list<ToMethods<interface_t>...>{}, type_list<FromMethods<interface_t>...>{});
+  constexpr std::size_t Index = noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{});
   static_assert(sizeof(vtable<FromMethods...>) == sizeof(void*) * sizeof...(FromMethods));
   return reinterpret_cast<const vtable<ToMethods...>*>(reinterpret_cast<const std::byte*>(ptr) +
                                                        sizeof(void*) * Index);
 }
 
 // must be never named explicitly, use addr_vtable_for
-template <typename T, TTA... Methods>
+template <typename T, typename... Methods>
 constexpr vtable_with_metainfo<Methods...> vtable_for = {
     descriptor_v<T>, nullptr /* terminator */, vtable<Methods...>{{&invoker_for<T, Methods>::value...}}};
 
 // always decays type
-template <typename T, TTA... Methods>
+template <typename T, typename... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>.table;
 
 // ######################## poly_ref / poly_ptr  ########################
@@ -310,7 +283,7 @@ struct mate {
 };
 
 // non nullable non owner view to any type which satisfies Methods...
-template <TTA... Methods>
+template <typename... Methods>
 struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   using aa_polymorphic_tag = int;
 
@@ -320,7 +293,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
 
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
   friend struct mate;
-  template <TTA...>
+  template <typename...>
   friend struct poly_ptr;
   // only for poly_ptr implementation
   constexpr poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
@@ -348,7 +321,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
   }
 
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr poly_ref(poly_ref<FromMethods...> r) noexcept
       : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
@@ -363,7 +336,7 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
 
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
-template <TTA... Methods>
+template <typename... Methods>
 struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>>... {
   using aa_polymorphic_tag = int;
 
@@ -374,7 +347,7 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
 
   friend struct mate;
-  template <TTA...>
+  template <typename...>
   friend struct const_poly_ptr;
   // only for const_poly_ptr implementation
   constexpr const_poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
@@ -396,13 +369,13 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
       : vtable_ptr(mate::get_vtable_ptr(r)), value_ptr(mate::get_value_ptr(r)) {
   }
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(const_poly_ref<FromMethods...> r) noexcept
       : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
   }
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(poly_ref<FromMethods...> r) noexcept
       : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
@@ -415,11 +388,11 @@ struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>
   }
 };
 
-template <TTA... Methods>
+template <typename... Methods>
 const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
-template <TTA... Methods>
+template <typename... Methods>
 struct poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -446,7 +419,7 @@ struct poly_ptr {
   }
   // from mutable pointer to Any
   template <typename Any, std::enable_if_t<(std::conjunction_v<not_const_type<Any>, is_any<Any>> &&
-                                            noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                            noexport::find_subset(type_list<Methods...>{},
                                                                   typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr poly_ptr(Any* ptr) noexcept {
@@ -456,7 +429,7 @@ struct poly_ptr {
     }
   }
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept {
     if (p != nullptr) [[likely]] {
@@ -514,7 +487,7 @@ struct poly_ptr {
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
-template <TTA... Methods>
+template <typename... Methods>
 struct const_poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -539,7 +512,7 @@ struct const_poly_ptr {
   }
   // from pointer to Any
   template <typename Any, std::enable_if_t<(is_any<Any>::value &&
-                                            noexport::find_subset(type_list<Methods<interface_t>...>{},
+                                            noexport::find_subset(type_list<Methods...>{},
                                                                   typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr const_poly_ptr(const Any* p) noexcept {
@@ -554,7 +527,7 @@ struct const_poly_ptr {
     mate::get_vtable_ptr(*this) = mate::get_vtable_ptr(p);
   }
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ptr(const_poly_ptr<FromMethods...> p) noexcept {
     if (p == nullptr) [[unlikely]] {
@@ -565,7 +538,7 @@ struct const_poly_ptr {
     mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(p));
   }
   template <
-      TTA... FromMethods,
+      typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ptr(poly_ptr<FromMethods...> p) noexcept
       : const_poly_ptr(const_poly_ptr<FromMethods...>{p}) {
@@ -618,17 +591,17 @@ struct const_poly_ptr {
 #endif
 };
 
-template <TTA... Methods>
+template <typename... Methods>
 const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
-template <TTA... Methods>
+template <typename... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
   poly_ptr<Methods...> result;
   mate::get_value_ptr(result) = value_ptr;
   mate::get_vtable_ptr(result) = vtable_ptr;
   return result;
 }
-template <TTA... Methods>
+template <typename... Methods>
 constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   const_poly_ptr<Methods...> result;
   mate::get_value_ptr(result) = value_ptr;
@@ -638,7 +611,7 @@ constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
 
 // ######################## CONST POINTER CAST ###################
 
-template <TTA... Methods>
+template <typename... Methods>
 constexpr poly_ptr<Methods...> const_pointer_cast(const_poly_ptr<Methods...> from) noexcept {
   poly_ptr<Methods...> result;
   mate::get_value_ptr(result) = const_cast<void*>(mate::get_value_ptr(from));
@@ -652,7 +625,7 @@ namespace stateful {
 
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
-template <TTA... Methods>
+template <typename... Methods>
 struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
   using aa_polymorphic_tag = int;
 
@@ -661,12 +634,12 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
   vtable<Methods...> vtable_value;
 
   friend struct ::aa::mate;
-  template <TTA...>
+  template <typename...>
   friend struct cref;
 
   constexpr ref() noexcept = default;
 
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
@@ -677,7 +650,7 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
     return result;
   }
 
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     ref result;
@@ -717,7 +690,7 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
 // also can reference arrays and functions without decay
-template <TTA... Methods>
+template <typename... Methods>
 struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   using aa_polymorphic_tag = int;
 
@@ -752,7 +725,7 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   }
 
  private:
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
     cref result;
@@ -763,19 +736,19 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
     return result;
   }
 
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     return FOO(stateful::cref<Methods2...>(r));
   }
 
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     return stateful::ref<Methods...>::FOO(r);
   }
 
-  template <TTA... Methods2,
+  template <typename... Methods2,
             typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
   static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
     return FOO(*aa::const_pointer_cast(&p));
@@ -796,10 +769,10 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
 
 // ######################## ACTION invoke ########################
 
-template <TTA Method, typename = args_list<Method>>
+template <typename Method, typename = args_list<Method>>
 struct invoke_fn {};
 
-template <TTA Method, typename... Args>
+template <typename Method, typename... Args>
 struct invoke_fn<Method, type_list<Args...>> {
 #define AA_VTABLE_CALL(X, VTABLE, ARGS, OP) \
   mate::get_##VTABLE(X) OP template invoke<Method>(mate::get_value_ptr(X), static_cast<Args&&>(ARGS)...);
@@ -819,11 +792,11 @@ struct invoke_fn<Method, type_list<Args...>> {
 
   // FOR POLYMORPHIC REF
 
-  template <TTA... Methods>
+  template <typename... Methods>
   result_t<Method> operator()(poly_ref<Methods...> r, Args... args) const {
     return AA_VTABLE_CALL(r, vtable_ptr, args, ->);
   }
-  template <TTA... Methods>
+  template <typename... Methods>
   result_t<Method> operator()(const_poly_ref<Methods...> ptr, Args... args) const {
     static_assert(const_method<Method>);
     return AA_VTABLE_CALL(ptr, vtable_ptr, args, ->);
@@ -831,11 +804,11 @@ struct invoke_fn<Method, type_list<Args...>> {
 
   // FOR STATEFULL REF
 
-  template <TTA... Methods>
+  template <typename... Methods>
   result_t<Method> operator()(const stateful::ref<Methods...>& r, Args... args) const {
     return AA_VTABLE_CALL(r, vtable_value, args, .);
   }
-  template <TTA... Methods>
+  template <typename... Methods>
   result_t<Method> operator()(const stateful::cref<Methods...>& r, Args... args) const {
     static_assert(const_method<Method>);
     return AA_VTABLE_CALL(r, vtable_value, args, .);
@@ -844,10 +817,10 @@ struct invoke_fn<Method, type_list<Args...>> {
 };
 
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
-template <TTA Method>
+template <typename Method>
 constexpr inline invoke_fn<Method> invoke = {};
 
-template <TTA Method>
+template <typename Method>
 [[deprecated("use aa::invoke")]] constexpr inline invoke_fn<Method> invoke_unsafe = {};
 
 // ######################## BASIC_ANY ########################
@@ -880,7 +853,7 @@ struct unreachable_allocator {
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
-template <typename Alloc, size_t SooS, TTA... Methods>
+template <typename Alloc, size_t SooS, typename... Methods>
 struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods...>>... {
   using aa_polymorphic_tag = int;
 
@@ -942,7 +915,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   friend struct mate;
 
  public:
-  template <TTA Method>
+  template <typename Method>
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
 
   static constexpr bool has_copy = has_method<copy>;
@@ -957,14 +930,13 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
 
   using base_any_type = basic_any;
-  // typedef only because msvc parser is ****
-  typedef type_list<Methods<interface_t>...> methods_list;
+  using methods_list = ::aa::type_list<Methods...>;
 
  private:
-  template <TTA...>
+  template <typename...>
   struct remove_utility_methods {};
 
-  template <TTA... Methods1>
+  template <typename... Methods1>
   struct remove_utility_methods<destroy, Methods1...> {
     using ptr = poly_ptr<Methods1...>;
     using const_ptr = const_poly_ptr<Methods1...>;
@@ -1125,10 +1097,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
 
   // 'transmutate' constructors (from basic_any with more Methods)
 
-  template <TTA... OtherMethods,
+  template <typename... OtherMethods,
             std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy> &&
-                              noexport::find_subset(methods_list{},
-                                                    type_list<OtherMethods<interface_t>...>{}) != npos),
+                              noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
   basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other) {
     if (!other.has_value())
@@ -1136,10 +1107,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     noexport::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this), other);
     std::launder(this)->vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
-  template <TTA... OtherMethods,
+  template <typename... OtherMethods,
             std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
-                              noexport::find_subset(methods_list{},
-                                                    type_list<OtherMethods<interface_t>...>{}) != npos),
+                              noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
     if (!other.has_value())
@@ -1315,14 +1285,14 @@ struct any_cast_fn<T, anyany_poly_traits> {
  private:
   using X = std::remove_reference_t<T>;
 
-  template <typename Alloc, size_t SooS, TTA... Methods>
+  template <typename Alloc, size_t SooS, typename... Methods>
   static const X* any_cast_impl(const basic_any<Alloc, SooS, Methods...>* any) noexcept {
     // U already remove_cv
     if (any == nullptr || any->type_descriptor() != descriptor_v<T>)
       return nullptr;
     return std::launder(reinterpret_cast<const X*>(mate::get_value_ptr(*any)));
   }
-  template <typename Alloc, size_t SooS, TTA... Methods>
+  template <typename Alloc, size_t SooS, typename... Methods>
   static X* any_cast_impl(basic_any<Alloc, SooS, Methods...>* any) noexcept {
     if (any == nullptr || any->type_descriptor() != descriptor_v<T>)
       return nullptr;
@@ -1360,19 +1330,19 @@ struct any_cast_fn<T, anyany_poly_traits> {
       return noexport::remove_cvref_t<T>(*ptr);  // copy value
   }
 
-  template <TTA... Methods>
+  template <typename... Methods>
   const X* operator()(const_poly_ptr<Methods...> p) const noexcept {
     if (p == nullptr || p.type_descriptor() != descriptor_v<T>)
       return nullptr;
     return reinterpret_cast<const X*>(p.raw());
   }
-  template <TTA... Methods>
+  template <typename... Methods>
   X* operator()(poly_ptr<Methods...> p) const noexcept {
     if (p == nullptr || p.type_descriptor() != descriptor_v<T>)
       return nullptr;
     return reinterpret_cast<X*>(p.raw());
   }
-  template <TTA... Methods>
+  template <typename... Methods>
   std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
                      std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
   operator()(poly_ref<Methods...> p) const {
@@ -1382,7 +1352,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
     return *ptr;
   }
   // clang-format off
-  template <TTA... Methods>
+  template <typename... Methods>
   std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>>
   operator()(const_poly_ref<Methods...> p) const {
     // clang-format on
@@ -1396,18 +1366,18 @@ struct any_cast_fn<T, anyany_poly_traits> {
 template <typename T, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits>
 constexpr inline any_cast_fn<T, Traits> any_cast = {};
 
-template <typename Alloc, size_t SooS, TTA... Methods>
+template <typename Alloc, size_t SooS, typename... Methods>
 using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
 
 constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 
-template <TTA... Methods>
+template <typename... Methods>
 using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
 
-template <TTA... Methods>
+template <typename... Methods>
 using cptr = const_poly_ptr<Methods...>;
 
-template <TTA... Methods>
+template <typename... Methods>
 using cref = const_poly_ref<Methods...>;
 
 //
@@ -1466,24 +1436,25 @@ using cref = const_poly_ref<Methods...>;
 // * Ret(Args...) const noexcept
 template <typename Signature>
 struct call {};
-
-#define AA_CALL_IMPL(CONST, NOEXCEPT)                                                  \
-  template <typename Ret, typename... Args>                                            \
-  struct call<Ret(Args...) CONST NOEXCEPT> {                                           \
-    template <typename T>                                                              \
-    AA_IF_HAS_CPP20(requires(std::is_invocable_r_v<Ret, CONST T&, Args...>))           \
-    struct method {                                                                    \
-      static Ret do_invoke(CONST T& self, Args... args) NOEXCEPT {                     \
-        return static_cast<Ret>(self(static_cast<Args&&>(args)...));                   \
-      }                                                                                \
-      template <typename CRTP>                                                         \
-      struct plugin {                                                                  \
-        Ret operator()(Args... args) CONST NOEXCEPT {                                  \
-          auto& self = *static_cast<CONST CRTP*>(this);                                \
-          return static_cast<Ret>(invoke<method>(self, static_cast<Args&&>(args)...)); \
-        }                                                                              \
-      };                                                                               \
-    };                                                                                 \
+// TODO на всех методах где это нужно провернуть такую хуйню(перегрузка с same_as<interface_t>)
+#define AA_CALL_IMPL(CONST, NOEXCEPT)                                                       \
+  template <typename Ret, typename... Args>                                                 \
+  struct call<Ret(Args...) CONST NOEXCEPT> {                                                \
+    template <typename T>                                                                   \
+    static auto do_invoke(CONST T& self, Args... args) NOEXCEPT                             \
+        ->decltype(static_cast<Ret>(self(static_cast<Args&&>(args)...))) {                  \
+      return static_cast<Ret>(self(static_cast<Args&&>(args)...));                          \
+    }                                                                                       \
+    template <typename T, std::enable_if_t<std::is_same_v<::aa::interface_t, T>, int> = 0>  \
+    static Ret do_invoke(CONST ::aa::interface_t&, Args...) NOEXCEPT;                       \
+    template <typename CRTP>                                                                \
+    struct plugin {                                                                         \
+      Ret operator()(Args... args) CONST NOEXCEPT {                                         \
+        auto& self = *static_cast<CONST CRTP*>(this);                                       \
+        return static_cast<Ret>(                                                            \
+            invoke<call<Ret(Args...) CONST NOEXCEPT>>(self, static_cast<Args&&>(args)...)); \
+      }                                                                                     \
+    };                                                                                      \
   }
 AA_CALL_IMPL(, );
 AA_CALL_IMPL(const, );
@@ -1495,54 +1466,48 @@ AA_CALL_IMPL(const, noexcept);
 
 namespace std {
 
-template <>
-struct hash<::aa::interface_t> {
-  constexpr size_t operator()(const ::aa::interface_t&) const noexcept {
-    return 0;
-  }
-};
-template <typename Alloc, size_t SooS, TTA... Methods>
+template <typename Alloc, size_t SooS, typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
 struct hash<::aa::basic_any<Alloc, SooS, Methods...>> {
   size_t operator()(const ::aa::basic_any<Alloc, SooS, Methods...>& any) const noexcept {
     return any.has_value() ? aa::invoke<::aa::hash>(any) : 0;
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
 struct hash<::aa::poly_ref<Methods...>> {
   size_t operator()(const ::aa::poly_ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
 struct hash<::aa::const_poly_ref<Methods...>> {
   size_t operator()(const ::aa::const_poly_ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
 struct hash<::aa::stateful::ref<Methods...>> {
   size_t operator()(const ::aa::stateful::ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
 struct hash<::aa::stateful::cref<Methods...>> {
   size_t operator()(const ::aa::stateful::cref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 struct hash<::aa::poly_ptr<Methods...>> {
   size_t operator()(const ::aa::poly_ptr<Methods...>& p) const noexcept {
     return ::std::hash<void*>{}(p.raw());
   }
 };
-template <TTA... Methods>
+template <typename... Methods>
 struct hash<::aa::const_poly_ptr<Methods...>> {
   size_t operator()(const ::aa::const_poly_ptr<Methods...>& p) const noexcept {
     return ::std::hash<void*>{}(p.raw());

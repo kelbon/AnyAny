@@ -295,21 +295,23 @@ struct FooAble {
   }
 };
 
-template <typename T>
+
 struct foox {
+  template <typename T>
+  static float do_invoke(T self) {
+    return self.foo();
+  }
   template<typename CRTP>
   struct plugin {
     float foo() const {
       return aa::invoke<foox>(static_cast<const CRTP&>(*this));
     }
   };
-  static float do_invoke(T self) {
-    return self.foo();
-  }
 };
 
-template<typename T>
+
 struct barx {
+  template <typename T>
   static std::string do_invoke(T& self, int&& f, std::string&& s) {
     return self.bar(f, s);
   }
@@ -390,8 +392,9 @@ using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
 using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::move, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
-template<typename T>
+
 struct Drawi {
+  template <typename T>
   static int do_invoke(const T& self, int val)
   {
     return self.draw(val);
@@ -435,14 +438,16 @@ struct A1 {
 struct A2 {
   double i = 3.14;
 };
-template <typename T>
+
 struct M1 {
+  template <typename T>
   static void do_invoke(const T& self, int val) {
     std::cout << typeid(self.i).name() << self.i << '\t' << val << '\n'; 
   }
 };
-template <typename T>
+
 struct M2 {
+  template <typename T>
   static void do_invoke(const T& self, double val, int val2) {
     std::cout << typeid(self.i).name() << self.i << '\t' << val << '\t' << val2 << '\n'; 
   }
@@ -472,7 +477,7 @@ struct visit {
   constrained_trait(method, requires(std::copy_constructible<Self>), void(const T&), self(args...));
 };
 template<typename... Ts>
-using visitor_for = aa::any_with<visit<Ts>::template method...>;
+using visitor_for = aa::any_with<typename visit<Ts>::method...>;
 
 const_trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
 

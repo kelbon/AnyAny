@@ -72,23 +72,23 @@ struct type_switch_impl {
   std::optional<Result> result = std::nullopt;
 };
 
-template <TTA... M>
+template <typename... M>
 struct tta_list {};
 
 template <typename X>
 struct extract_methods {};
 
-template <typename Alloc, size_t SooS, TTA... Methods>
+template <typename Alloc, size_t SooS, typename... Methods>
 struct extract_methods<basic_any<Alloc, SooS, Methods...>>
     : extract_methods<typename basic_any<Alloc, SooS, Methods...>::ref> {};
 
-template <TTA... Methods, template <TTA...> typename Template>
+template <typename... Methods, template <typename...> typename Template>
 struct extract_methods<Template<Methods...>> : std::type_identity<tta_list<Methods...>> {};
 
 consteval auto merge_impl(auto result, tta_list<>) {
   return result;
 }
-template <TTA Head, TTA... Methods, TTA... Results>
+template <typename Head, typename... Methods, typename... Results>
 consteval auto merge_impl(tta_list<Results...> out, tta_list<Head, Methods...>) {
   if constexpr (!vtable<Results...>::template has_method<Head>)
     return merge_impl(tta_list<Results..., Head>{}, tta_list<Methods...>{});
@@ -96,7 +96,7 @@ consteval auto merge_impl(tta_list<Results...> out, tta_list<Head, Methods...>) 
     return merge_impl(out, tta_list<Methods...>{});
 }
 
-template <template <TTA...> typename Out, TTA... Methods>
+template <template <typename...> typename Out, typename... Methods>
 Out<Methods...> insert_ttas(tta_list<Methods...>);
 
 }  // namespace noexport
@@ -115,11 +115,11 @@ Out<Methods...> insert_ttas(tta_list<Methods...>);
 //    .Case<ConstantOp>([](ConstantOp op) { ... })
 //    .Default([](const_poly_ref<Methods...> ref) { ... });
 namespace aa {
-template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, TTA... Methods>
+template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, typename... Methods>
 constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<poly_ptr<Methods...>, Result, Traits>{&p};
 }
-template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, TTA... Methods>
+template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, typename... Methods>
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result, Traits>{&p};
 }
@@ -127,7 +127,7 @@ constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
 // 'extracts' Methods from T and U, 'emplaces' them in 'Out' template.
 // removes duplicates, behaves as std::set merge
 // example: merged_any_t<poly_ptr<A, B, C>, poly_ref<D, A, C>> == any_with<A, B, C, D>
-template <typename T, typename U, template <TTA...> typename Out = aa::any_with>
+template <typename T, typename U, template <typename...> typename Out = aa::any_with>
 using merged_any_t = decltype(noexport::insert_ttas<Out>(noexport::merge_impl(
     typename noexport::extract_methods<T>::type{}, typename noexport::extract_methods<U>::type{})));
 

@@ -16,17 +16,16 @@
 
 namespace aa::example {
 
-template <typename Signature, template <typename> typename... Methods>
-struct basic_function {};
+template <typename, typename...>
+struct select_function {};
 
-template <typename R, typename Head, typename... Args, template <typename> typename... Methods>
-struct basic_function<R(Head, Args...), Methods...>
-    : aa::any_with<aa::call<R(Head, Args...)>::template method, Methods...> {
-  using base_t = aa::any_with<aa::call<R(Head, Args...)>::template method, Methods...>;
-  using base_t::base_t;
-  using base_t::operator=;
-  using base_t::operator();
+template <typename R, typename... Args, typename... Methods>
+struct select_function<R(Args...), Methods...> {
+    using type = aa::any_with<aa::call<R(Args...)>, Methods...>;
 };
+
+template<typename Signature, typename... Methods>
+using basic_function = typename select_function<Signature, Methods...>::type;
 
 template <typename Signature>
 using function = basic_function<Signature, aa::copy, aa::move>;
@@ -38,7 +37,7 @@ template <typename Signature>
 using function_ref = typename function<Signature>::ref;
 
 template <typename Signature>
-using effective_function_ref = aa::stateful::cref<aa::call<Signature>::template method>;
+using effective_function_ref = aa::stateful::cref<aa::call<Signature>>;
 
 using any = aa::any_with<aa::copy, aa::move>;
 
@@ -49,6 +48,7 @@ void example1_foo(int x, float y, double z) {
 void example1() {
   auto* fn_ptr = &example1_foo;
   effective_function_ref<void(int, float, double) const> f1 = fn_ptr;
+  static_assert(std::is_invocable_r_v<void, const decltype(fn_ptr)&, int, float, double>);
   f1(5, 5.f, 5.);
   function<void(int, float, double)> f0 = &example1_foo;
 

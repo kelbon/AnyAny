@@ -11,9 +11,23 @@
 #define AA_CONCEPT(...) typename
 #endif
 
-#include <string_view>
-
 namespace aa::noexport {
+
+inline constexpr bool starts_with(const char* part, const char* all) noexcept {
+  for (; *part == *all && *part != '\0'; ++part, ++all)
+    ;
+  return *part == '\0';
+}
+// precondition: !!l && !!r
+inline constexpr auto strcmp(const char* l, const char* r) noexcept {
+  for (; *l == *r && *l != '\0'; ++l, ++r)
+    ;
+#ifdef AA_HAS_CPP20
+  return *l <=> *r;
+#else
+  return *l == *r;
+#endif
+}
 
 // name 'n' because need to reduce name size
 template <typename T>
@@ -26,10 +40,9 @@ constexpr const char* n() {
   const char* res = __FUNCSIG__ + sizeof("const char *__cdecl aa::noexport::n<") - 1;
   // MSVC may return different names for SAME type if it was decalred as struct and implemented as class or
   // smth like
-  std::string_view s{res};
-  if (s.starts_with("class"))
+  if (starts_with("class", res))
     res += sizeof("class");
-  else if (s.starts_with("struct"))
+  else if (starts_with("struct", res))
     res += sizeof("struct");
   // fundamental types has no 'prefix'
   return res;
@@ -52,16 +65,5 @@ constexpr const void* descriptor = &descriptor<T>;
 template <typename T>
 constexpr const char* descriptor = n<T>();
 #endif
-
-// precondition: !!a && !!b
-inline constexpr auto strcmp(const char* l, const char* r) noexcept {
-  for (; *l == *r && *l != '\0'; ++l, ++r)
-    ;
-#ifdef AA_HAS_CPP20
-  return *l <=> *r;
-#else
-  return *l == *r;
-#endif
-}
 
 }  // namespace aa::noexport

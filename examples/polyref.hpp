@@ -35,9 +35,8 @@ const_trait(print, void(), std::cout << self << std::endl);
 // set of types like in case with void print(auto&&... args) signature
 // and only create a single erase for every type
 void print_all(std::initializer_list<aa::cref<print>> l) {
-  // aa::invoke<Method> is a functional object with operator()
   for (auto x : l)
-    aa::invoke<print>(x);
+    x.print();
 }
 
 using any_printable = aa::any_with<print>;

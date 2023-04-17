@@ -11,8 +11,8 @@
 ///
 
 // Firsly create an anyany Method (description how to invoke method for each type T)
-template <typename T>
 struct Draw {
+  template <typename T>
   static void do_invoke(const T& self, std::ostream& out, int val) {
     self.draw(out, val);
   }

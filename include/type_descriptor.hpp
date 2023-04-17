@@ -11,9 +11,10 @@
   * std_variant_poly_traits - examples of poly_traits
 */
 
-#include <type_traits>
-
 #include "noexport/type_descriptor_details.hpp"
+
+#include <type_traits>
+#include <string_view>
 
 namespace aa {
 
