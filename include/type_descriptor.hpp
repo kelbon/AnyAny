@@ -132,3 +132,18 @@ struct anyany_poly_traits {
 };
 
 }  // namespace aa
+
+namespace std {
+
+template <>
+struct hash<::aa::descriptor_t> {
+  size_t operator()(const ::aa::descriptor_t& v) const noexcept {
+#ifdef AA_CANT_GET_TYPENAME
+    return hash<const void*>{}(v._value);
+#else
+    return hash<::std::string_view>{}(v._value);
+#endif
+  }
+};
+
+}  // namespace std

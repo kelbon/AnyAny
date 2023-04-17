@@ -6,6 +6,8 @@
   * polymorphic value (basic_any_with, any_with),
   * reference (const_poly_ref, poly_ref),
   * pointer (const_poly_ptr, poly_ptr),
+  * cref/cptr aliases to const_poly_ref/const_poly_ptr
+  * stateful::ref/cref
   Basic actions on polymorphic types:
   * any_cast<T>
   * invoke<Method>
@@ -1544,17 +1546,6 @@ template <TTA... Methods>
 struct hash<::aa::const_poly_ptr<Methods...>> {
   size_t operator()(const ::aa::const_poly_ptr<Methods...>& p) const noexcept {
     return ::std::hash<void*>{}(p.raw());
-  }
-};
-
-template <>
-struct hash<::aa::descriptor_t> {
-  size_t operator()(const ::aa::descriptor_t& v) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
-    return hash<const void*>{}(v._value);
-#else
-    return hash<string_view>{}(v._value);
-#endif
   }
 };
 
