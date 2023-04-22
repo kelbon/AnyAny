@@ -8,6 +8,7 @@
 #include <list>
 #include <unordered_set>
 #include <memory_resource>
+#include <memory>
 
 #include "functional_paradigm.hpp"
 #include "basic_usage.hpp"

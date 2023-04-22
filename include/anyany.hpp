@@ -1276,7 +1276,7 @@ struct any_cast_fn {
 
 // may be throwed when casting not Any* / poly_ptr
 struct bad_cast : std::exception {
-  const char* what() const override {
+  const char* what() const noexcept override {
     return "incorrect aa::any_cast";
   }
 };
