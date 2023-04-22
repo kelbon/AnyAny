@@ -16,6 +16,14 @@
 #include <type_traits>
 #include <string_view>
 
+namespace aa::noexport {
+
+template <typename T>
+struct type_identity {
+  using type = T;
+};
+
+}  // namespace aa::noexport
 namespace aa {
 
 // Values of this type represent unique id of type,

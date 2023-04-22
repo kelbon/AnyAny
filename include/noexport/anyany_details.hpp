@@ -1,30 +1,15 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
-#include <type_traits>
-#ifdef AA_HAS_CPP20
-#include <memory>  // construct_at / destroy_at
-#endif
+
 #include "type_descriptor.hpp"
 
-namespace aa::noexport {
-template <typename>
-struct fn_return {};
-template <typename R, typename... Args>
-struct fn_return<R(Args...)> {
-  using type = R;
-};
-}  // namespace aa::noexport
 namespace aa {
 
 template <typename...>
 struct type_list {};
 
 constexpr inline size_t npos = size_t(-1);
-
-template<typename Signature>
-using fn_return_t = typename noexport::fn_return<Signature>::type;
 
 }  // namespace aa
 
@@ -83,52 +68,30 @@ struct is_one_of : std::bool_constant<(std::is_same_v<T, Args> || ...)> {};
 template <typename T>
 constexpr inline bool always_false = false;
 
-template <typename Self>
-AA_CONSTEVAL_CPP20 bool is_const_method() noexcept {
-  if (std::is_reference_v<Self>)
-    return std::is_const_v<std::remove_reference_t<Self>>;
-  return true;  // passing by value is a const method!
-}
-
 template <typename>
 struct any_method_traits {};
 
-// returns false if it is ill-formed to pass non-const reference into function which accepts T
-template <typename T>
-AA_CONSTEVAL_CPP20 bool is_const_arg() {
-  return !std::is_reference_v<T> || std::is_const_v<std::remove_reference_t<T>>;
-}
 // Note: for signature && added to arguments for forwarding
 template <typename R, typename Self, typename... Args>
 struct any_method_traits<R (*)(Self, Args...)> {
   using self_sample_type = Self;
   using result_type = R;
-  static constexpr bool is_const = is_const_method<Self>();
+  static constexpr bool is_const =
+      !std::is_reference_v<Self> || std::is_const_v<std::remove_reference_t<Self>>;
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
   using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
   using args = aa::type_list<Args...>;
-  // for visit_invoke
-  static constexpr bool is_noexcept = false;
-  using all_args = aa::type_list<Self, Args...>;
-  using decay_args = aa::type_list<std::decay_t<Self>, std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args) + 1;
-  static constexpr std::array args_const = {is_const_arg<Self>(), is_const_arg<Args>()...};
 };
 // noexcept version
 template <typename R, typename Self, typename... Args>
 struct any_method_traits<R (*)(Self, Args...) noexcept> {
   using self_sample_type = Self;
   using result_type = R;
-  static constexpr bool is_const = is_const_method<Self>();
+  static constexpr bool is_const =
+      !std::is_reference_v<Self> || std::is_const_v<std::remove_reference_t<Self>>;
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
   using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
   using args = aa::type_list<Args...>;
-  // for visit_invoke
-  static constexpr bool is_noexcept = true;
-  using all_args = aa::type_list<Self, Args...>;
-  using decay_args = aa::type_list<std::decay_t<Self>, std::decay_t<Args>...>;
-  static constexpr std::size_t args_count = sizeof...(Args) + 1;
-  static constexpr std::array args_const = {is_const_arg<Self>(), is_const_arg<Args>()...};
 };
 template <typename T>
 AA_CONSTEVAL_CPP20 bool starts_with(aa::type_list<>, T) {
@@ -168,7 +131,7 @@ template <typename T, typename U>
 AA_CONSTEVAL_CPP20 size_t find_subset(T a, U b) noexcept {
   return find_subset_impl(a, b);
 }
-#ifndef AA_HAS_CPP20
+
 template <typename T, typename... Args,
           typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
 constexpr T* construct_at(const T* location, Args&&... args) noexcept(noexcept(
@@ -183,67 +146,5 @@ void destroy_at(const T* location) noexcept {
 
 template <typename T>
 using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
-#else
-using ::std::construct_at;
-using ::std::destroy_at;
-using ::std::remove_cvref_t;
-#endif
 
-#define AA_IMPL_REMOVE_PARENS(...) __VA_ARGS__
-#define AA_IMPL_TOK_first(a, ...) a
-#define AA_IMPL_TOK_all_except_first(a, ...) __VA_ARGS__
-#define AA_IMPL_DO_GET_FIRST_TOKEN(out, x, ...) AA_IMPL_TOK_##out(x, __VA_ARGS__)
-#define AA_IMPL_GET_FIRST_TOKEN(out, ...) AA_IMPL_DO_GET_FIRST_TOKEN(out, __VA_ARGS__)
-#define AA_IMPL_SEPARATE_FIRST_TOK(...) (__VA_ARGS__),
-#define AA_GET_TOKEN(out, ...) AA_IMPL_GET_FIRST_TOKEN(out, AA_IMPL_SEPARATE_FIRST_TOK __VA_ARGS__)
-#define AA_IMPL_REMOVE_REQUIRESrequires(...) (__VA_ARGS__)
-#define AA_IMPL_CONCAT_EXPAND(a, b) a##b
-#define AA_IMPL_CONCAT(a, b) AA_IMPL_CONCAT_EXPAND(a, b)
-#define AA_EXPAND(a) a
-#define AA_GET_REQUIREMENT(...)                 \
-  AA_EXPAND(AA_IMPL_REMOVE_PARENS AA_GET_TOKEN( \
-      first, AA_IMPL_CONCAT(AA_IMPL_REMOVE_REQUIRES, AA_GET_TOKEN(all_except_first, __VA_ARGS__))))
-#define AA_GET_ALL_AFTER_REQUIREMENT(...) \
-  AA_GET_TOKEN(all_except_first,          \
-               AA_IMPL_CONCAT(AA_IMPL_REMOVE_REQUIRES, AA_GET_TOKEN(all_except_first, __VA_ARGS__)))
-#define AA_INJECT_SELF_IN_PARENS(...) (Self __VA_ARGS__)
-#define AA_INJECT_INTERFACE_T_IN_PARENS(...) (::aa::interface_t __VA_ARGS__)
-
-#define anyany_trait(NAME, ...)                                                                             \
-  struct NAME {                                                                                             \
-    using signature_type = auto AA_EXPAND(AA_INJECT_INTERFACE_T_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__)) \
-        AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                                          \
-                                                                                                            \
-    using return_type = ::aa::fn_return_t<signature_type>;                                                  \
-                                                                                                            \
-   public:                                                                                                  \
-    template <typename Self>                                                                                \
-    static auto do_invoke AA_EXPAND(AA_INJECT_SELF_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__))              \
-        -> decltype(static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__))) {                            \
-      return static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__));                                     \
-    }                                                                                                       \
-                                                                                                            \
-   private:                                                                                                 \
-    using method_t = NAME;                                                                                  \
-    template <typename, typename>                                                                           \
-    struct make_plugin {};                                                                                  \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(Self&, Args...)> {                                                         \
-      return_type NAME(Args... args) {                                                                      \
-        return ::aa::invoke<method_t>(*static_cast<CRTP*>(this), static_cast<Args&&>(args)...);             \
-      }                                                                                                     \
-    };                                                                                                      \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(const Self&, Args...)> {                                                   \
-      return_type NAME(Args... args) const {                                                                \
-        return ::aa::invoke<method_t>(*static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);       \
-      }                                                                                                     \
-    };                                                                                                      \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(Self, Args...)> : make_plugin<CRTP, Ret(const Self&, Args...)> {};         \
-                                                                                                            \
-   public:                                                                                                  \
-    template <typename CRTP>                                                                                \
-    using plugin = make_plugin<CRTP, signature_type>;                                                       \
-  }
 }  // namespace aa::noexport

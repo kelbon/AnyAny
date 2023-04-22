@@ -8,7 +8,7 @@
 
 namespace aa::noexport {
 
-template <typename PolyPtr, typename ResultT = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits>
+template <typename PolyPtr, typename ResultT = void, typename Traits = anyany_poly_traits>
 struct type_switch_impl {
  private:
   struct non_void {
@@ -39,7 +39,7 @@ struct type_switch_impl {
   // If value is one of Ts... F invoked (invokes count <= 1)
   template <typename... Ts, typename Fn>
   type_switch_impl& cases(Fn&& f) {
-    struct assert_ : std::type_identity<Ts>... {
+    struct assert_ : noexport::type_identity<Ts>... {
     } assert_unique_types;
     (void)assert_unique_types;
     (case_<Ts>(std::forward<Fn>(f)), ...);
@@ -83,13 +83,14 @@ struct extract_methods<basic_any<Alloc, SooS, Methods...>>
     : extract_methods<typename basic_any<Alloc, SooS, Methods...>::ref> {};
 
 template <typename... Methods, template <typename...> typename Template>
-struct extract_methods<Template<Methods...>> : std::type_identity<tta_list<Methods...>> {};
+struct extract_methods<Template<Methods...>> : noexport::type_identity<tta_list<Methods...>> {};
 
-consteval auto merge_impl(auto result, tta_list<>) {
+template<typename T>
+constexpr auto merge_impl(T result, tta_list<>) {
   return result;
 }
 template <typename Head, typename... Methods, typename... Results>
-consteval auto merge_impl(tta_list<Results...> out, tta_list<Head, Methods...>) {
+constexpr auto merge_impl(tta_list<Results...> out, tta_list<Head, Methods...>) {
   if constexpr (!vtable<Results...>::template has_method<Head>)
     return merge_impl(tta_list<Results..., Head>{}, tta_list<Methods...>{});
   else
@@ -115,11 +116,11 @@ Out<Methods...> insert_ttas(tta_list<Methods...>);
 //    .Case<ConstantOp>([](ConstantOp op) { ... })
 //    .Default([](const_poly_ref<Methods...> ref) { ... });
 namespace aa {
-template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, typename... Methods>
+template <typename Result = void, typename Traits = anyany_poly_traits, typename... Methods>
 constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<poly_ptr<Methods...>, Result, Traits>{&p};
 }
-template <typename Result = void, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits, typename... Methods>
+template <typename Result = void, typename Traits = anyany_poly_traits, typename... Methods>
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result, Traits>{&p};
 }

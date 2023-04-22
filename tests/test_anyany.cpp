@@ -259,7 +259,7 @@ void noallocate_test() {
   y = x;
   auto z = y;
 }
-#ifdef AA_HAS_CPP20
+#if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
 static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
               std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
@@ -283,6 +283,10 @@ size_t TestCompare() {
   error_if(v4 != 3.14f);
   error_if(3.14f != v4);
   return error_count;
+}
+#else
+size_t TestCompare() {
+  return 0;
 }
 #endif
 
@@ -473,14 +477,14 @@ struct test_method {
 };
 
 template <typename T>
-anyany_trait(
+anyany_method(
     visit,
     (&self, const T& value) requires(std::enable_if_t<std::is_copy_constructible_v<Self>>(), self(value))->void);
 
 template<typename... Ts>
 using visitor_for = aa::any_with<visit<Ts>...>;
 
-anyany_trait(Kekab, (const& self, int x, char y) requires(self.kekab(x, y))->std::string);
+anyany_method(Kekab, (const& self, int x, char y) requires(self.kekab(x, y))->std::string);
 
 using any_kekable_ = aa::any_with<Kekab>;
 
@@ -628,7 +632,9 @@ int main() {
   static_assert(!std::is_constructible_v<any_kekable_, std::string>);
   static_assert(!std::is_assignable_v<any_kekable_&, std::string>);
 #endif
-  visitor_for<int, float, std::string, double> vtor = [](auto&& arg) {
+  visitor_for<int, float, std::string, double> vtor = [](auto&&) {
+  };
+  vtor = [](auto&& arg) {
     std::cout << arg << '\n';
   };
   auto copyable_fn = [](auto&&) {
@@ -861,5 +867,5 @@ int main() {
   set.emplace(5);
   set.emplace(5.);
   srand(time(0));
-  return TestConstructors() + TestAnyCast() AA_IF_HAS_CPP20(+ TestCompare()) + TestInvoke() + TestCasts();
+  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
 }

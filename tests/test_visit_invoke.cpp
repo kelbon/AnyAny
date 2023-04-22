@@ -7,39 +7,27 @@ struct planet {
   int val = 150;
 };
 
-std::string case_sp(const spaceship& x, const planet& y) {
+constexpr inline auto case_sp = [](const spaceship& x, const planet& y) -> std::string {
   if (x.s != "hello" || y.val != 150)
     throw false;
   return "sp";
-}
-std::string case_ps(const planet& x, const spaceship& y) {
+};
+constexpr inline auto case_ps = [](const planet& x, const spaceship& y) -> std::string {
   if (x.val != 150 || y.s != "hello")
     throw false;
   return "ps";
-}
+};
 
-// clang-format off
-constexpr inline auto collisions = aa::make_visit_invoke<
-    case_sp,
-    [](spaceship&, const spaceship&) { return std::string("ss"); },
-    case_ps,
+constexpr inline auto collisions = aa::make_visit_invoke<std::string>(
+    case_sp, [](spaceship&, const spaceship&) { return std::string("ss"); }, case_ps,
     [](planet a, planet& b) {
-      if(a.val != 150 || b.val != 150)
+      if (a.val != 150 || b.val != 150)
         throw false;
       return std::string("pp");
     },
-    [](int&&) {
-        return std::string("int");
-    }
->();
-constexpr inline auto vars_collision = aa::make_visit_invoke<std::string,
-    case_sp,
-    case_ps,
-    [](int) {
-      return "int";
-    }
->(aa::std_variant_poly_traits{});
-// clang-format on
+    [](int&&) { return std::string("int"); });
+constexpr inline auto vars_collision = aa::make_visit_invoke<std::string, aa::std_variant_poly_traits>(
+    case_sp, case_ps, [](int) { return "int"; });
 
 int main() {
   aa::example::multidispatch_usage();

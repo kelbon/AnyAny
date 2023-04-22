@@ -1,7 +1,6 @@
 #pragma once
 
 #include <anyany.hpp>
-#include <algorithm>
 
 ///
 /// This example shows how to use aa::poly_ref / ptr
@@ -29,7 +28,7 @@ struct Print {
   };
 };
 */
-anyany_trait(print, (const& self) requires(std::cout << self << std::endl) -> void);
+anyany_method(print, (const& self) requires(std::cout << self << std::endl) -> void);
 
 // all arguments erased, so we dont create a print function for any
 // set of types like in case with void print(auto&&... args) signature
@@ -61,7 +60,7 @@ void statefull_print(const aa::stateful::cref<print>& ref) {
 void example_polyref() {
   struct no_print {};
   // trait created from macro enables SFINAE friend construct
-  AA_IF_HAS_CPP20(static_assert(!std::is_constructible_v<example::any_printable, no_print>);)
+  static_assert(!std::is_constructible_v<example::any_printable, no_print>);
   example::any_printable value = std::string{"Im a polymorphic value"};
   example::may_be_print(&value);  // operator& of poly_ref returns poly_ptr
   print_one(*&value);             // operator* of poly_ptr returns poly_ref

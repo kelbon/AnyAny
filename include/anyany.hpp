@@ -14,23 +14,17 @@
 
 */
 
-#include <array>
 #include <cassert>   // assert
-#include <cstddef>   // max_align_t
-#include <typeinfo>  // bad_cast/exception
 #include <utility>   // std::exchange
 #include <exception>
+
+#include "anyany_macro.hpp"
 #include "noexport/anyany_details.hpp"
 #include "type_descriptor.hpp"
 
 namespace aa {
-
-// Method must have same signature for all types(except self),
-// so this type used to check what signature Method have
-// this means all methods must be specializable for interface_t
-// typical error - concept on Method's template argument, which is false for interface_t
-// (in this case you can explciitly specialize Method for interface_t)
-// TODO ? break all possible type traits for this type?
+// used as placeholder for erased type in signature_type declarations
+// or when library tries to get signature by instanciating 'do_invoke' with this type
 struct interface_t {};
 
 // just unique type for every Method, because i need to inherit from plugins
@@ -50,7 +44,6 @@ template <typename Method, typename Any>
 using plugin_t = decltype(noexport::get_plugin_for<Any, Method>(0));
 
 // ######################## compilt time information about Methods(Traits) ########################
-// TODO почистить то что не нужно здесь(не используется)
 
 namespace noexport {
 template <typename Method>
@@ -71,18 +64,6 @@ template <typename Method>
 using result_t = typename method_traits<Method>::result_type;
 
 template <typename Method>
-using self_sample_t = typename method_traits<Method>::self_sample_type;
-
-template <typename Method>
-using signature_t = typename method_traits<Method>::signature_type;
-
-template <typename Method>
-using type_erased_signature_t = typename method_traits<Method>::type_erased_signature_type;
-
-template <typename Method>
-using type_erased_self_t = typename method_traits<Method>::type_erased_self_type;
-
-template <typename Method>
 using args_list = typename method_traits<Method>::args;
 
 template <typename Method>
@@ -93,8 +74,8 @@ struct invoker_for {};
 
 template <typename T, typename Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static result_t<Method> value(type_erased_self_t<Method> self, Args&&... args) {
-    using self_sample = self_sample_t<Method>;
+  static result_t<Method> value(typename method_traits<Method>::type_erased_self_type self, Args&&... args) {
+    using self_sample = typename method_traits<Method>::self_sample_type;
 
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
@@ -191,9 +172,9 @@ struct spaceship {
 
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
-template <AA_CONCEPT(method)... Methods>
+template <typename... Methods>
 struct vtable {
-  noexport::tuple<type_erased_signature_t<Methods>...> table;
+  noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> table;
 
   template <typename Method>
   static inline constexpr size_t number_of_method = noexport::number_of_first<Method, Methods...>;
@@ -207,7 +188,7 @@ struct vtable {
   }
 };
 
-template <AA_CONCEPT(method)... Methods>
+template <typename... Methods>
 struct vtable_with_metainfo {
   descriptor_t type_descriptor;
   const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
@@ -218,8 +199,8 @@ namespace noexport {
 // precondition: vtable_ptr points to 'vtable<Methoods...>; which was created as field in struct
 // 'vtable_with_metainfo' (any vtable created by poly_ptr/ref/any_with satisfies this requirement)
 inline descriptor_t get_type_descriptor(const void* vtable_ptr) noexcept {
-  static_assert(sizeof(vtable<destroy, copy>) == sizeof(std::array<void*, 2>));
-  static_assert(sizeof(vtable_with_metainfo<destroy>) == sizeof(std::array<void*, 3>));
+  static_assert(sizeof(vtable<destroy, copy>) == sizeof(void*[2]));
+  static_assert(sizeof(vtable_with_metainfo<destroy>) == sizeof(void*[3]));
   // standard layout guaratees that 'this' can be converted to pointer to first field
   static_assert(std::is_standard_layout_v<vtable_with_metainfo<>>);
   // for example table is [A,B,C] and A, B, C is pointers to Method<X>::do_invoke
@@ -844,6 +825,11 @@ struct force_stable_pointers_t {
 };
 constexpr inline force_stable_pointers_t force_stable_pointers{};
 
+struct allocator_arg_t {
+  explicit allocator_arg_t() = default;
+};
+constexpr inline allocator_arg_t allocator_arg{};
+
 // compilation error when allocate, so 'basic_any' with this allocator will never allocate
 // usefull for compile time checking, that you dont have allocations(+some optimizations)
 struct unreachable_allocator {
@@ -871,9 +857,9 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
 
  private:
   const vtable<Methods...>* vtable_ptr = nullptr;
-  void* value_ptr = &data;
+  void* value_ptr = data;
   union {
-    alignas(std::max_align_t) std::array<std::byte, SooS> data;
+    alignas(std::max_align_t) std::byte data[SooS];
     size_t size_allocated;  // stored when value allocated
   };
 #if __clang__
@@ -1098,10 +1084,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : basic_any(std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
-  constexpr basic_any(std::allocator_arg_t, Alloc alloc) noexcept : alloc(std::move(alloc)) {
+  constexpr basic_any(aa::allocator_arg_t, Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
   template <typename T, std::enable_if_t<std::conjunction_v<exist_for<T, Methods>...>, int> = 0>
-  basic_any(std::allocator_arg_t, Alloc alloc, T&& value) noexcept(
+  basic_any(aa::allocator_arg_t, Alloc alloc, T&& value) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
       : alloc(std::move(alloc)) {
     emplace_in_empty<std::decay_t<T>>(std::forward<T>(value));
@@ -1226,7 +1212,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   [[nodiscard]] bool operator!=(const basic_any& other) const {
     return !operator==(other);
   }
-  // TODO ? operator <
 #endif
 
  private:
@@ -1239,14 +1224,14 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     if (!other.memory_allocated())
       invoke<move>(other, value_ptr);
     else {
-      value_ptr = std::exchange(other.value_ptr, &other.data);
+      value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
     }
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
   bool memory_allocated() const noexcept {
-    return value_ptr != &data;
+    return value_ptr != data;
   }
   size_t allocated_size() const noexcept {
     assert(has_value() && memory_allocated());
@@ -1260,7 +1245,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     invoke<destroy>(*this);
     if (memory_allocated()) {
       alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
-      value_ptr = &data;
+      value_ptr = data;
     }
   }
 };
@@ -1286,6 +1271,13 @@ struct any_cast_fn {
     if (Traits{}.get_type_descriptor(val) != descriptor_v<T>)
       return result_type(nullptr);
     return reinterpret_cast<result_type>(Traits{}.to_address(val));
+  }
+};
+
+// may be throwed when casting not Any* / poly_ptr
+struct bad_cast : std::exception {
+  const char* what() const override {
+    return "incorrect aa::any_cast";
   }
 };
 
@@ -1328,7 +1320,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
   decltype(auto) operator()(U&& any) const {
     auto* ptr = (*this)(std::addressof(any));
     if (!ptr)
-      throw std::bad_cast{};
+      throw aa::bad_cast{};
     // const T& + const U& == const
     // const T& + non const U& == const
     // non-const T& + const U& == const
@@ -1361,7 +1353,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
   operator()(poly_ref<Methods...> p) const {
     X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
-      throw std::bad_cast{};
+      throw aa::bad_cast{};
     return *ptr;
   }
   // clang-format off
@@ -1371,7 +1363,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
     // clang-format on
     const X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
-      throw std::bad_cast{};
+      throw aa::bad_cast{};
     return *ptr;
   }
 };
@@ -1480,4 +1472,12 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 
 }  // namespace std
 #undef AA_ALWAYS_INLINE
-// TODO undef in other 'end-files'
+#undef AA_CONSTEVAL_CPP20
+#undef AA_CONSTEXPR
+#undef AA_HAS_CPP20
+#undef AA_IF_HAS_CPP20
+#undef AA_CONCEPT
+#undef AA_MSVC_EBO
+#undef AA_MSVC_WORKAROUND
+#undef AA_UNREACHABLE
+#undef AA_CANT_GET_TYPENAME

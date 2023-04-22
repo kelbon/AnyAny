@@ -86,12 +86,10 @@ constexpr const char* n() {
 // do not use it explicitly, use aa::descriptor_v
 #ifdef AA_CANT_GET_TYPENAME
 #define AA_CONSTEXPR
-#define AA_CONSTEVAL
 template <typename T>
 constexpr const void* descriptor = &descriptor<T>;
 #else
 #define AA_CONSTEXPR constexpr
-#define AA_CONSTEVAL consteval
 template <typename T>
 constexpr const char* descriptor = n<T>();
 #endif
