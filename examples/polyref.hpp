@@ -29,7 +29,7 @@ struct Print {
   };
 };
 */
-const_trait(print, void(), std::cout << self << std::endl);
+anyany_trait(print, (const& self) requires(std::cout << self << std::endl) -> void);
 
 // all arguments erased, so we dont create a print function for any
 // set of types like in case with void print(auto&&... args) signature

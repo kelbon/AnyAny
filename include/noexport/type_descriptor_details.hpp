@@ -1,5 +1,5 @@
 #pragma once
-#if __cplusplus >= 202002
+#if __cplusplus >= 202002L
 #define AA_HAS_CPP20
 #define AA_CONCEPT(...) __VA_ARGS__
 #define AA_IF_HAS_CPP20(...) __VA_ARGS__
@@ -7,13 +7,43 @@
 #include <compare>
 #else
 #define AA_IF_HAS_CPP20(...)
-#define AA_CONSTEVAL_CPP20 constexpr // TODO use everywhere
+#define AA_CONSTEVAL_CPP20 constexpr
 #define AA_CONCEPT(...) typename
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define AA_UNREACHABLE __builtin_unreachable()
+#elif defined(_MSC_VER)
+#define AA_UNREACHABLE __assume(false)
+#else
+#define AA_UNREACHABLE
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define AA_ALWAYS_INLINE __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+#define AA_ALWAYS_INLINE __forceinline
+#else
+#define AA_ALWAYS_INLINE inline
+#endif
+
+// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
+#ifdef _MSC_VER
+#define AA_MSVC_EBO __declspec(empty_bases)
+#else
+#define AA_MSVC_EBO
+#endif
+
+// MSVC cannot compile 99% of good code without workarounds, it is just unusable compiler
+#if defined(__GNUC__) || defined(__clang__)
+#define AA_MSVC_WORKAROUND(...)
+#else
+#define AA_MSVC_WORKAROUND(...) __VA_ARGS__
 #endif
 
 namespace aa::noexport {
 
-inline constexpr bool starts_with(const char* part, const char* all) noexcept {
+inline AA_CONSTEVAL_CPP20 bool starts_with(const char* part, const char* all) noexcept {
   for (; *part == *all && *part != '\0'; ++part, ++all)
     ;
   return *part == '\0';
@@ -37,13 +67,13 @@ constexpr const char* n() {
 #elif defined(__clang__)
   return __PRETTY_FUNCTION__ + sizeof("const char *aa::noexport::n() [T =");
 #elif defined(_MSC_VER)
-  const char* res = __FUNCSIG__ + sizeof("const char *__cdecl aa::noexport::n<") - 1;
+  constexpr const char* res = __FUNCSIG__ + sizeof("const char *__cdecl aa::noexport::n<") - 1;
   // MSVC may return different names for SAME type if it was decalred as struct and implemented as class or
   // smth like
   if (starts_with("class", res))
-    res += sizeof("class");
+    return res + sizeof("class");
   else if (starts_with("struct", res))
-    res += sizeof("struct");
+    return res + sizeof("struct");
   // fundamental types has no 'prefix'
   return res;
 #else

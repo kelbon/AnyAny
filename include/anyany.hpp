@@ -19,7 +19,7 @@
 #include <cstddef>   // max_align_t
 #include <typeinfo>  // bad_cast/exception
 #include <utility>   // std::exchange
-
+#include <exception>
 #include "noexport/anyany_details.hpp"
 #include "type_descriptor.hpp"
 
@@ -51,8 +51,21 @@ using plugin_t = decltype(noexport::get_plugin_for<Any, Method>(0));
 
 // ######################## compilt time information about Methods(Traits) ########################
 // TODO почистить то что не нужно здесь(не используется)
+
+namespace noexport {
 template <typename Method>
-using method_traits = noexport::any_method_traits<decltype(&Method::template do_invoke<interface_t>)>;
+auto get_method_signature_ptr(int) -> typename Method::signature_type*;
+template <typename Method>
+auto get_method_signature_ptr(...) -> decltype(&Method::template do_invoke<interface_t>);
+}  // namespace noexport
+
+template <typename Method>
+using method_traits = noexport::any_method_traits<decltype(noexport::get_method_signature_ptr<Method>(0))>;
+
+#ifdef AA_HAS_CPP20
+template <typename T>
+concept method = requires { typename method_traits<T>; };
+#endif
 
 template <typename Method>
 using result_t = typename method_traits<Method>::result_type;
@@ -130,7 +143,7 @@ struct move {
     } else {
       // never called if type is throw movable, but i need to compile method.
       // So this 'if constexpr' removes never used code in binary
-      assert(false);
+      AA_UNREACHABLE;
     }
   }
 };
@@ -144,35 +157,33 @@ struct copy {
 
 // enables std::hash specialization for polymorphic value and reference
 struct hash {
+  using signature_type = size_t(const interface_t&);
   template <typename T>
   static auto do_invoke(const T& self) -> decltype(size_t{std::hash<T>{}(std::declval<T>())}) {
     return size_t{std::hash<T>{}(self)};
   }
-  template <typename T, std::enable_if_t<std::is_same_v<T, interface_t>, int> = 0>
-  static size_t do_invoke(const interface_t&);
 };
 
 // enables operator== for any_with
 struct equal_to {
+  using signature_type = bool(const interface_t&, const void*);
   template <typename T>
   static auto do_invoke(const T& first, const void* second)
       -> decltype(bool(std::declval<T>() == std::declval<T>())) {
     return bool{first == *reinterpret_cast<const T*>(second)};
   }
-  template<typename T, std::enable_if_t<std::is_same_v<T, interface_t>, int> = 0>
-  static bool do_invoke(const interface_t&, const void*);
 };
 
 #ifdef AA_HAS_CPP20
 // enables operator<=> and operator== for any_with
 struct spaceship {
+  using signature_type = std::partial_ordering(const interface_t&, const void*);
   // See basic_any::operator<=> to understand why it is partical ordering always
   // strong and weak ordering is implicitly convertible to partical ordeting by C++20 standard!
   template <std::three_way_comparable T>
   static std::partial_ordering do_invoke(const T& first, const void* second) {
     return first <=> *reinterpret_cast<const T*>(second);
   }
-  static std::partial_ordering do_invoke(const std::same_as<interface_t> auto&, const void*);
 };
 #endif
 
@@ -180,7 +191,7 @@ struct spaceship {
 
 // regardless Method is a template,
 // do_invoke signature must be same for any valid T (as for virtual functions)
-template <typename... Methods>
+template <AA_CONCEPT(method)... Methods>
 struct vtable {
   noexport::tuple<type_erased_signature_t<Methods>...> table;
 
@@ -196,7 +207,7 @@ struct vtable {
   }
 };
 
-template <typename... Methods>
+template <AA_CONCEPT(method)... Methods>
 struct vtable_with_metainfo {
   descriptor_t type_descriptor;
   const void* const terminator = nullptr;  // indicates vtable begin! invariant - always nullptr
@@ -726,7 +737,7 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
 
  private:
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -737,19 +748,19 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   }
 
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     return FOO(stateful::cref<Methods2...>(r));
   }
 
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     return stateful::ref<Methods...>::FOO(r);
   }
 
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
     return FOO(*aa::const_pointer_cast(&p));
   }
@@ -758,7 +769,8 @@ struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
   // accepts poly_ref/const_poly_ref and stateful::ref/cref with more Methods, effectivelly converts
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  template <typename X, std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
+  template <typename X, AA_MSVC_WORKAROUND(std::enable_if_t<is_polymorphic<X>::value, int> = 0,)
+            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr cref(const X& x) : cref(FOO(x)) {
   }
   // operator const_poly_ref will be wrong, because it breakes any_cast invariant(vtable must be
@@ -845,7 +857,7 @@ struct unreachable_allocator {
     static_assert(noexport::always_false<X>, "must never allocate");
   }
   [[noreturn]] void deallocate(void*, size_t) {
-    std::terminate();
+    AA_UNREACHABLE;
   }
 };
 
@@ -1214,6 +1226,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   [[nodiscard]] bool operator!=(const basic_any& other) const {
     return !operator==(other);
   }
+  // TODO ? operator <
 #endif
 
  private:
@@ -1380,54 +1393,6 @@ using cptr = const_poly_ptr<Methods...>;
 template <typename... Methods>
 using cref = const_poly_ref<Methods...>;
 
-//
-// HOW TO USE:
-//
-// Each of these macros creates a Method with required signature and body
-//
-// paramters:
-//
-// 'NAME'      - name of resulting Method, which may be used later in aa::any_with/poly_ref etc
-// Also adds methood named 'NAME' in poly_ref/any_with etc types
-// 'SIGNATURE' - what trait accepts and returns. example: int(float, double)
-// 'BODY'      - how to invoke Method on concrete value of erased type
-//    BODY may use defined in macros parameters:
-//      'self' - is an object of type which will be erased
-//      'Self' - type of 'self'
-//      'args' - pack of arguments which trait accepts, for example,
-//              for SIGNATURE int(float, double) 'args' is a pack of float and double
-//
-// example:
-//      self.foo(args...)
-//
-// 'REQUIREMENT' - requirement for 'Self' to be erased, trait exist only for types, for which requirement ==
-// true
-//      May use 'Self' (type of erased value)
-// example:
-//      requires(std::copy_constructible<Self>)
-//
-// Note: use macros AA_ARGS in BODY for arguments perfect forwarding
-// Note: 'return' added before BODY anyway
-// Note: If return type contains ',', then you can use alias or write Method by hands
-//
-// example:
-//  trait(foo, std::string(int, float), self.foo(AA_ARGS...));
-//  any_with<foo> f = ..;
-//  f.foo(5, 3.14f);
-#define trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(, NAME, , SIGNATURE, __VA_ARGS__)
-// same as for 'trait', but may be invoked on const Any
-#define const_trait(NAME, SIGNATURE, ... /*BODY*/) trait_impl(const, NAME, , SIGNATURE, __VA_ARGS__)
-// same as 'trait', but with additional requirement
-// example:
-//  constrained_trait(foo, requires(std::copy_constructible<Self>), int(float, bool), self.do_some(AA_ARGS...)
-#define constrained_trait(NAME, REQUIREMENT, SIGNATURE, ... /*BODY*/) \
-  trait_impl(, NAME, REQUIREMENT, SIGNATURE, __VA_ARGS__)
-// same as 'constrained_trait', but may be invoked on const Any
-#define constrained_const_trait(NAME, REQUIREMENT, SIGNATURE, ... /*BODY*/) \
-  trait_impl(const, NAME, REQUIREMENT, SIGNATURE, __VA_ARGS__)
-// used when creating a trait, in body (see 'trait' example)
-#define AA_ARGS static_cast<AA_Args&&>(args)
-
 // call<Ret(Args...)>::method adds operator() with Args... to basic_any
 // (similar to std::function<Ret(Args...)>)
 // it supports different signatures:
@@ -1436,7 +1401,7 @@ using cref = const_poly_ref<Methods...>;
 // * Ret(Args...) const noexcept
 template <typename Signature>
 struct call {};
-// TODO на всех методах где это нужно провернуть такую хуйню(перегрузка с same_as<interface_t>)
+
 #define AA_CALL_IMPL(CONST, NOEXCEPT)                                                       \
   template <typename Ret, typename... Args>                                                 \
   struct call<Ret(Args...) CONST NOEXCEPT> {                                                \
@@ -1445,8 +1410,7 @@ struct call {};
         ->decltype(static_cast<Ret>(self(static_cast<Args&&>(args)...))) {                  \
       return static_cast<Ret>(self(static_cast<Args&&>(args)...));                          \
     }                                                                                       \
-    template <typename T, std::enable_if_t<std::is_same_v<::aa::interface_t, T>, int> = 0>  \
-    static Ret do_invoke(CONST ::aa::interface_t&, Args...) NOEXCEPT;                       \
+    using signature_type = Ret(CONST ::aa::interface_t&, Args...) NOEXCEPT;                 \
     template <typename CRTP>                                                                \
     struct plugin {                                                                         \
       Ret operator()(Args... args) CONST NOEXCEPT {                                         \

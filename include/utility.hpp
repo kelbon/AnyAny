@@ -131,35 +131,6 @@ template <typename T, typename U, template <typename...> typename Out = aa::any_
 using merged_any_t = decltype(noexport::insert_ttas<Out>(noexport::merge_impl(
     typename noexport::extract_methods<T>::type{}, typename noexport::extract_methods<U>::type{})));
 
-// Creates a Method from invocable object with given signature
-// usage example:
-// template<typename T>
-// using Size = aa::from_callable<std::size_t(), std::ranges::size>::const_method<T>;
-// using any_sized_range = aa::any_with<Size>;
-template <typename Signature, auto>
-struct from_callable {};
-
-template <typename R, typename... Ts, auto Foo>
-struct from_callable<R(Ts...), Foo> {
-  template <typename T>
-    requires(std::is_invocable_v<decltype(Foo), T&, Ts && ...> || std::is_same_v<interface_t, T>)
-  struct method {
-    static R do_invoke(T& self, Ts... args) {
-      return Foo(self, static_cast<Ts&&>(args)...);
-    }
-  };
-};
-template <typename R, typename... Ts, auto Foo>
-struct from_callable<R(Ts...) const, Foo> {
-  template <typename T>
-    requires(std::is_invocable_v<decltype(Foo), const T&, Ts && ...> || std::is_same_v<interface_t, T>)
-  struct method {
-    static R do_invoke(const T& self, Ts... args) {
-      return Foo(self, static_cast<Ts&&>(args)...);
-    }
-  };
-};
-
 // those traits may be used for visit many variants without O(n*m*...) instantiating.
 // Its very usefull for pattern matching, but may be slower then matching with visit.
 // All variants are polymorphic types for there traits, all other types considered as non-polymorphic
@@ -181,23 +152,22 @@ struct std_variant_poly_traits {
     return descriptor_v<T>;
   }
   template <typename T>
-  static auto* to_address(T&& v) noexcept {
-    return reinterpret_cast<
-        std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
+  static constexpr auto* to_address(T&& v) noexcept {
+    return static_cast<std::conditional_t<std::is_const_v<std::remove_reference_t<T>>, const void*, void*>>(
         std::addressof(v));
   }
   // Do not support cases like variant<int, const int> with mixed constness
   template <typename... Ts>
-  static const void* to_address(const std::variant<Ts...>& v) noexcept {
-    return std::visit([](const auto& v) { return reinterpret_cast<const void*>(std::addressof(v)); }, v);
+  static constexpr const void* to_address(const std::variant<Ts...>& v) noexcept {
+    return std::visit([](const auto& v) { return static_cast<const void*>(std::addressof(v)); }, v);
   }
   template <typename... Ts>
-  static void* to_address(std::variant<Ts...>& v) noexcept {
-    return std::visit([](auto& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
+  static constexpr void* to_address(std::variant<Ts...>& v) noexcept {
+    return std::visit([](auto& v) { return static_cast<void*>(std::addressof(v)); }, v);
   }
   template <typename... Ts>
-  static void* to_address(std::variant<Ts...>&& v) noexcept {
-    return std::visit([](auto&& v) { return reinterpret_cast<void*>(std::addressof(v)); }, v);
+  static constexpr void* to_address(std::variant<Ts...>&& v) noexcept {
+    return std::visit([](auto&& v) { return static_cast<void*>(std::addressof(v)); }, v);
   }
 };
 

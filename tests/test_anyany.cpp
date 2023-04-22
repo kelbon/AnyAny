@@ -472,14 +472,15 @@ struct test_method {
   }
 };
 
-template<typename T>
-struct visit {
-  constrained_trait(method, requires(std::copy_constructible<Self>), void(const T&), self(args...));
-};
-template<typename... Ts>
-using visitor_for = aa::any_with<typename visit<Ts>::method...>;
+template <typename T>
+anyany_trait(
+    visit,
+    (&self, const T& value) requires(std::enable_if_t<std::is_copy_constructible_v<Self>>(), self(value))->void);
 
-const_trait(Kekab, std::string(int, char), self.kekab(AA_ARGS...));
+template<typename... Ts>
+using visitor_for = aa::any_with<visit<Ts>...>;
+
+anyany_trait(Kekab, (const& self, int x, char y) requires(self.kekab(x, y))->std::string);
 
 using any_kekable_ = aa::any_with<Kekab>;
 
@@ -635,9 +636,9 @@ int main() {
   auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
     (void)x;
   };
-  aa::invoke<visit<int>::method>(vtor, 5);
-  aa::invoke<visit<std::string>::method>(vtor, "!!hello world!!");
-  AA_IF_HAS_CPP20(static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);)
+  aa::invoke<visit<int>>(vtor, 5);
+  aa::invoke<visit<std::string>>(vtor, "!!hello world!!");
+  static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);
   static_assert(std::is_constructible_v<decltype(vtor), decltype(copyable_fn)>);
 
   std::atomic<aa::poly_ptr<>> a;

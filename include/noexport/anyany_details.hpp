@@ -8,27 +8,23 @@
 #endif
 #include "type_descriptor.hpp"
 
-// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
-#if defined(_MSC_VER)
-#define AA_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_MSVC_EBO
-#endif
-
-#if defined(__GNUC__) || defined(__clang__)
-#define AA_ALWAYS_INLINE __attribute__((always_inline)) inline
-#elif defined(_MSC_VER)
-#define AA_ALWAYS_INLINE __forceinline
-#else
-#define AA_ALWAYS_INLINE inline
-#endif
-
+namespace aa::noexport {
+template <typename>
+struct fn_return {};
+template <typename R, typename... Args>
+struct fn_return<R(Args...)> {
+  using type = R;
+};
+}  // namespace aa::noexport
 namespace aa {
 
 template <typename...>
 struct type_list {};
 
 constexpr inline size_t npos = size_t(-1);
+
+template<typename Signature>
+using fn_return_t = typename noexport::fn_return<Signature>::type;
 
 }  // namespace aa
 
@@ -159,7 +155,7 @@ AA_CONSTEVAL_CPP20 size_t find_subset_impl(A, aa::type_list<>) {
 // no such index
 template <typename... Ts1, typename Head, typename... Ts2>
 AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
-                                      size_t n = 0) noexcept {
+                                           size_t n = 0) noexcept {
   if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
     return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
   else if constexpr (starts_with(needle, all))
@@ -167,8 +163,8 @@ AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::typ
   else
     return find_subset_impl(needle, aa::type_list<Ts2...>{}, n + 1);
 }
-// this wrapper just fixes MSVC bug with overload resolution and aliases
-template<typename T, typename U>
+// MSVC WORKAROUND! this wrapper just fixes MSVC bug with overload resolution and aliases
+template <typename T, typename U>
 AA_CONSTEVAL_CPP20 size_t find_subset(T a, U b) noexcept {
   return find_subset_impl(a, b);
 }
@@ -192,29 +188,62 @@ using ::std::construct_at;
 using ::std::destroy_at;
 using ::std::remove_cvref_t;
 #endif
-// TODO? здесь прямо сделать && на аргументах + аттрибутты типа always inline?
-#define trait_impl(CONST, NAME, REQUIREMENT, SIGNATURE, ... /*body*/)                                      \
-  template <typename>                                                                                      \
-  struct aa_make_method_##NAME {};                                                                         \
-                                                                                                           \
-  template <typename AA_Ret, typename... AA_Args>                                                          \
-  struct aa_make_method_##NAME<AA_Ret(AA_Args...)> {                                                       \
-    template <typename Self>                                                                               \
-    AA_IF_HAS_CPP20(REQUIREMENT)                                                                           \
-    static auto do_invoke(CONST Self& self, AA_Args... args)                                               \
-        -> decltype(std::enable_if_t<(!std::is_same_v<Self, ::aa::interface_t>)>(),                        \
-                    static_cast<AA_Ret>(__VA_ARGS__)) {                                                    \
-      return static_cast<AA_Ret>(__VA_ARGS__);                                                             \
-    }                                                                                                      \
-    template <typename Self, std::enable_if_t<::std::is_same_v<Self, ::aa::interface_t>, int> = 0>         \
-    static AA_Ret do_invoke(CONST ::aa::interface_t&, AA_Args...);                                         \
-    template <typename AA_CRTP>                                                                            \
-    struct plugin {                                                                                        \
-      AA_Ret NAME(AA_Args... args) CONST {                                                                 \
-        return ::aa::invoke<aa_make_method_##NAME<AA_Ret(AA_Args...)>>(*static_cast<CONST AA_CRTP*>(this), \
-                                                                       static_cast<AA_Args&&>(args)...);   \
-      }                                                                                                    \
-    };                                                                                                     \
-  };                                                                                                       \
-  using NAME = aa_make_method_##NAME<SIGNATURE>
+
+#define AA_IMPL_REMOVE_PARENS(...) __VA_ARGS__
+#define AA_IMPL_TOK_first(a, ...) a
+#define AA_IMPL_TOK_all_except_first(a, ...) __VA_ARGS__
+#define AA_IMPL_DO_GET_FIRST_TOKEN(out, x, ...) AA_IMPL_TOK_##out(x, __VA_ARGS__)
+#define AA_IMPL_GET_FIRST_TOKEN(out, ...) AA_IMPL_DO_GET_FIRST_TOKEN(out, __VA_ARGS__)
+#define AA_IMPL_SEPARATE_FIRST_TOK(...) (__VA_ARGS__),
+#define AA_GET_TOKEN(out, ...) AA_IMPL_GET_FIRST_TOKEN(out, AA_IMPL_SEPARATE_FIRST_TOK __VA_ARGS__)
+#define AA_IMPL_REMOVE_REQUIRESrequires(...) (__VA_ARGS__)
+#define AA_IMPL_CONCAT_EXPAND(a, b) a##b
+#define AA_IMPL_CONCAT(a, b) AA_IMPL_CONCAT_EXPAND(a, b)
+#define AA_EXPAND(a) a
+#define AA_GET_REQUIREMENT(...)                 \
+  AA_EXPAND(AA_IMPL_REMOVE_PARENS AA_GET_TOKEN( \
+      first, AA_IMPL_CONCAT(AA_IMPL_REMOVE_REQUIRES, AA_GET_TOKEN(all_except_first, __VA_ARGS__))))
+#define AA_GET_ALL_AFTER_REQUIREMENT(...) \
+  AA_GET_TOKEN(all_except_first,          \
+               AA_IMPL_CONCAT(AA_IMPL_REMOVE_REQUIRES, AA_GET_TOKEN(all_except_first, __VA_ARGS__)))
+#define AA_INJECT_SELF_IN_PARENS(...) (Self __VA_ARGS__)
+#define AA_INJECT_INTERFACE_T_IN_PARENS(...) (::aa::interface_t __VA_ARGS__)
+
+#define anyany_trait(NAME, ...)                                                                             \
+  struct NAME {                                                                                             \
+    using signature_type = auto AA_EXPAND(AA_INJECT_INTERFACE_T_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__)) \
+        AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                                          \
+                                                                                                            \
+    using return_type = ::aa::fn_return_t<signature_type>;                                                  \
+                                                                                                            \
+   public:                                                                                                  \
+    template <typename Self>                                                                                \
+    static auto do_invoke AA_EXPAND(AA_INJECT_SELF_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__))              \
+        -> decltype(static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__))) {                            \
+      return static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__));                                     \
+    }                                                                                                       \
+                                                                                                            \
+   private:                                                                                                 \
+    using method_t = NAME;                                                                                  \
+    template <typename, typename>                                                                           \
+    struct make_plugin {};                                                                                  \
+    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
+    struct make_plugin<CRTP, Ret(Self&, Args...)> {                                                         \
+      return_type NAME(Args... args) {                                                                      \
+        return ::aa::invoke<method_t>(*static_cast<CRTP*>(this), static_cast<Args&&>(args)...);             \
+      }                                                                                                     \
+    };                                                                                                      \
+    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
+    struct make_plugin<CRTP, Ret(const Self&, Args...)> {                                                   \
+      return_type NAME(Args... args) const {                                                                \
+        return ::aa::invoke<method_t>(*static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);       \
+      }                                                                                                     \
+    };                                                                                                      \
+    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
+    struct make_plugin<CRTP, Ret(Self, Args...)> : make_plugin<CRTP, Ret(const Self&, Args...)> {};         \
+                                                                                                            \
+   public:                                                                                                  \
+    template <typename CRTP>                                                                                \
+    using plugin = make_plugin<CRTP, signature_type>;                                                       \
+  }
 }  // namespace aa::noexport

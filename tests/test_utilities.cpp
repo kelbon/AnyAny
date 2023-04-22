@@ -2,9 +2,6 @@
 
 #include <iostream>
 
-template <typename T>
-using Size = aa::from_callable<std::size_t() const, std::ranges::size>::method<T>;
-
 size_t type_switch_test() {
   static constexpr int for_r = 0;
   constexpr aa::const_poly_ref<> r = for_r;
@@ -42,15 +39,6 @@ size_t type_switch_test() {
   return 0;
 }
 
-size_t from_callable_test() {
-  using any_sized_range = aa::any_with<Size>;
-  std::vector<int> v(10, 15);
-  static_assert(aa::exist_for<std::vector<int>, Size>::value);
-  any_sized_range rng = v;
-  if (aa::invoke<Size>(rng) != 10)
-    return 1;
-  return 0;
-}
 size_t test_merged_any() {
   static_assert(
       std::is_same_v<aa::any_with<aa::copy>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ref<>>>);
@@ -85,5 +73,5 @@ size_t variant_poly_traits_test() {
 }
 
 int main() {
-  return from_callable_test() + type_switch_test() + variant_poly_traits_test() + test_merged_any();
+  return type_switch_test() + variant_poly_traits_test() + test_merged_any();
 }
