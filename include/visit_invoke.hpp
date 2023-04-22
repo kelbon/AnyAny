@@ -13,6 +13,7 @@
 */
 
 #include <optional>      // for visit_invoke.resolve result
+#include <tuple>         // apply
 
 #include "type_descriptor.hpp"
 #include "noexport/visit_invoke_details.hpp"
