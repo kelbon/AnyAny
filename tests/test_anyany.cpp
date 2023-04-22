@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <memory_resource>
 #include <memory>
+#include <atomic>
 
 #include "functional_paradigm.hpp"
 #include "basic_usage.hpp"
