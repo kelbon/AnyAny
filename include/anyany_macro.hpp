@@ -3,6 +3,14 @@
 // This very light header may be used without #include anyany.hpp
 // for declaring anyany Methods
 
+namespace aa {
+struct error_if_you_forget_include_anyany_header_t {};
+// this is 'forward declaration' for using macro without 'anyany' header
+template <typename Method, typename = void>  // do not touch this param
+constexpr inline error_if_you_forget_include_anyany_header_t invoke = {};
+
+}  // namespace aa
+
 #define AA_IMPL_REMOVE_PARENS(...) __VA_ARGS__
 #define AA_IMPL_TOK_first(a, ...) a
 #define AA_IMPL_TOK_all_except_first(a, ...) __VA_ARGS__
@@ -67,30 +75,31 @@
   struct NAME {                                                                                             \
    private:                                                                                                 \
     using method_t = NAME;                                                                                  \
-    template <typename, typename>                                                                           \
+    template <typename, typename, typename>                                                                 \
     struct make_plugin {};                                                                                  \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(Self&, Args...)> {                                                         \
+    template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
+    struct make_plugin<CRTP, Ret(int&, Args...), Method> {                                                  \
       using return_type = Ret;                                                                              \
       return_type NAME(Args... args) {                                                                      \
-        return ::aa::invoke<method_t>(*static_cast<CRTP*>(this), static_cast<Args&&>(args)...);             \
+        return ::aa::invoke<Method>(*static_cast<CRTP*>(this), static_cast<Args&&>(args)...);               \
       }                                                                                                     \
     };                                                                                                      \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(const Self&, Args...)> {                                                   \
+    template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
+    struct make_plugin<CRTP, Ret(const int&, Args...), Method> {                                            \
       using return_type = Ret;                                                                              \
       return_type NAME(Args... args) const {                                                                \
-        return ::aa::invoke<method_t>(*static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);       \
+        return ::aa::invoke<Method>(*static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);         \
       }                                                                                                     \
     };                                                                                                      \
-    template <typename CRTP, typename Ret, typename Self, typename... Args>                                 \
-    struct make_plugin<CRTP, Ret(Self, Args...)> : make_plugin<CRTP, Ret(const Self&, Args...)> {};         \
+    template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
+    struct make_plugin<CRTP, Ret(int, Args...), Method>                                                     \
+        : make_plugin<CRTP, Ret(const int&, Args...), Method> {};                                           \
                                                                                                             \
    public:                                                                                                  \
     using signature_type = auto AA_EXPAND(AA_INJECT_INTERFACE_T_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__)) \
         AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                                          \
     template <typename CRTP>                                                                                \
-    using plugin = make_plugin<CRTP, signature_type>;                                                       \
+    using plugin = make_plugin<CRTP, signature_type, method_t>;                                             \
     using return_type = typename plugin<int>::return_type;                                                  \
                                                                                                             \
     template <typename Self>                                                                                \

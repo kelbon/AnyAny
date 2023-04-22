@@ -610,7 +610,15 @@ void any_cast_test() {
   static_assert(std::is_same_v<ac_res<const int&, Tt::const_ptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ptr>, const int*>);
 }
+anyany_method(change_i, (self) requires(self.i = 4) -> void);
+struct x {
+  int i = 0;
+};
 int main() {
+  aa::any_with<change_i> val_change_i = x{};
+  val_change_i.change_i(); // must not change 'i', because self by copy
+  if (aa::any_cast<x>(&val_change_i)->i != 0)
+    return -114;
   static_assert(!std::is_trivially_copyable_v<aa::any_with<aa::move, aa::copy>>);
   ptr_behavior_test();
   noallocate_test();

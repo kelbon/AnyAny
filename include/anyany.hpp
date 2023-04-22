@@ -811,7 +811,7 @@ struct invoke_fn<Method, type_list<Args...>> {
 
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
 template <typename Method>
-constexpr inline invoke_fn<Method> invoke = {};
+constexpr inline invoke_fn<Method> invoke<Method, void> = {};
 
 template <typename Method>
 [[deprecated("use aa::invoke")]] constexpr inline invoke_fn<Method> invoke_unsafe = {};
