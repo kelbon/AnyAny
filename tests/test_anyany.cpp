@@ -615,6 +615,9 @@ struct x {
   int i = 0;
 };
 int main() {
+  aa::any_with<example::print, aa::copy, example::print> duplicator;
+  duplicator = 5;
+  aa::invoke<example::print>(duplicator);
   aa::any_with<change_i> val_change_i = x{};
   val_change_i.change_i(); // must not change 'i', because self by copy
   if (aa::any_cast<x>(&val_change_i)->i != 0)

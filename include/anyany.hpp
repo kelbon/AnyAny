@@ -27,16 +27,14 @@ namespace aa {
 // or when library tries to get signature by instanciating 'do_invoke' with this type
 struct interface_t {};
 
-// just unique type for every Method, because i need to inherit from plugins
-template <typename Method>
 struct nullplugin {};
 
 namespace noexport {
 
 template <typename Any, typename Method>
-auto get_plugin_for(int) -> typename Method::template plugin<Any>;
-template <typename, typename Method>
-auto get_plugin_for(...) -> nullplugin<Method>;
+AA_CONSTEVAL_CPP20 auto get_plugin_for(int) -> typename Method::template plugin<Any>;
+template <typename, typename>
+AA_CONSTEVAL_CPP20 auto get_plugin_for(...) -> nullplugin;
 
 }  // namespace noexport
 
@@ -47,9 +45,9 @@ using plugin_t = decltype(noexport::get_plugin_for<Any, Method>(0));
 
 namespace noexport {
 template <typename Method>
-auto get_method_signature_ptr(int) -> typename Method::signature_type*;
+AA_CONSTEVAL_CPP20 auto get_method_signature_ptr(int) -> typename Method::signature_type*;
 template <typename Method>
-auto get_method_signature_ptr(...) -> decltype(&Method::template do_invoke<interface_t>);
+AA_CONSTEVAL_CPP20 auto get_method_signature_ptr(...) -> decltype(&Method::template do_invoke<interface_t>);
 }  // namespace noexport
 
 template <typename Method>
@@ -76,12 +74,12 @@ template <typename T, typename Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
   static result_t<Method> value(typename method_traits<Method>::type_erased_self_type self, Args&&... args) {
     using self_sample = typename method_traits<Method>::self_sample_type;
-
+    // explicitly transfers <T> into do_invoke for case when 'self' is not deductible(do_invoke(type_identity_t<Self>))
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
-      return Method::do_invoke(*reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
+      return Method::template do_invoke<T>(*reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
     } else if constexpr (std::is_copy_constructible_v<T>) {
-      return Method::do_invoke(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
+      return Method::template do_invoke<T>(*reinterpret_cast<const T*>(self), static_cast<Args&&>(args)...);
     } else {
       static_assert(noexport::always_false<T>,
                     "You pass self by value and it is not a copy constructible... or by rvalue reference");
@@ -274,16 +272,38 @@ struct mate {
   }
 };
 
+template<typename... Ts>
+struct AA_MSVC_EBO inheritor_of : Ts... {};
+
+namespace noexport {
+
+template <typename... Results>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<>, type_list<Results...>) -> inheritor_of<Results...> {
+  return {};
+}
+
+template <typename Head, typename... Tail, typename... Results>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<Head, Tail...>, type_list<Results...> l) {
+  if constexpr ((0 + ... + std::is_same_v<Head, Results>) == 0)
+    return remove_duplicates(type_list<Tail...>{}, type_list<Results..., Head>{});
+  else
+    return remove_duplicates(type_list<Tail...>{}, l);
+}
+
+}  // namespace noexport
+
+template<typename CRTP, typename... Methods>
+using construct_interface = decltype(noexport::remove_duplicates(type_list<plugin_t<Methods, CRTP>...>{}, type_list<>{}));
+
 // non nullable non owner view to any type which satisfies Methods...
 template <typename... Methods>
-struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
+struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
   const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
   void* value_ptr;
 
-  static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
   friend struct mate;
   template <typename...>
   friend struct poly_ptr;
@@ -329,14 +349,12 @@ struct AA_MSVC_EBO poly_ref : plugin_t<Methods, poly_ref<Methods...>>... {
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
 template <typename... Methods>
-struct AA_MSVC_EBO const_poly_ref : plugin_t<Methods, const_poly_ref<Methods...>>... {
+struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
   const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
   const void* value_ptr;
-
-  static_assert((std::is_empty_v<plugin_t<Methods, poly_ref<Methods...>>> && ...));
 
   friend struct mate;
   template <typename...>
@@ -618,7 +636,7 @@ namespace stateful {
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
 template <typename... Methods>
-struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
+struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
@@ -683,7 +701,7 @@ struct AA_MSVC_EBO ref : plugin_t<Methods, ref<Methods...>>... {
 // for example it may be used as function arguments with 1-2 Methods
 // also can reference arrays and functions without decay
 template <typename... Methods>
-struct AA_MSVC_EBO cref : plugin_t<Methods, cref<Methods...>>... {
+struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
@@ -841,6 +859,7 @@ struct unreachable_allocator {
   template <typename X = void>
   [[noreturn]] std::byte* allocate(size_t) const noexcept {
     static_assert(noexport::always_false<X>, "must never allocate");
+    AA_UNREACHABLE;
   }
   [[noreturn]] void deallocate(void*, size_t) {
     AA_UNREACHABLE;
@@ -852,7 +871,7 @@ struct unreachable_allocator {
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
 template <typename Alloc, size_t SooS, typename... Methods>
-struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods...>>... {
+struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
@@ -921,7 +940,6 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   static constexpr bool has_equal_to = has_method<equal_to>;
   AA_IF_HAS_CPP20(static constexpr bool has_spaceship = has_method<spaceship>;)
 
-  static_assert((std::is_empty_v<plugin_t<Methods, basic_any<Alloc, SooS, Methods...>>> && ...));
   static_assert(
       noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
   static_assert(has_method<destroy>, "Any requires aa::destroy method");
@@ -1155,7 +1173,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     return has_value() ? noexport::get_type_descriptor(vtable_ptr) : descriptor_t{};
   }
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
-  bool is_stable_pointers() const noexcept {
+  constexpr bool is_stable_pointers() const noexcept {
     return memory_allocated();
   }
   constexpr bool has_value() const noexcept {
@@ -1164,7 +1182,7 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
   // returns count of bytes sufficient to store current value
   // (not guaranteed to be smallest)
   // return 0 if !has_value()
-  size_t sizeof_now() const noexcept {
+  constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
     if (memory_allocated())
@@ -1230,10 +1248,10 @@ struct AA_MSVC_EBO basic_any : plugin_t<Methods, basic_any<Alloc, SooS, Methods.
     vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
   }
 
-  bool memory_allocated() const noexcept {
+  constexpr bool memory_allocated() const noexcept {
     return value_ptr != data;
   }
-  size_t allocated_size() const noexcept {
+  constexpr size_t allocated_size() const noexcept {
     assert(has_value() && memory_allocated());
     // needs atleast sizeof(std::size_t) in buffer(SooS)
     // to store allocated size for passing it into deallocate(ptr, n)
@@ -1349,7 +1367,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
   }
   template <typename... Methods>
   std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
-                     std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
+                               std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
   operator()(poly_ref<Methods...> p) const {
     X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
@@ -1481,3 +1499,4 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 #undef AA_MSVC_WORKAROUND
 #undef AA_UNREACHABLE
 #undef AA_CANT_GET_TYPENAME
+#undef AA_IS_VALID

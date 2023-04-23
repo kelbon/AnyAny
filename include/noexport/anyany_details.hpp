@@ -140,7 +140,7 @@ constexpr T* construct_at(const T* location, Args&&... args) noexcept(noexcept(
       T(std::forward<Args>(args)...);
 }
 template <typename T>
-void destroy_at(const T* location) noexcept {
+constexpr void destroy_at(const T* location) noexcept {
   location->~T();
 }
 
