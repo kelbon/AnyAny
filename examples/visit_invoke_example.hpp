@@ -53,8 +53,8 @@ constexpr inline auto space_objects_collision =
 void multidispatch_usage() {
   // values are type erased here, so it is runtime overload resolution
   // we dont need any Methods(Traits) here, so <> (empty Methods pack) used
-  aa::any_with<> player = spaceship{.id = 14};
-  aa::any_with<> stone = asteroid{.galaxy_name = "Andromeda"};
+  aa::any_with<aa::type_info> player = spaceship{.id = 14};
+  aa::any_with<aa::type_info> stone = asteroid{.galaxy_name = "Andromeda"};
   // optional string returned, because may be no such function for such dynamic types
   std::optional result = space_objects_collision.resolve(player, stone);
   assert(result == "collision between spaceship #14 and asteroid from galaxy Andromeda");
@@ -79,9 +79,9 @@ void multidispatch_usage2() {
     A a;
     B b;
     C c;
-    aa::poly_ref<> aref = a;
-    aa::const_poly_ref<> bcref = b;
-    aa::any_with<> cval = c;
+    aa::poly_ref<aa::type_info> aref = a;
+    aa::const_poly_ref<aa::type_info> bcref = b;
+    aa::any_with<aa::type_info> cval = c;
     if(wow_what.resolve(cval, aref, bcref) != 4)
         throw false;
     if(wow_what.resolve(cval) != 5)

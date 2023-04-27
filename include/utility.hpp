@@ -72,34 +72,6 @@ struct type_switch_impl {
   std::optional<Result> result = std::nullopt;
 };
 
-template <typename... M>
-struct tta_list {};
-
-template <typename X>
-struct extract_methods {};
-
-template <typename Alloc, size_t SooS, typename... Methods>
-struct extract_methods<basic_any<Alloc, SooS, Methods...>>
-    : extract_methods<typename basic_any<Alloc, SooS, Methods...>::ref> {};
-
-template <typename... Methods, template <typename...> typename Template>
-struct extract_methods<Template<Methods...>> : noexport::type_identity<tta_list<Methods...>> {};
-
-template<typename T>
-constexpr auto merge_impl(T result, tta_list<>) {
-  return result;
-}
-template <typename Head, typename... Methods, typename... Results>
-constexpr auto merge_impl(tta_list<Results...> out, tta_list<Head, Methods...>) {
-  if constexpr (!vtable<Results...>::template has_method<Head>)
-    return merge_impl(tta_list<Results..., Head>{}, tta_list<Methods...>{});
-  else
-    return merge_impl(out, tta_list<Methods...>{});
-}
-
-template <template <typename...> typename Out, typename... Methods>
-Out<Methods...> insert_ttas(tta_list<Methods...>);
-
 }  // namespace noexport
 
 // ######################## ACTION type_switch for all polymorphic types ########################
@@ -124,13 +96,6 @@ template <typename Result = void, typename Traits = anyany_poly_traits, typename
 constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
   return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result, Traits>{&p};
 }
-
-// 'extracts' Methods from T and U, 'emplaces' them in 'Out' template.
-// removes duplicates, behaves as std::set merge
-// example: merged_any_t<poly_ptr<A, B, C>, poly_ref<D, A, C>> == any_with<A, B, C, D>
-template <typename T, typename U, template <typename...> typename Out = aa::any_with>
-using merged_any_t = decltype(noexport::insert_ttas<Out>(noexport::merge_impl(
-    typename noexport::extract_methods<T>::type{}, typename noexport::extract_methods<U>::type{})));
 
 // those traits may be used for visit many variants without O(n*m*...) instantiating.
 // Its very usefull for pattern matching, but may be slower then matching with visit.

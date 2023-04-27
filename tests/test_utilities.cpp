@@ -4,7 +4,7 @@
 
 size_t type_switch_test() {
   static constexpr int for_r = 0;
-  constexpr aa::const_poly_ref<> r = for_r;
+  constexpr aa::const_poly_ref<aa::type_info> r = for_r;
   std::string X;
   auto visitor = [&]<typename T>(T v) {
     std::cout << typeid(T).name();
@@ -27,7 +27,7 @@ size_t type_switch_test() {
   if (switch_result != sizeof(int))
     return 2;
   std::string fifa;
-  aa::poly_ref<> rr = fifa;
+  aa::poly_ref<aa::type_info> rr = fifa;
   auto switch_result1 = aa::type_switch<std::size_t>(rr)
                             .case_<float>(visitor)
                             .case_<bool>(visitor)
@@ -36,24 +36,6 @@ size_t type_switch_test() {
                             .default_(std::size_t(-1));
   if (switch_result1 != -1)
     return 3;
-  return 0;
-}
-
-size_t test_merged_any() {
-  static_assert(
-      std::is_same_v<aa::any_with<aa::copy>, aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ref<>>>);
-  static_assert(std::is_same_v<aa::any_with<aa::copy, aa::move>,
-                               aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>>>);
-  static_assert(
-      std::is_same_v<aa::cref<aa::copy, aa::move>,
-                     aa::merged_any_t<aa::poly_ref<aa::copy>, aa::poly_ptr<aa::move, aa::copy>, aa::cref>>);
-  static_assert(std::is_same_v<aa::cref<aa::copy, aa::equal_to, aa::spaceship, aa::move>,
-                               aa::merged_any_t<aa::poly_ref<aa::copy, aa::equal_to, aa::spaceship>,
-                                                aa::poly_ptr<aa::move, aa::copy, aa::spaceship>, aa::cref>>);
-  static_assert(
-      std::is_same_v<aa::cref<aa::copy, aa::move, aa::spaceship, aa::equal_to>,
-                     aa::merged_any_t<aa::poly_ref<aa::copy, aa::move, aa::spaceship>,
-                                      aa::any_with<aa::equal_to, aa::move, aa::spaceship>, aa::cref>>);
   return 0;
 }
 
@@ -73,5 +55,5 @@ size_t variant_poly_traits_test() {
 }
 
 int main() {
-  return type_switch_test() + variant_poly_traits_test() + test_merged_any();
+  return type_switch_test() + variant_poly_traits_test();
 }

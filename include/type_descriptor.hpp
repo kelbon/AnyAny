@@ -8,7 +8,6 @@
   * descriptor_v
   * concept poly_traits - see declaration for info
   * anyany_poly_traits
-  * std_variant_poly_traits - examples of poly_traits
 */
 
 #include "noexport/type_descriptor_details.hpp"
@@ -18,10 +17,14 @@
 
 namespace aa::noexport {
 
+#ifndef AA_HAS_CPP20
 template <typename T>
 struct type_identity {
   using type = T;
 };
+#else
+using std::type_identity;
+#endif
 
 }  // namespace aa::noexport
 namespace aa {

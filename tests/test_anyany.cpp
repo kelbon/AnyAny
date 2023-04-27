@@ -18,7 +18,7 @@
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy, aa::move, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::type_info, aa::copy, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -262,12 +262,17 @@ void noallocate_test() {
   auto z = y;
 }
 #if __cplusplus >= 202002L
-using any_compare = aa::any_with<aa::copy, aa::spaceship, aa::move>;
-static_assert(std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::spaceship, aa::move>> &&
-              std::is_same_v<any_compare::const_ref, aa::const_poly_ref<aa::copy, aa::spaceship, aa::move>> &&
-              std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::spaceship, aa::move>> &&
-              std::is_same_v<any_compare::const_ptr, aa::const_poly_ptr<aa::copy, aa::spaceship, aa::move>>);
-using any_equal = aa::any_with<aa::equal_to, aa::move>;
+using any_compare = aa::any_with<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>;
+static_assert(
+    std::is_same_v<any_compare::ref,
+                   aa::poly_ref<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::const_ref,
+                   aa::const_poly_ref<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ptr,
+                   aa::poly_ptr<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::const_ptr,
+                   aa::const_poly_ptr<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
+using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
 
 size_t TestCompare() {
   size_t error_count = 0;
@@ -280,10 +285,11 @@ size_t TestCompare() {
   aa::any_cast<std::vector<int>>(std::addressof(v3))->back() = 0;
   aa::any_cast<std::vector<int>&>(v3).back() = 0;
   auto vec = aa::any_cast<std::vector<int>>(v3);
-  error_if(!(v3 < v2));
+  auto vec2 = aa::any_cast<std::vector<int>>(v2);
+  error_if(v3 >= v2);
   any_equal v4 = 3.14f;
-  error_if(v4 != 3.14f);
-  error_if(3.14f != v4);
+  error_if(v4 != any_equal{3.14f});
+  error_if(any_equal{3.14f} != v4);
   return error_count;
 }
 #else
@@ -323,7 +329,7 @@ struct barx {
   }
 };
 
-using any_fooable = aa::any_with<aa::copy, aa::move, foox, barx>;
+using any_fooable = aa::any_with<aa::type_info, aa::copy, aa::move, foox, barx>;
 
 size_t TestAnyCast() {
   size_t error_count = 0;
@@ -414,7 +420,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<Drawi, aa::copy, aa::move>;
+using idrawable = aa::any_with<aa::type_info, Drawi, aa::copy, aa::move>;
 
 struct drawable0 {
   int draw(int val) const {
@@ -479,7 +485,7 @@ struct test_method {
 };
 
 template <typename T>
-anyany_method(
+anyany_extern_method(
     visit,
     (&self, const T& value) requires(std::enable_if_t<std::is_copy_constructible_v<Self>>(), self(value))->void);
 
@@ -497,12 +503,12 @@ struct kekabl1 {
   }
 };
 void transmute_test() {
-  aa::any_with<aa::move, aa::copy> v1;
+  aa::any_with<aa::type_info, aa::move, aa::copy> v1;
   v1 = std::string("abc");
   if ((uintptr_t)(&v1).raw() != (uintptr_t)(std::addressof(v1)) + 16)
     throw false;
   auto xx = v1;
-  aa::any_with<aa::move> v2 = v1;
+  aa::any_with<aa::type_info, aa::move> v2 = v1;
   if ((uintptr_t)(&v2).raw() == (uintptr_t)(&v1).raw())
     throw false;
   auto copyv2 = std::move(v2);
@@ -544,9 +550,9 @@ void ptr_behavior_test() {
     throw false;
   if (ptr.raw_vtable_ptr() != nullptr)
     throw false;
-  aa::poly_ptr<example::print> ptr1 = &s;
+  aa::poly_ptr<aa::type_info, example::print> ptr1 = &s;
   ptr1->print();
-  aa::poly_ptr<example::print> ptr2 = &x;
+  aa::poly_ptr<aa::type_info, example::print> ptr2 = &x;
   ptr2->print();
   ptr1 = ptr2;
   ptr2 = nullptr;
@@ -618,7 +624,7 @@ int main() {
   aa::any_with<example::print, aa::copy, example::print> duplicator;
   duplicator = 5;
   aa::invoke<example::print>(duplicator);
-  aa::any_with<change_i> val_change_i = x{};
+  aa::any_with<change_i, aa::type_info> val_change_i = x{};
   val_change_i.change_i(); // must not change 'i', because self by copy
   if (aa::any_cast<x>(&val_change_i)->i != 0)
     return -114;
@@ -669,13 +675,13 @@ int main() {
   // explicit rebind ref
   refa = aa::poly_ref<>(a);
   sm sm_val;
-  aa::poly_ptr<> sm_val_p1 = &sm_val;
-  aa::poly_ptr<> sm_val_p2 = &sm_val.x;
+  aa::poly_ptr<aa::type_info> sm_val_p1 = &sm_val;
+  aa::poly_ptr<aa::type_info> sm_val_p2 = &sm_val.x;
   if (sm_val_p1 == sm_val_p2)
     return -111;
   std::unordered_set<aa::descriptor_t> dmap{aa::descriptor_v<void>, aa::descriptor_v<int>};
   (void)dmap;
-  aa::any_with<aa::move> kekv = {aa::force_stable_pointers, 5};
+  aa::any_with<aa::type_info, aa::move> kekv = {aa::force_stable_pointers, 5};
   static_assert(std::is_same_v<decltype(kekv = decltype(kekv){}), decltype(kekv)&>);
   auto kekv_ptr = &kekv;
   void* kekv_raw_ptr = kekv_ptr.raw();
@@ -684,18 +690,18 @@ int main() {
     return -20;
   *aa::any_cast<int>(kekv_ptr) = 150; // must not segfault ))
   deriv d;
-  aa::poly_ptr<> pdd = &d;
-  aa::poly_ptr<> pdd1 = (base*)(&d);
+  aa::poly_ptr<aa::type_info> pdd = &d;
+  aa::poly_ptr<aa::type_info> pdd1 = (base*)(&d);
   if (pdd.raw() != pdd1.raw() || pdd == pdd1 || pdd != pdd || pdd1 != pdd1)
     return -15;
-  aa::const_poly_ptr<> cpdd = &d;
-  aa::const_poly_ptr<> cpdd1 = (base*)(&d);
+  aa::const_poly_ptr<aa::type_info> cpdd = &d;
+  aa::const_poly_ptr<aa::type_info> cpdd1 = (base*)(&d);
   if (cpdd.raw() != cpdd1.raw() || cpdd == cpdd1 || cpdd != cpdd || cpdd1 != cpdd1)
     return -16;
   if (cpdd != pdd || cpdd1 != pdd1 || cpdd1 == pdd || cpdd == pdd1)
     return -17;
   static_assert(std::is_trivially_copyable_v<decltype(cpdd)>);
-  aa::any_with<example::print> p = "hello world";
+  aa::any_with<aa::type_info, example::print> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
@@ -867,7 +873,7 @@ int main() {
   Foobar(&v01);
   xyz val = 5;
   std::cout << sizeof(val);
-  if (val != 5) // implicit conversion 5 to any_with
+  if (val != xyz(5))
     return -100;
   val = std::string{"hello world"};
   val = 0.f;

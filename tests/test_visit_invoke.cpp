@@ -50,17 +50,17 @@ int main() {
 
   spaceship space_ship;
   planet space_planet;
-  aa::const_poly_ref<> space_ref1 = space_ship;
+  aa::const_poly_ref<aa::type_info> space_ref1 = space_ship;
   int fake_space = 0;
-  aa::const_poly_ptr<> space_ref2 = &space_planet;
+  aa::const_poly_ptr<aa::type_info> space_ref2 = &space_planet;
   if (collisions.resolve(5, 5) != std::nullopt)
     return -1;
   if (collisions.resolve(5, space_ref1) != std::nullopt)
     return -2;
   if (*collisions.resolve(space_ref1, space_ref2) != "sp")
     return -3;
-  if (collisions.resolve(space_ref1, aa::poly_ptr<>(&fake_space)) != std::nullopt)
+  if (collisions.resolve(space_ref1, aa::poly_ptr<aa::type_info>(&fake_space)) != std::nullopt)
     return -4;
-  if (collisions.resolve(aa::poly_ref<>(fake_space)) != "int")
+  if (collisions.resolve(aa::poly_ref<aa::type_info>(fake_space)) != "int")
     return -5;
 }

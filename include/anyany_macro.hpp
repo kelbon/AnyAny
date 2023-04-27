@@ -4,12 +4,37 @@
 // for declaring anyany Methods
 
 namespace aa {
-struct error_if_you_forget_include_anyany_header_t {};
-// this is 'forward declaration' for using macro without 'anyany' header
-template <typename Method, typename = void>  // do not touch this param
-constexpr inline error_if_you_forget_include_anyany_header_t invoke = {};
+
+// used as placeholder for erased type in signature_type declarations
+// or when library tries to get signature by instanciating 'do_invoke' with this type
+using erased_self_t = int;
+
+template <typename...>
+struct type_list {};
+
+constexpr inline size_t npos = size_t(-1);
 
 }  // namespace aa
+
+namespace aa::noexport {
+
+template <typename>
+struct get_return_type {};
+
+template <typename Ret, typename Self, typename... Args>
+struct get_return_type<Ret(Self, Args...)> {
+  using type = Ret;
+};
+template<typename Signature>
+using return_type_of = typename get_return_type<Signature>::type;
+
+template <typename Method, typename>
+struct invoke_fn {
+  static_assert(
+      ![] {}, "you forget to include anyany.hpp");
+};
+
+}  // namespace noexport
 
 #define AA_IMPL_REMOVE_PARENS(...) __VA_ARGS__
 #define AA_IMPL_TOK_first(a, ...) a
@@ -79,16 +104,16 @@ constexpr inline error_if_you_forget_include_anyany_header_t invoke = {};
     struct make_plugin {};                                                                                  \
     template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
     struct make_plugin<CRTP, Ret(int&, Args...), Method> {                                                  \
-      using return_type = Ret;                                                                              \
-      return_type NAME(Args... args) {                                                                      \
-        return ::aa::invoke<Method>(*static_cast<CRTP*>(this), static_cast<Args&&>(args)...);               \
+      Ret NAME(Args... args) {                                                                              \
+        return ::aa::noexport::invoke_fn<Method, ::aa::type_list<Args...>>{}(*static_cast<CRTP*>(this),     \
+                                                                             static_cast<Args&&>(args)...); \
       }                                                                                                     \
     };                                                                                                      \
     template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
     struct make_plugin<CRTP, Ret(const int&, Args...), Method> {                                            \
-      using return_type = Ret;                                                                              \
-      return_type NAME(Args... args) const {                                                                \
-        return ::aa::invoke<Method>(*static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);         \
+      Ret NAME(Args... args) const {                                                                        \
+        return ::aa::noexport::invoke_fn<Method, ::aa::type_list<Args...>>{}(                               \
+            *static_cast<const CRTP*>(this), static_cast<Args&&>(args)...);                                 \
       }                                                                                                     \
     };                                                                                                      \
     template <typename CRTP, typename Ret, typename... Args, typename Method>                               \
@@ -100,8 +125,20 @@ constexpr inline error_if_you_forget_include_anyany_header_t invoke = {};
         AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                                          \
     template <typename CRTP>                                                                                \
     using plugin = make_plugin<CRTP, signature_type, method_t>;                                             \
-    using return_type = typename plugin<int>::return_type;                                                  \
-                                                                                                            \
+    using return_type = ::aa::noexport::return_type_of<signature_type>;                                     \
+    template <typename Self>                                                                                \
+    static auto do_invoke AA_EXPAND(AA_INJECT_SELF_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__))              \
+        -> decltype(static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__))) {                            \
+      return static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__));                                     \
+    }                                                                                                       \
+  }
+
+// same as anyany_method, but do not generates plugin(you still can add it by specializing aa::plugin)
+#define anyany_extern_method(NAME, ...)                                                                     \
+  struct NAME {                                                                                             \
+    using signature_type = auto AA_EXPAND(AA_INJECT_INTERFACE_T_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__)) \
+        AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                                          \
+    using return_type = ::aa::noexport::return_type_of<signature_type>;                                     \
     template <typename Self>                                                                                \
     static auto do_invoke AA_EXPAND(AA_INJECT_SELF_IN_PARENS AA_GET_TOKEN(first, __VA_ARGS__))              \
         -> decltype(static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__))) {                            \
