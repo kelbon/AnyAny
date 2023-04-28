@@ -216,19 +216,20 @@ template <typename... ToMethods>
 struct get_subtable_ptr_t {
   template <
       typename... FromMethods,
-      std::enable_if_t<
-          (noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{}) != npos), int> = 0>
+      std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
+                                                         type_list<FromMethods...>{}) != npos),
+                             int> = 0>
   const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
     assert(ptr != nullptr);
     constexpr std::size_t Index =
-        noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{});
+        noexport::find_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{});
     const auto* new_ptr = std::addressof(noexport::get_value<Index>(ptr->table));
     return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
   }
 };
 }  // namespace noexport
 
-// casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
+// casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subsequence of FromMethods
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
 template<typename... ToMethods>
 constexpr inline noexport::get_subtable_ptr_t<ToMethods...> subtable_ptr = {};
@@ -410,7 +411,7 @@ struct poly_ptr {
   }
   // from mutable pointer to Any
   template <typename Any, std::enable_if_t<(std::conjunction_v<not_const_type<Any>, is_any<Any>> &&
-                                            noexport::find_subset(type_list<Methods...>{},
+                                            noexport::find_subsequence(type_list<Methods...>{},
                                                                   typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr poly_ptr(Any* ptr) noexcept {
@@ -493,7 +494,7 @@ struct const_poly_ptr {
   }
   // from pointer to Any
   template <typename Any, std::enable_if_t<(is_any<Any>::value &&
-                                            noexport::find_subset(type_list<Methods...>{},
+                                            noexport::find_subsequence(type_list<Methods...>{},
                                                                   typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr const_poly_ptr(const Any* p) noexcept {
@@ -1069,7 +1070,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   template <typename... OtherMethods,
             std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy_with<Alloc, SooS>> &&
-                        noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
+                        noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
   basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
@@ -1080,7 +1081,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
   template <typename... OtherMethods,
             std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
-                        noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
+                        noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
     if (!other.has_value())

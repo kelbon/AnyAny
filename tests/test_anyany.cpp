@@ -740,14 +740,18 @@ int main() {
   aa::invoke<M2>(fi2, 11., 12);
   aa::invoke<M2>(fi3, 11., 12);
   aa::invoke<M2>(*fi3p, 11., 12);
-  constexpr auto j0 =
-      aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j1 = aa::noexport::find_subset(aa::type_list<int, double>{}, aa::type_list<double, float>{});
-  constexpr auto j2 = aa::noexport::find_subset(aa::type_list<double>{}, aa::type_list<double, float>{});
-  constexpr auto j3 = aa::noexport::find_subset(aa::type_list<double>{}, aa::type_list<int, double, float>{});
-  constexpr auto j4 = aa::noexport::find_subset(
-      aa::type_list<double, int, char>{}, aa::type_list<char, double, int, double, int, char, bool, float>{});
-  (void)j0, (void)j1, (void)j2, (void)j3, (void)j4, (void)fi2;
+  static_assert(
+      0 == aa::noexport::find_subsequence(aa::type_list<int, double>{}, aa::type_list<int, double, float>{}));
+  static_assert(aa::npos ==
+                aa::noexport::find_subsequence(aa::type_list<int, double>{}, aa::type_list<double, float>{}));
+  static_assert(0 == aa::noexport::find_subsequence(aa::type_list<double>{}, aa::type_list<double, float>{}));
+  static_assert(1 ==
+                aa::noexport::find_subsequence(aa::type_list<double>{}, aa::type_list<int, double, float>{}));
+  static_assert(3 == aa::noexport::find_subsequence(
+                         aa::type_list<double, int, char>{},
+                         aa::type_list<char, double, int, double, int, char, bool, float>{}));
+  static_assert(aa::npos == aa::noexport::find_subsequence(aa::type_list<int, float>{}, aa::type_list<>{}));
+  static_assert(0 == aa::noexport::find_subsequence(aa::type_list<>{}, aa::type_list<>{}));
   {
     // with plugin
     drawable0 v0;

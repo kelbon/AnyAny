@@ -124,26 +124,27 @@ AA_CONSTEVAL_CPP20 bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<H
   return starts_with(aa::type_list<Ts1...>{}, aa::type_list<Ts2...>{});
 }
 
-// returns index in list where first typelist starts as subset in second typelist or npos if
+// returns index in list where first typelist starts as subsequence in second typelist or npos if
 // no such index
 template <typename... Ts1, typename Head, typename... Ts2>
-AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> haystack,
+AA_CONSTEVAL_CPP20 size_t find_subsequence_impl(aa::type_list<Ts1...> needle,
+                                                aa::type_list<Head, Ts2...> haystack,
                                            size_t n) noexcept {
   if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
     return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
   else if constexpr (starts_with(needle, haystack))
     return n;
   else
-    return find_subset_impl(needle, aa::type_list<Ts2...>{}, n + 1);
+    return find_subsequence_impl(needle, aa::type_list<Ts2...>{}, n + 1);
 }
 // MSVC WORKAROUND! this wrapper just fixes MSVC bug with overload resolution and aliases
 // (this is why it does not accepts type_lists)
 template <typename Needle, typename Haystack>
-AA_CONSTEVAL_CPP20 size_t find_subset(Needle needle, Haystack haystack) noexcept {
+AA_CONSTEVAL_CPP20 size_t find_subsequence(Needle needle, Haystack haystack) noexcept {
   if constexpr (std::is_same_v<Haystack, type_list<>>)
     return std::is_same_v<Needle, type_list<>> ? 0 : npos;
   else
-    return find_subset_impl(needle, haystack, 0);
+    return find_subsequence_impl(needle, haystack, 0);
 }
 
 template <typename T, typename... Args,
