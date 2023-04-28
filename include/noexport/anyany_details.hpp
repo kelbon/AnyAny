@@ -32,19 +32,18 @@ struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tupl
 template <>
 struct tuple_base<std::index_sequence<>> {};
 
-// stores values always in right order(in memory), used only for function pointers in vtable
+// stores values always in right order(in memory)
 template <typename... Ts>
 struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
   using tuple::tuple_base::tuple_base;
 };
 
-// in this library tuple used ONLY for function pointers in vtable, so get_value returns value
 template <size_t I, typename U>
-constexpr U& get_value(value_in_tuple<U, I>& v) noexcept {
+constexpr U& get(value_in_tuple<U, I>& v) noexcept {
   return v.value;
 }
 template <size_t I, typename U>
-constexpr const U& get_value(const value_in_tuple<U, I>& v) noexcept {
+constexpr const U& get(const value_in_tuple<U, I>& v) noexcept {
   return v.value;
 }
 
@@ -139,6 +138,7 @@ AA_CONSTEVAL_CPP20 size_t find_subsequence_impl(aa::type_list<Ts1...> needle,
 }
 // MSVC WORKAROUND! this wrapper just fixes MSVC bug with overload resolution and aliases
 // (this is why it does not accepts type_lists)
+// returns index of type in Haystack, where subsequence Needle begins or npos if no such index
 template <typename Needle, typename Haystack>
 AA_CONSTEVAL_CPP20 size_t find_subsequence(Needle needle, Haystack haystack) noexcept {
   if constexpr (std::is_same_v<Haystack, type_list<>>)

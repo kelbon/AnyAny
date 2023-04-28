@@ -195,19 +195,31 @@ struct vtable {
   template <typename Method>
   static inline constexpr bool has_method = noexport::contain<Method, Methods...>;
 
+#ifdef AA_HAS_CPP20
+  // sets new value to ALL values of 'Method' in this table
+  template <typename Method, std::enable_if_t<noexport::contain<Method, Methods...>, int> = 0>
+  constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
+      noexcept(new_value = new_value)) {
+    using do_not_set = decltype([](auto&&...) {});
+    using do_set = decltype([](const auto& src, auto& dest) { dest = src; });
+    [&]<size_t... Is>(std::index_sequence<Is...>) {
+      (..., std::conditional_t<std::is_same_v<Method, Methods>, do_set, do_not_set>{}(
+                new_value, noexport::get<Is>(table)));
+    }
+    (std::index_sequence_for<Methods...>{});
+  }
+#endif
   template <typename Method, typename... Args>
   AA_ALWAYS_INLINE result_t<Method> invoke(Args&&... args) const {
     static_assert(has_method<Method>);
-    return noexport::get_value<noexport::number_of_first<Method, Methods...>>(table)(
-        std::forward<Args>(args)...);
+    return noexport::get<noexport::number_of_first<Method, Methods...>>(table)(std::forward<Args>(args)...);
   }
   template <typename Method>
   AA_ALWAYS_INLINE constexpr result_t<Method> invoke() const
       noexcept(std::is_nothrow_copy_constructible_v<result_t<Method>>) {
     static_assert(is_pseudomethod<Method>);
-    return noexport::get_value<noexport::number_of_first<Method, Methods...>>(table);
+    return noexport::get<noexport::number_of_first<Method, Methods...>>(table);
   }
-
 };
 
 namespace noexport {
@@ -223,7 +235,7 @@ struct get_subtable_ptr_t {
     assert(ptr != nullptr);
     constexpr std::size_t Index =
         noexport::find_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{});
-    const auto* new_ptr = std::addressof(noexport::get_value<Index>(ptr->table));
+    const auto* new_ptr = std::addressof(noexport::get<Index>(ptr->table));
     return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
   }
 };
@@ -617,9 +629,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
-    result.vtable_value =
-        vtable<Methods...>{{noexport::get_value<noexport::number_of_first<Methods, Methods2...>>(
-            mate::get_vtable_ptr(r)->table)...}};
+    result.vtable_value = vtable<Methods...>{
+        {noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_ptr(r)->table)...}};
     return result;
   }
 
@@ -628,9 +639,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
-    result.vtable_value =
-        vtable<Methods...>{noexport::get_value<noexport::number_of_first<Methods, Methods2...>>(
-            mate::get_vtable_value(r).table)...};
+    result.vtable_value = vtable<Methods...>{
+        noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r).table)...};
     return result;
   }
 
@@ -708,7 +718,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value =
-        vtable<Methods...>{{noexport::get_value<noexport::number_of_first<Methods, Methods2...>>(
+        vtable<Methods...>{{noexport::get<noexport::number_of_first<Methods, Methods2...>>(
             mate::get_vtable_value(r).table)...}};
     return result;
   }

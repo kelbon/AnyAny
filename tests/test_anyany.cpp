@@ -756,6 +756,13 @@ int main() {
     // with plugin
     drawable0 v0;
     const drawable1 v1;
+#if __cplusplus >= 202002
+    aa::vtable<aa::type_info, aa::copy, aa::type_info> tbl;
+    tbl.change<aa::type_info>(aa::descriptor_v<int>);
+    if (aa::noexport::get<0>(tbl.table) != aa::descriptor_v<int> ||
+        aa::noexport::get<2>(tbl.table) != aa::descriptor_v<int>)
+      return -10;
+#endif
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;
