@@ -131,13 +131,51 @@ struct move {
     }
   }
 };
-// TODO template alloc soos + materialize / materialize_move
-struct copy {
+
+constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
+
+using default_allocator = std::allocator<std::byte>;
+
+// enables copy/copy assgin for any_with
+// enables 'materialize' for references
+template<typename Alloc = default_allocator, size_t SooS = default_any_soos>
+struct copy_with {
+  // preconditions:
+  //    * no object under 'dest'
+  //    * atleast 'SooS' bytes under 'dest' and alignment == alignof(std::max_align_t)
+  // postconditions:
+  //    * returns pointer to created copy
+  //    * if return != 'dest', then value was allocated by 'alloc' and allocation size storoed under
+  //    'dest'(size_t)
   template <typename T>
-  static auto do_invoke(const T& src, void* dest) -> std::enable_if_t<std::is_copy_constructible_v<T>> {
-    noexport::construct_at(reinterpret_cast<T*>(dest), src);
+  static auto do_invoke(const T& src, void* dest, Alloc& alloc)
+      -> std::enable_if_t<std::is_copy_constructible_v<T>, void>* {
+    static_assert(SooS >= sizeof(size_t));
+    if constexpr (noexport::is_fits_in_soo_buffer<T, SooS>) {
+      return noexport::construct_at(reinterpret_cast<T*>(dest), src);
+    } else {
+      constexpr size_t allocation_size = sizeof(T);
+      // no fancy pointers supported
+      auto* ptr = alloc.allocate(allocation_size);
+      if constexpr (std::is_nothrow_copy_constructible_v<T>) {
+        noexport::construct_at(reinterpret_cast<T*>(ptr), src);
+      } else {
+        try {
+          noexport::construct_at(reinterpret_cast<T*>(ptr), src);
+        } catch (...) {
+          alloc.deallocate(ptr, allocation_size);
+          throw;
+        }
+      }
+      noexport::construct_at(reinterpret_cast<std::size_t*>(dest), allocation_size);
+      return ptr;
+    }
   }
+  using allocator_type = Alloc;
+  static constexpr size_t soos = SooS;
 };
+
+using copy = copy_with<>;
 
 // enables std::hash specialization for polymorphic value and reference
 struct hash {
@@ -155,7 +193,7 @@ struct vtable {
   noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> table;
 
   template <typename Method>
-  static inline constexpr bool has_method = noexport::number_of_first<Method, Methods...> != npos;
+  static inline constexpr bool has_method = noexport::contain<Method, Methods...>;
 
   template <typename Method, typename... Args>
   AA_ALWAYS_INLINE result_t<Method> invoke(Args&&... args) const {
@@ -172,18 +210,28 @@ struct vtable {
 
 };
 
+namespace noexport {
+// It is msvc workaround to make it struct(this 'compiler' cannot deduce types in call)
+template <typename... ToMethods>
+struct get_subtable_ptr_t {
+  template <
+      typename... FromMethods,
+      std::enable_if_t<
+          (noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{}) != npos), int> = 0>
+  const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
+    assert(ptr != nullptr);
+    constexpr std::size_t Index =
+        noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{});
+    const auto* new_ptr = std::addressof(noexport::get_value<Index>(ptr->table));
+    return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
+  }
+};
+}  // namespace noexport
+
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subset of FromMethods
 // For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
-// first argument only for deducting ToMethods(or internal compiler error on gcc...)
-template <typename... ToMethods, typename... FromMethods,
-          std::enable_if_t<(noexport::find_subset(type_list<ToMethods...>{},
-                                                             type_list<FromMethods...>{}) != npos), int> = 0>
-const vtable<ToMethods...>* subtable_ptr(const vtable<FromMethods...>* ptr) noexcept {
-  assert(ptr != nullptr);
-  constexpr std::size_t Index = noexport::find_subset(type_list<ToMethods...>{}, type_list<FromMethods...>{});
-  const auto* new_ptr = std::addressof(noexport::get_value<Index>(ptr->table));
-  return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
-}
+template<typename... ToMethods>
+constexpr inline noexport::get_subtable_ptr_t<ToMethods...> subtable_ptr = {};
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, typename... Methods>
@@ -223,6 +271,11 @@ struct mate {
   AA_ALWAYS_INLINE static constexpr auto& get_vtable_value(Friend& friend_) noexcept {
     return friend_.vtable_value;
   }
+
+  template <typename Friend>
+  AA_ALWAYS_INLINE static constexpr auto& get_alloc(Friend& friend_) noexcept {
+    return friend_.alloc;
+  }
 };
 
 // creates type from which you can inherit from to get sum of Methods plugins
@@ -258,8 +311,10 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
   AA_TRIVIAL_COPY_EXPLICIT_REBIND(poly_ref);
 
   // from mutable lvalue
-  template <typename T, typename = std::enable_if_t<std::conjunction_v<
-                            not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>>>
+  template <
+      typename T,
+      std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>,
+                       int> = 0>
   constexpr poly_ref(T& value) noexcept
       : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
     static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
@@ -274,7 +329,6 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
   }
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
-
 };
 
 // non nullable non owner view to any type which satisfies Methods...
@@ -299,7 +353,7 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
 
   // from value
   template <typename T,
-            typename = std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>>>
+            std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
   constexpr const_poly_ref(const T& value) noexcept
       : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
     static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
@@ -502,13 +556,11 @@ struct const_poly_ptr {
     return std::addressof(poly_);
   }
 
-  // compare
   // returns descriptor for void if *this == nullptr
   template <typename Ref = const_poly_ref<Methods...>>
   auto type_descriptor() const noexcept -> decltype(std::declval<Ref>().type_descriptor()) {
     return *this == nullptr ? descriptor_v<void> : (**this).type_descriptor();
   }
-
 };
 
 template <typename... Methods>
@@ -560,7 +612,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   constexpr ref() noexcept = default;
 
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -571,7 +623,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   }
 
   template <typename... Methods2,
-            typename = std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...)>>
+            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
   static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -587,7 +639,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   template <
       typename T,
       std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>,
-                       void*> = nullptr>
+                       int> = 0>
   constexpr ref(T& value) noexcept
       : value_ptr(std::addressof(value)),
         vtable_value(vtable<Methods...>{{&invoker_for<std::decay_t<T>, Methods>::value...}}) {
@@ -603,7 +655,12 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   template <typename X, std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr ref(const X& x) noexcept : ref(FOO(x)) {
   }
-  // TODO operator poly_ref?
+  constexpr poly_ref<Methods...> get_view() const noexcept {
+    poly_ptr<Methods...> ptr;
+    mate::get_value_ptr(ptr) = value_ptr;
+    mate::get_vtable_ptr(ptr) = &vtable_value;
+    return *ptr;
+  }
 };
 
 // stores vtable in the reference, so better cache locality.
@@ -681,7 +738,12 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
             std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr cref(const X& x) : cref(FOO(x)) {
   }
-  // TODO operator const_poly_ref?
+  constexpr const_poly_ref<Methods...> get_view() const noexcept {
+    const_poly_ptr<Methods...> ptr;
+    mate::get_value_ptr(ptr) = value_ptr;
+    mate::get_vtable_ptr(ptr) = &vtable_value;
+    return *ptr;
+  }
 };
 
 }  // namespace stateful
@@ -762,8 +824,7 @@ struct allocator_arg_t {
 };
 constexpr inline allocator_arg_t allocator_arg{};
 
-// compilation error when allocate, so 'basic_any' with this allocator will never allocate
-// usefull for compile time checking, that you dont have allocations(+some optimizations)
+// produces compilation error if basic_any with this allocator tries to allocate
 struct unreachable_allocator {
   using value_type = std::byte;
 
@@ -808,20 +869,17 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // empty - has_value() == false, memory_allocated == false
   // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
   // big   - has_value() == true, memory_allocated == true,
-  // count allocated bytes ALWAYS == std::max(SooS, sizeof(T)) (need to avoid UB in deallocate)
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
-  static inline constexpr bool any_is_small_for =
-      alignof(T) <= alignof(std::max_align_t) && std::is_nothrow_move_constructible_v<T> && sizeof(T) <= SooS;
+  static inline constexpr bool any_is_small_for = noexport::is_fits_in_soo_buffer<T, SooS>;
 
   template <typename T, typename ForceAllocate = void, typename... Args>
   void emplace_in_empty(Args&&... args) {
     if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
       noexport::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
     } else {
-      // invariant of big - allocated_size >= SooS
-      constexpr size_t allocation_size = std::max(sizeof(T), SooS);
+      constexpr size_t allocation_size = sizeof(T);
       void* old_value_ptr = std::exchange(value_ptr, alloc.allocate(allocation_size));
       if constexpr (std::is_nothrow_constructible_v<T, Args&&...>) {
         noexport::construct_at(reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
@@ -844,12 +902,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using alloc_size_type = typename alloc_traits::size_type;
 
   friend struct mate;
-
  public:
   template <typename Method>
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
 
-  static constexpr bool has_copy = has_method<copy>;
+  static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>>;
   static constexpr bool has_move = has_method<move>;
 
   static_assert(
@@ -882,11 +939,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   using const_ptr = cptr;
   using const_ref = cref;
-
-  constexpr ptr operator&() noexcept {
+  // aliases without 'destroy' for usage like any_with<a, b, c>::ref
+  // but operator& return with 'destroy' method(implicitly converitble anyway)
+  constexpr poly_ptr<Methods...> operator&() noexcept {
     return {this};
   }
-  constexpr const_ptr operator&() const noexcept {
+  constexpr const_poly_ptr<Methods...> operator&() const noexcept {
     return {this};
   }
   constexpr basic_any() = default;
@@ -902,24 +960,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (!other.has_value())
       return;
+    value_ptr = invoke<copy_with<Alloc, SooS>>(other, value_ptr, alloc);
     vtable_ptr = other.vtable_ptr;
-    if constexpr (!std::is_same_v<unreachable_allocator, Alloc>) {
-      if (other.memory_allocated()) {
-        size_allocated = other.size_allocated;
-        value_ptr = alloc.allocate(other.size_allocated);
-        try {
-          invoke<copy>(other, value_ptr);
-        } catch (...) {
-          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), size_allocated);
-          throw;
-        }
-      } else {
-        invoke<copy>(other, value_ptr);
-      }
-    } else {
-      // unreachable allocator, so 100% other not allocated
-      invoke<copy>(other, value_ptr);
-    }
   }
 
   [[nodiscard]] Alloc get_allocator() const noexcept {
@@ -1026,25 +1068,29 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // 'transmutate' constructors (from basic_any with more Methods)
 
   template <typename... OtherMethods,
-            std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy> &&
-                              noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
+            std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy_with<Alloc, SooS>> &&
+                        noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
-  basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other) {
+  basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
+      : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
       return;
-    noexport::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this), other);
-    std::launder(this)->vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
+    value_ptr = invoke<copy_with<Alloc, SooS>>(other, value_ptr, alloc);
+    vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
   template <typename... OtherMethods,
             std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
-                              noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
+                        noexport::find_subset(methods_list{}, type_list<OtherMethods...>{}) != npos),
                              int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
     if (!other.has_value())
       return;
-    noexport::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this),
-                           std::move(other));
-    std::launder(this)->vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
+    static_assert(sizeof(*this) == sizeof(other) &&
+                  alignof(basic_any) == alignof(basic_any<Alloc, SooS, OtherMethods...>));
+    auto* this_ = noexport::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this),
+                                         std::move(other));
+    std::launder(reinterpret_cast<decltype(this)>(this_))->vtable_ptr =
+        subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
 
   // force allocate versions
@@ -1093,9 +1139,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
-    if (memory_allocated())
-      return allocated_size();
-    return SooS;
+    return memory_allocated() ? allocated_size() : SooS;
   }
 
  private:
@@ -1133,6 +1177,35 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     }
   }
 };
+
+// ######################## materialize(create any_with from polymorphic reference)
+
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods,
+          std::enable_if_t<(noexport::contain<copy_with<Alloc, SooS>, Methods...> &&
+                            noexport::contain<destroy, Methods...>),
+                           int> = 0>
+basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{}) {
+  basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
+  mate::get_value_ptr(result) =
+      invoke<copy_with<Alloc, SooS>>(ref, mate::get_value_ptr(result), mate::get_alloc(result));
+  mate::get_vtable_ptr(result) = mate::get_vtable_ptr(ref);
+  return result;
+}
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
+auto materialize(poly_ref<Methods...> ref, Alloc alloc = Alloc{})
+    -> decltype(materialize<Alloc, SooS>(ref.get_view(), std::move(alloc))) {
+  return materialize<Alloc, SooS>(ref.get_view(), std::move(alloc));
+}
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
+auto materialize(stateful::ref<Methods...> r, Alloc alloc = Alloc{})
+    -> decltype(materialize<Alloc, SooS>(r.get_view(), std::move(alloc))) {
+  return materialize<Alloc, SooS>(r.get_view(), std::move(alloc));
+}
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
+auto materialize(stateful::cref<Methods...> r, Alloc alloc = Alloc{})
+    -> decltype(materialize<Alloc, SooS>(r.get_view(), std::move(alloc))) {
+  return materialize<Alloc, SooS>(r.get_view(), std::move(alloc));
+}
 
 // ######################## ACTION any_cast ########################
 
@@ -1258,10 +1331,8 @@ constexpr inline any_cast_fn<T, Traits> any_cast = {};
 template <typename Alloc, size_t SooS, typename... Methods>
 using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
 
-constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
-
 template <typename... Methods>
-using any_with = basic_any_with<std::allocator<std::byte>, default_any_soos, Methods...>;
+using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
 
 template <typename... Methods>
 using cptr = const_poly_ptr<Methods...>;

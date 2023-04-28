@@ -63,7 +63,10 @@ struct number_of_impl<I, T, First, Args...> {
 
 // npos if no such type in pack
 template <typename T, typename... Args>
-inline constexpr size_t number_of_first = number_of_impl<0, T, Args...>::value;
+constexpr inline size_t number_of_first = number_of_impl<0, T, Args...>::value;
+
+template<typename T, typename... Ts>
+constexpr inline size_t contain = number_of_first<T, Ts...> != npos;
 
 template <typename T, typename... Args>
 struct is_one_of : std::bool_constant<(std::is_same_v<T, Args> || ...)> {};
@@ -121,29 +124,26 @@ AA_CONSTEVAL_CPP20 bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<H
   return starts_with(aa::type_list<Ts1...>{}, aa::type_list<Ts2...>{});
 }
 
-AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<>, aa::type_list<>) {
-  return 0;
-}
-template <typename A>
-AA_CONSTEVAL_CPP20 size_t find_subset_impl(A, aa::type_list<>) {
-  return npos;
-}
 // returns index in list where first typelist starts as subset in second typelist or npos if
 // no such index
 template <typename... Ts1, typename Head, typename... Ts2>
-AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> all,
-                                           size_t n = 0) noexcept {
+AA_CONSTEVAL_CPP20 size_t find_subset_impl(aa::type_list<Ts1...> needle, aa::type_list<Head, Ts2...> haystack,
+                                           size_t n) noexcept {
   if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
     return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
-  else if constexpr (starts_with(needle, all))
+  else if constexpr (starts_with(needle, haystack))
     return n;
   else
     return find_subset_impl(needle, aa::type_list<Ts2...>{}, n + 1);
 }
 // MSVC WORKAROUND! this wrapper just fixes MSVC bug with overload resolution and aliases
-template <typename T, typename U>
-AA_CONSTEVAL_CPP20 size_t find_subset(T a, U b) noexcept {
-  return find_subset_impl(a, b);
+// (this is why it does not accepts type_lists)
+template <typename Needle, typename Haystack>
+AA_CONSTEVAL_CPP20 size_t find_subset(Needle needle, Haystack haystack) noexcept {
+  if constexpr (std::is_same_v<Haystack, type_list<>>)
+    return std::is_same_v<Needle, type_list<>> ? 0 : npos;
+  else
+    return find_subset_impl(needle, haystack, 0);
 }
 
 template <typename T, typename... Args,
@@ -197,5 +197,10 @@ template <typename Method>
 auto get_method_signature_ptr(...) -> typename Method::value_type;
 
 AA_IS_VALID(has_has_value, decltype(std::declval<T>().has_value()));
+
+template <typename T, size_t SooS>
+constexpr inline bool is_fits_in_soo_buffer =
+    alignof(std::decay_t<T>) <= alignof(std::max_align_t) &&
+    std::is_nothrow_move_constructible_v<std::decay_t<T>> && sizeof(std::decay_t<T>) <= SooS;
 
 }  // namespace aa::noexport

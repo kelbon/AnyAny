@@ -18,7 +18,7 @@
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::type_info, aa::copy, aa::move, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::type_info, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -254,7 +254,7 @@ size_t TestConstructors() {
 }
 void noallocate_test() {
   using any_noallocate =
-      aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos, aa::copy, aa::move>;
+      aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos, aa::copy_with<aa::unreachable_allocator>, aa::move>;
 
   any_noallocate x = 5;
   auto y = std::move(x);
@@ -640,7 +640,7 @@ int main() {
   aa::stateful::cref<> st_cr2 = *&kek_0;
   (void)st_cr2;
   static_assert(std::is_same_v<decltype(st_cr), decltype(st_cr1)> &&
-                std::is_same_v<decltype(st_cr), aa::stateful::cref<Kekab>>);
+                std::is_same_v<decltype(st_cr), aa::stateful::cref<aa::destroy, Kekab>>);
   if (st_r.Kekab(5, 'c') != kek_0.Kekab(5, 'c'))
     return -500;
   if (kek_0.Kekab(5, 'c') != "strccccc")
