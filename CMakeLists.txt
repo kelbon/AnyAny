@@ -3,8 +3,8 @@ project(anyany LANGUAGES CXX)
 
 option(AA_ENABLE_TESTING "enables testing" OFF)
 
-file(GLOB ${PROJECT_NAME}_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
-file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/noexport/*.hpp")
+file(GLOB ${PROJECT_NAME}_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/anyany/*.hpp")
+file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/anyany/noexport/*.hpp")
 file(GLOB ${PROJECT_NAME}_EXAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/examples/*")
 
 ### anyanylib ###
