@@ -1364,14 +1364,16 @@ struct type_info {
 
   template <typename CRTP>
   struct plugin {
-    constexpr descriptor_t type_descriptor() const noexcept {
-      const auto& self = *static_cast<const CRTP*>(this);
-      if constexpr (noexport::has_has_value<CRTP>::value) {
-        if (!self.has_value())
-          return descriptor_v<void>;
-      }
-      return invoke<type_info>(self);
-    }
+#define AA_DECLARE_TYPE_DESCRIPTOR_METHOD(...)                   \
+  constexpr descriptor_t type_descriptor() const noexcept { \
+    const auto& self = *static_cast<const CRTP*>(this);     \
+    if constexpr (noexport::has_has_value<CRTP>::value) {   \
+      if (!self.has_value())                                \
+        return descriptor_v<void>;                          \
+    }                                                       \
+    return __VA_ARGS__;                                     \
+  }
+    AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<type_info>(self));
   };
 };
 
@@ -1395,7 +1397,7 @@ struct equal_to {
     return value_type{&fn<T>, descriptor_v<T>};
   }
   template <typename CRTP>
-  struct plugin {
+  struct plugin : private type_info::plugin<CRTP> {
     // TODO C++23 deducing this solves this
     // remove ambigious with C++20 reverse ordering(.......)
     bool operator==(const plugin<CRTP>& r) const {
@@ -1416,6 +1418,7 @@ struct equal_to {
       return !operator==(other);
     }
 #endif
+    AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<equal_to>(self).desc)
   };
 };
 
@@ -1442,7 +1445,7 @@ struct spaceship {
   }
   // inherits from equal_to plugin, for disabling it and shadows operator==
   template <typename CRTP>
-  struct plugin : private equal_to::template plugin<CRTP> {
+  struct plugin : private equal_to::plugin<CRTP> {
     // TODO C++23 deducing this solves this
     // remove ambigious with C++20 reverse ordering(.......)
     bool operator==(const plugin<CRTP>& right) const {
@@ -1464,50 +1467,52 @@ struct spaceship {
         return std::partial_ordering::unordered;
       return fn(mate::get_value_ptr(left), mate::get_value_ptr(right));
     }
+    AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<spaceship>(self).desc)
   };
 };
 #endif
+#undef AA_DECLARE_TYPE_DESCRIPTOR_METHOD
 
-// TODO || equal_to/spaceship...
-template<typename... Methods, std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos),int> =0>
-constexpr bool operator==(poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept {
-  return left.raw() == right.raw() && aa::invoke<type_info>(left) == aa::invoke<type_info>(right);
+template<typename... Methods>
+constexpr auto operator==(poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept
+    -> decltype(left.type_descriptor(), true) {
+  return left.raw() == right.raw() && left.type_descriptor() == right.type_descriptor();
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator==(const_poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept {
-  return left.raw() == right.raw() && aa::invoke<type_info>(left) == aa::invoke<type_info>(right);
+template <typename... Methods>
+constexpr auto operator==(const_poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept
+    -> decltype(left.type_descriptor(), true) {
+  return left.raw() == right.raw() && left.type_descriptor() == right.type_descriptor();
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator==(poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept {
+template <typename... Methods>
+constexpr auto operator==(poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept
+    -> decltype(const_poly_ptr(left) == right) {
   return const_poly_ptr(left) == right;
 }
 #ifndef AA_HAS_CPP20
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator==(const_poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept {
+template <typename... Methods>
+constexpr auto operator==(const_poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept
+    -> decltype(left == const_poly_ptr(right)) {
   return left == const_poly_ptr(right);
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator!=(poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept {
-  return !operator==(left, right);
+template <typename... Methods>
+constexpr auto operator!=(poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept
+    -> decltype(!(left == right)) {
+  return !(left == right);
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator!=(const_poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept {
-  return !operator==(left, const_poly_ptr(right));
+template <typename... Methods>
+constexpr auto operator!=(const_poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept
+    -> decltype(!(left == const_poly_ptr(right))) {
+  return !(left == const_poly_ptr(right));
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator!=(poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept {
-  return !operator==(const_poly_ptr(left), right);
+template <typename... Methods>
+constexpr auto operator!=(poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept
+    -> decltype(!(const_poly_ptr(left) == right)) {
+  return !(const_poly_ptr(left) == right);
 }
-template <typename... Methods,
-          std::enable_if_t<(noexport::number_of_first<type_info, Methods...> != npos), int> = 0>
-constexpr bool operator!=(const_poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept {
-  return !operator==(left, right);
+template <typename... Methods>
+constexpr auto operator!=(const_poly_ptr<Methods...> left, const_poly_ptr<Methods...> right) noexcept
+    -> decltype(!(left == right)) {
+  return !(left == right);
 }
 #endif
 

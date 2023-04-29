@@ -18,7 +18,7 @@
 template<typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::type_info, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -262,16 +262,16 @@ void noallocate_test() {
   auto z = y;
 }
 #if __cplusplus >= 202002L
-using any_compare = aa::any_with<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>;
+using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
 static_assert(
     std::is_same_v<any_compare::ref,
-                   aa::poly_ref<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+                   aa::poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ref,
-                   aa::const_poly_ref<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+                   aa::const_poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::ptr,
-                   aa::poly_ptr<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+                   aa::poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ptr,
-                   aa::const_poly_ptr<aa::type_info, aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
+                   aa::const_poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
 
 size_t TestCompare() {
@@ -620,6 +620,54 @@ anyany_method(change_i, (self) requires(self.i = 4) -> void);
 struct x {
   int i = 0;
 };
+size_t TestTypeDescriptorPluginsInteraction() {
+  size_t error_count = 0;
+#if __cplusplus >= 202002
+  int i = 10;
+  auto check = [&](auto ref) {
+    error_if(ref.type_descriptor() != aa::descriptor_v<int>);
+    error_if((&ref).type_descriptor() != aa::descriptor_v<int>);
+    error_if((&ref)->type_descriptor() != aa::descriptor_v<int>);
+  };
+  aa::poly_ref<aa::type_info, aa::equal_to, aa::spaceship> ref = i;
+  using all3_t = decltype(ref);
+  static_assert(std::derived_from<all3_t, aa::spaceship::plugin<all3_t>>);
+  static_assert(!std::derived_from<all3_t, aa::equal_to::plugin<all3_t>>);
+  static_assert(!std::derived_from<all3_t, aa::type_info::plugin<all3_t>>);
+  using two_t = aa::poly_ref<aa::equal_to, aa::spaceship>;
+  static_assert(std::derived_from<two_t, aa::spaceship::plugin<two_t>>);
+  static_assert(!std::derived_from<two_t, aa::equal_to::plugin<two_t>>);
+  static_assert(!std::derived_from<two_t, aa::type_info::plugin<two_t>>);
+  using one_t = aa::poly_ref<aa::equal_to, aa::type_info>;
+  static_assert(std::derived_from<one_t, aa::equal_to::plugin<one_t>>);
+  static_assert(!std::derived_from<one_t, aa::type_info::plugin<one_t>>);
+  check(ref);
+  check(aa::poly_ref<aa::type_info>(ref));
+  check(aa::poly_ref<aa::type_info>(i));
+  check(aa::poly_ref<aa::equal_to>(ref));
+  check(aa::poly_ref<aa::equal_to>(i));
+  check(aa::poly_ref<aa::spaceship>(ref));
+  check(aa::poly_ref<aa::spaceship>(i));
+  check(aa::poly_ref<aa::equal_to, aa::spaceship>(ref));
+  check(aa::poly_ref<aa::equal_to, aa::spaceship>(i));
+  check(aa::poly_ref<aa::type_info, aa::equal_to>(ref));
+  check(aa::poly_ref<aa::type_info, aa::equal_to>(i));
+  check(aa::poly_ref<aa::type_info, aa::spaceship>(i));
+  check(aa::const_poly_ref(ref));
+  check(aa::const_poly_ref<aa::type_info>(ref));
+  check(aa::const_poly_ref<aa::type_info>(i));
+  check(aa::const_poly_ref<aa::equal_to>(ref));
+  check(aa::const_poly_ref<aa::equal_to>(i));
+  check(aa::const_poly_ref<aa::spaceship>(ref));
+  check(aa::const_poly_ref<aa::spaceship>(i));
+  check(aa::const_poly_ref<aa::equal_to, aa::spaceship>(ref));
+  check(aa::const_poly_ref<aa::equal_to, aa::spaceship>(i));
+  check(aa::const_poly_ref<aa::type_info, aa::equal_to>(ref));
+  check(aa::const_poly_ref<aa::type_info, aa::equal_to>(i));
+  check(aa::const_poly_ref<aa::type_info, aa::spaceship>(i));
+#endif
+  return error_count;
+}
 int main() {
   aa::any_with<example::print, aa::copy, example::print> duplicator;
   duplicator = 5;
@@ -897,5 +945,6 @@ int main() {
   set.emplace(5);
   set.emplace(5.);
   srand(time(0));
-  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts();
+  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts() +
+         TestTypeDescriptorPluginsInteraction();
 }
