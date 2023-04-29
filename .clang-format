@@ -1,6 +1,6 @@
 BasedOnStyle:  Google
 ColumnLimit : 110
 AllowShortFunctionsOnASingleLine: false
-AllowShortLambdasOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: true
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false

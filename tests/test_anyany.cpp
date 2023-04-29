@@ -1,24 +1,24 @@
-#include "anyany.hpp"
-
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iostream>
-#include <algorithm>
-#include <random>
 #include <list>
-#include <unordered_set>
-#include <memory_resource>
 #include <memory>
-#include <atomic>
+#include <memory_resource>
+#include <random>
+#include <unordered_set>
 
-#include "functional_paradigm.hpp"
+#include "anyany.hpp"
 #include "basic_usage.hpp"
+#include "functional_paradigm.hpp"
 #include "polyref.hpp"
 
-template<typename Alloc = std::allocator<char>>
+template <typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
-template<typename Alloc = std::allocator<char>>
-using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
+template <typename Alloc = std::allocator<char>>
+using any_copyable =
+    aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -27,7 +27,7 @@ struct deleter_resource {
     leaked_resource_count--;
   }
 };
-template<size_t Sz>
+template <size_t Sz>
 struct destroy_me {
   char padding[Sz];
   std::shared_ptr<void> ptr;
@@ -57,7 +57,7 @@ struct destroy_me {
 };
 template <size_t Sz>
 struct destroy_me_throw : destroy_me<Sz> {
-  std::list<int> l; // lol it is throw move / copy constructible... Allocations on move / default init
+  std::list<int> l;  // lol it is throw move / copy constructible... Allocations on move / default init
 };
 
 using nomove_any = aa::any_with<>;
@@ -73,8 +73,7 @@ size_t TestConstructors() {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
   ilist.emplace<std::vector<int>>({1, 2, 3});
   // problems with emplaceing std::array(aggregate construct) because of construct_at
-  constexpr auto Xy = [] {
-  };
+  constexpr auto Xy = [] {};
   // nomove nocopy construct
   nomove_any a0(std::in_place_type<nomove>, 5, Xy);
   a0.emplace<int>();
@@ -212,7 +211,8 @@ size_t TestConstructors() {
   }
   error_if(leaked_resource_count != 0);
   {
-    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> vec(std::pmr::new_delete_resource());
+    std::pmr::vector<any_copyable<std::pmr::polymorphic_allocator<std::byte>>> vec(
+        std::pmr::new_delete_resource());
     vec.emplace_back(5);
     vec.emplace_back("hello world");
     vec.emplace_back(std::vector<int>(10, 1));
@@ -253,8 +253,8 @@ size_t TestConstructors() {
   return error_count;
 }
 void noallocate_test() {
-  using any_noallocate =
-      aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos, aa::copy_with<aa::unreachable_allocator>, aa::move>;
+  using any_noallocate = aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos,
+                                            aa::copy_with<aa::unreachable_allocator>, aa::move>;
 
   any_noallocate x = 5;
   auto y = std::move(x);
@@ -264,12 +264,10 @@ void noallocate_test() {
 #if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
 static_assert(
-    std::is_same_v<any_compare::ref,
-                   aa::poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ref,
                    aa::const_poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
-    std::is_same_v<any_compare::ptr,
-                   aa::poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ptr,
                    aa::const_poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
@@ -307,20 +305,18 @@ struct FooAble {
   }
 };
 
-
 struct foox {
   template <typename T>
   static float do_invoke(T self) {
     return self.foo();
   }
-  template<typename CRTP>
+  template <typename CRTP>
   struct plugin {
     float foo() const {
       return aa::invoke<foox>(static_cast<const CRTP&>(*this));
     }
   };
 };
-
 
 struct barx {
   template <typename T>
@@ -391,7 +387,7 @@ size_t TestCasts() {
   }
   {
     const any_copyable<> acop = 10;
-    //auto& ref = aa::any_cast<int&>(acop); CE because of const
+    // auto& ref = aa::any_cast<int&>(acop); CE because of const
     auto& ref2 = aa::any_cast<const int&>(acop);
     int val = aa::any_cast<int>(acop);
     (void)ref2, (void)val;
@@ -407,12 +403,11 @@ using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::move,
 
 struct Drawi {
   template <typename T>
-  static int do_invoke(const T& self, int val)
-  {
+  static int do_invoke(const T& self, int val) {
     return self.draw(val);
   }
 
-  template<typename CRTP>
+  template <typename CRTP>
   struct plugin {
     int draw(int val) const noexcept {
       return aa::invoke<Drawi>(*static_cast<const CRTP*>(this), val);
@@ -454,14 +449,14 @@ struct A2 {
 struct M1 {
   template <typename T>
   static void do_invoke(const T& self, int val) {
-    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\n'; 
+    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\n';
   }
 };
 
 struct M2 {
   template <typename T>
   static void do_invoke(const T& self, double val, int val2) {
-    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\t' << val2 << '\n'; 
+    std::cout << typeid(self.i).name() << self.i << '\t' << val << '\t' << val2 << '\n';
   }
 };
 
@@ -477,7 +472,7 @@ struct sm {
 };
 using Tt = any_copyable<>;
 
-template<typename T>
+template <typename T>
 struct test_method {
   static int do_invoke(T self, double x) {
     return self + x;
@@ -485,11 +480,12 @@ struct test_method {
 };
 
 template <typename T>
-anyany_extern_method(
-    visit,
-    (&self, const T& value) requires(std::enable_if_t<std::is_copy_constructible_v<Self>>(), self(value))->void);
+anyany_extern_method(visit,
+                     (&self, const T& value) requires(std::enable_if_t<std::is_copy_constructible_v<Self>>(),
+                                                      self(value))
+                         ->void);
 
-template<typename... Ts>
+template <typename... Ts>
 using visitor_for = aa::any_with<visit<Ts>...>;
 
 anyany_method(Kekab, (const& self, int x, char y) requires(self.kekab(x, y))->std::string);
@@ -564,7 +560,7 @@ void ptr_behavior_test() {
   if (p != ptr1)
     throw false;
 }
-template<typename T, typename U>
+template <typename T, typename U>
 using ac_res = decltype(aa::any_cast<T>(std::declval<U>()));
 
 void any_cast_test() {
@@ -616,7 +612,7 @@ void any_cast_test() {
   static_assert(std::is_same_v<ac_res<const int&, Tt::const_ptr>, const int*>);
   static_assert(std::is_same_v<ac_res<const int&&, Tt::const_ptr>, const int*>);
 }
-anyany_method(change_i, (self) requires(self.i = 4) -> void);
+anyany_method(change_i, (self) requires(self.i = 4)->void);
 struct x {
   int i = 0;
 };
@@ -673,7 +669,7 @@ int main() {
   duplicator = 5;
   aa::invoke<example::print>(duplicator);
   aa::any_with<change_i, aa::type_info> val_change_i = x{};
-  val_change_i.change_i(); // must not change 'i', because self by copy
+  val_change_i.change_i();  // must not change 'i', because self by copy
   if (aa::any_cast<x>(&val_change_i)->i != 0)
     return -114;
   static_assert(!std::is_trivially_copyable_v<aa::any_with<aa::move, aa::copy>>);
@@ -699,16 +695,10 @@ int main() {
   static_assert(!std::is_constructible_v<any_kekable_, std::string>);
   static_assert(!std::is_assignable_v<any_kekable_&, std::string>);
 #endif
-  visitor_for<int, float, std::string, double> vtor = [](auto&&) {
-  };
-  vtor = [](auto&& arg) {
-    std::cout << arg << '\n';
-  };
-  auto copyable_fn = [](auto&&) {
-  };
-  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) {
-    (void)x;
-  };
+  visitor_for<int, float, std::string, double> vtor = [](auto&&) {};
+  vtor = [](auto&& arg) { std::cout << arg << '\n'; };
+  auto copyable_fn = [](auto&&) {};
+  auto not_copyable_fn = [x = std::unique_ptr<int>{}](auto&&) { (void)x; };
   aa::invoke<visit<int>>(vtor, 5);
   aa::invoke<visit<std::string>>(vtor, "!!hello world!!");
   static_assert(!std::is_constructible_v<decltype(vtor), decltype(not_copyable_fn)>);
@@ -736,7 +726,7 @@ int main() {
   auto kekv_move = std::move(kekv);
   if (kekv_raw_ptr != (&kekv_move).raw() || !kekv_move.is_stable_pointers())
     return -20;
-  *aa::any_cast<int>(kekv_ptr) = 150; // must not segfault ))
+  *aa::any_cast<int>(kekv_ptr) = 150;  // must not segfault ))
   deriv d;
   aa::poly_ptr<aa::type_info> pdd = &d;
   aa::poly_ptr<aa::type_info> pdd1 = (base*)(&d);

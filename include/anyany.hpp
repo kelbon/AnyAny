@@ -14,9 +14,9 @@
 
 */
 
-#include <cassert>   // assert
-#include <utility>   // std::exchange
+#include <cassert>  // assert
 #include <exception>
+#include <utility>  // std::exchange
 
 #include "noexport/anyany_details.hpp"
 #include "type_descriptor.hpp"
@@ -27,7 +27,7 @@ namespace aa {
 //
 // Default version searches for Method::plugin<Any> or,
 // if deducing this supported, typename Method::plugin
-template<typename Any, typename Method>
+template <typename Any, typename Method>
 struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {};
 
 template <typename Method, typename Any>
@@ -41,14 +41,13 @@ using plugin_t = typename plugin<Any, Method>::type;
 template <typename Method>
 using method_traits = noexport::any_method_traits<decltype(noexport::get_method_signature_ptr<Method>(0))>;
 
-
 template <typename Method>
 using result_t = typename method_traits<Method>::result_type;
 
 template <typename Method>
 using args_list = typename method_traits<Method>::args;
 
-template<typename Method>
+template <typename Method>
 constexpr inline bool is_pseudomethod = std::is_same_v<args_list<Method>, noexport::aa_pseudomethod_tag>;
 
 template <typename Method>
@@ -61,7 +60,8 @@ template <typename T, typename Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
   static result_t<Method> value(typename method_traits<Method>::type_erased_self_type self, Args&&... args) {
     using self_sample = typename method_traits<Method>::self_sample_type;
-    // explicitly transfers <T> into do_invoke for case when 'self' is not deductible(do_invoke(type_identity_t<Self>))
+    // explicitly transfers <T> into do_invoke for case when 'self' is not
+    // deductible(do_invoke(type_identity_t<Self>))
     if constexpr (std::is_lvalue_reference_v<self_sample>) {
       using real_self = std::conditional_t<const_method<Method>, const T*, T*>;
       return Method::template do_invoke<T>(*reinterpret_cast<real_self>(self), static_cast<Args&&>(args)...);
@@ -74,7 +74,7 @@ struct invoker_for<T, Method, type_list<Args...>> {
   }
 };
 
-template<typename T, typename Method>
+template <typename T, typename Method>
 struct invoker_for<T, Method, noexport::aa_pseudomethod_tag> {
  private:
   struct value_getter {
@@ -138,7 +138,7 @@ using default_allocator = std::allocator<std::byte>;
 
 // enables copy/copy assgin for any_with
 // enables 'materialize' for references
-template<typename Alloc = default_allocator, size_t SooS = default_any_soos>
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
 struct copy_with {
   // preconditions:
   //    * no object under 'dest'
@@ -226,9 +226,8 @@ namespace noexport {
 // It is msvc workaround to make it struct(this 'compiler' cannot deduce types in call)
 template <typename... ToMethods>
 struct get_subtable_ptr_t {
-  template <
-      typename... FromMethods,
-      std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
+  template <typename... FromMethods,
+            std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
                                                          type_list<FromMethods...>{}) != npos),
                              int> = 0>
   const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
@@ -241,9 +240,9 @@ struct get_subtable_ptr_t {
 };
 }  // namespace noexport
 
-// casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subsequence of FromMethods
-// For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
-template<typename... ToMethods>
+// casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subsequence of
+// FromMethods For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
+template <typename... ToMethods>
 constexpr inline noexport::get_subtable_ptr_t<ToMethods...> subtable_ptr = {};
 
 // must be never named explicitly, use addr_vtable_for
@@ -424,7 +423,7 @@ struct poly_ptr {
   // from mutable pointer to Any
   template <typename Any, std::enable_if_t<(std::conjunction_v<not_const_type<Any>, is_any<Any>> &&
                                             noexport::find_subsequence(type_list<Methods...>{},
-                                                                  typename Any::methods_list{}) != npos),
+                                                                       typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr poly_ptr(Any* ptr) noexcept {
     if (ptr != nullptr && ptr->has_value()) [[likely]] {
@@ -507,7 +506,7 @@ struct const_poly_ptr {
   // from pointer to Any
   template <typename Any, std::enable_if_t<(is_any<Any>::value &&
                                             noexport::find_subsequence(type_list<Methods...>{},
-                                                                  typename Any::methods_list{}) != npos),
+                                                                       typename Any::methods_list{}) != npos),
                                            int> = 0>
   constexpr const_poly_ptr(const Any* p) noexcept {
     if (p != nullptr && p->has_value()) [[likely]] {
@@ -717,9 +716,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
-    result.vtable_value =
-        vtable<Methods...>{{noexport::get<noexport::number_of_first<Methods, Methods2...>>(
-            mate::get_vtable_value(r).table)...}};
+    result.vtable_value = vtable<Methods...>{
+        {noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r).table)...}};
     return result;
   }
 
@@ -745,8 +743,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   // accepts poly_ref/const_poly_ref and stateful::ref/cref with more Methods, effectivelly converts
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  template <typename X, AA_MSVC_WORKAROUND(std::enable_if_t<is_polymorphic<X>::value, int> = 0,)
-            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
+  template <typename X, AA_MSVC_WORKAROUND(std::enable_if_t<is_polymorphic<X>::value, int> = 0, )
+                            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr cref(const X& x) : cref(FOO(x)) {
   }
   constexpr const_poly_ref<Methods...> get_view() const noexcept {
@@ -807,7 +805,7 @@ struct invoke_fn<Method, type_list<Args...>> {
 #undef AA_VTABLE_CALL
 };
 
-template<typename Method>
+template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
   constexpr result_t<Method> operator()(const T& value) const noexcept {
@@ -913,6 +911,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using alloc_size_type = typename alloc_traits::size_type;
 
   friend struct mate;
+
  public:
   template <typename Method>
   static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
@@ -1031,8 +1030,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // making from any other type
 
   // postconditions : has_value() == true, *this is empty if exception thrown
-  template <typename T, typename... Args,
-            std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
+  template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     reset();
@@ -1048,8 +1046,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
   }
-  template <typename T, typename... Args,
-            std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
+  template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
@@ -1078,10 +1075,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // 'transmutate' constructors (from basic_any with more Methods)
 
-  template <typename... OtherMethods,
-            std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy_with<Alloc, SooS>> &&
+  template <
+      typename... OtherMethods,
+      std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy_with<Alloc, SooS>> &&
                         noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
-                             int> = 0>
+                       int> = 0>
   basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
@@ -1089,10 +1087,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     value_ptr = invoke<copy_with<Alloc, SooS>>(other, value_ptr, alloc);
     vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
-  template <typename... OtherMethods,
-            std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
+  template <
+      typename... OtherMethods,
+      std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
                         noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
-                             int> = 0>
+                       int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
     if (!other.has_value())
       return;
@@ -1106,8 +1105,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // force allocate versions
 
-  template <typename T, typename... Args,
-            std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
+  template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   basic_any(force_stable_pointers_t, std::in_place_type_t<T>, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>, force_stable_pointers_t>(std::forward<Args>(args)...);
@@ -1317,7 +1315,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
   }
   template <typename... Methods>
   std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
-                               std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
+                     std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
   operator()(poly_ref<Methods...> p) const {
     X* ptr = (*this)(&p);
     if (ptr == nullptr) [[unlikely]]
@@ -1364,7 +1362,7 @@ struct type_info {
 
   template <typename CRTP>
   struct plugin {
-#define AA_DECLARE_TYPE_DESCRIPTOR_METHOD(...)                   \
+#define AA_DECLARE_TYPE_DESCRIPTOR_METHOD(...)              \
   constexpr descriptor_t type_descriptor() const noexcept { \
     const auto& self = *static_cast<const CRTP*>(this);     \
     if constexpr (noexport::has_has_value<CRTP>::value) {   \
@@ -1473,7 +1471,7 @@ struct spaceship {
 #endif
 #undef AA_DECLARE_TYPE_DESCRIPTOR_METHOD
 
-template<typename... Methods>
+template <typename... Methods>
 constexpr auto operator==(poly_ptr<Methods...> left, poly_ptr<Methods...> right) noexcept
     -> decltype(left.type_descriptor(), true) {
   return left.raw() == right.raw() && left.type_descriptor() == right.type_descriptor();
