@@ -16,7 +16,7 @@ template <typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template <typename Alloc = std::allocator<char>>
 using any_copyable =
-    aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::move, aa::equal_to>;
+    aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -252,7 +252,7 @@ size_t TestConstructors() {
 }
 void noallocate_test() {
   using any_noallocate = aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos,
-                                            aa::copy_with<aa::unreachable_allocator>, aa::move>;
+                                            aa::copy_with<aa::unreachable_allocator>>;
 
   any_noallocate x = 5;
   auto y = std::move(x);
@@ -323,7 +323,7 @@ struct barx {
   }
 };
 
-using any_fooable = aa::any_with<aa::type_info, aa::copy, aa::move, foox, barx>;
+using any_fooable = aa::any_with<aa::type_info, aa::copy, foox, barx>;
 
 size_t TestAnyCast() {
   size_t error_count = 0;
@@ -393,9 +393,9 @@ size_t TestCasts() {
   return error_count;
 }
 
-using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy, aa::move>;
+using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy>;
 
-using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::move, aa::equal_to>;
+using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::equal_to>;
 
 // EXAMPLE WITH POLYMORPHIC_PTR
 
@@ -413,7 +413,7 @@ struct Drawi {
   };
 };
 
-using idrawable = aa::any_with<aa::type_info, Drawi, aa::copy, aa::move>;
+using idrawable = aa::any_with<aa::type_info, Drawi, aa::copy>;
 
 struct drawable0 {
   int draw(int val) const {

@@ -208,5 +208,19 @@ constexpr inline bool is_fits_in_soo_buffer =
     alignof(std::decay_t<T>) <= alignof(std::max_align_t) &&
     std::is_nothrow_move_constructible_v<std::decay_t<T>> && sizeof(std::decay_t<T>) <= SooS;
 
+// precondition !!src && !!dest
+template <typename T>
+AA_ALWAYS_INLINE void relocate(T* src, T* dest) noexcept {
+  if constexpr (std::is_nothrow_move_constructible_v<T>) {
+    static_assert(noexcept((*src).~T()));
+    noexport::construct_at(dest, std::move(*src));
+    noexport::destroy_at(src);
+  } else {
+    // never called if type is throw movable, but i need to compile Method
+    // So this 'if constexpr' removes never used code in binary
+    AA_UNREACHABLE;
+  }
+}
+
 }  // namespace aa::noexport
 #include "file_end.hpp"

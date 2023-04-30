@@ -123,15 +123,8 @@ struct move {
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
   // constructible. Actially relocates
   template <typename T>
-  static auto do_invoke(T& src, void* dest) -> std::enable_if_t<std::is_move_constructible_v<T>> {
-    if constexpr (std::is_nothrow_move_constructible_v<T>) {
-      noexport::construct_at(reinterpret_cast<T*>(dest), std::move(src));
-      noexport::destroy_at(std::addressof(src));
-    } else {
-      // never called if type is throw movable, but i need to compile method.
-      // So this 'if constexpr' removes never used code in binary
-      AA_UNREACHABLE;
-    }
+  static auto do_invoke(T& src, void* dest) noexcept -> std::enable_if_t<std::is_move_constructible_v<T>> {
+    noexport::relocate(std::addressof(src), reinterpret_cast<T*>(dest));
   }
 };
 
@@ -139,10 +132,11 @@ constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 
 using default_allocator = std::allocator<std::byte>;
 
-// enables copy/copy assgin for any_with
-// enables 'materialize' for references
+//  enables copy/copy assgin/move/move assign for any_with
+//  enables 'materialize' for references
 template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
 struct copy_with {
+ private:
   // preconditions:
   //    * no object under 'dest'
   //    * atleast 'SooS' bytes under 'dest' and alignment == alignof(std::max_align_t)
@@ -151,9 +145,9 @@ struct copy_with {
   //    * if return != 'dest', then value was allocated by 'alloc' and allocation size storoed under
   //    'dest'(size_t)
   template <typename T>
-  static auto do_invoke(const T& src, void* dest, Alloc& alloc)
-      -> std::enable_if_t<std::is_copy_constructible_v<T>, void>* {
+  static void* copy_fn(const void* src_raw, void* dest, Alloc& alloc) {
     static_assert(SooS >= sizeof(size_t));
+    const T& src = *reinterpret_cast<const T*>(src_raw);
     if constexpr (noexport::is_fits_in_soo_buffer<T, SooS>) {
       return noexport::construct_at(reinterpret_cast<T*>(dest), src);
     } else {
@@ -174,11 +168,43 @@ struct copy_with {
       return ptr;
     }
   }
-  using allocator_type = Alloc;
-  static constexpr size_t soos = SooS;
+  template <typename T>
+  static void move_fn(void* src, void* dest) noexcept {
+    noexport::relocate(reinterpret_cast<T*>(src), reinterpret_cast<T*>(dest));
+  }
+
+ public:
+  struct value_type {
+    void* (*copy_fn)(const void* src, void* dest, Alloc&);
+    void (*move_fn)(void* src, void* dest);
+  };
+  template <typename T>
+  static AA_CONSTEVAL_CPP20 auto do_value()
+      -> std::enable_if_t<(std::is_copy_constructible_v<T> && std::is_move_constructible_v<T>), value_type> {
+    return value_type{&copy_fn<T>, &move_fn<T>};
+  }
 };
 
 using copy = copy_with<>;
+
+namespace noexport {
+
+auto get_any_copy_method(type_list<>) -> void;
+template <typename A, size_t N, typename... Tail>
+auto get_any_copy_method(type_list<copy_with<A, N>, Tail...>) -> copy_with<A, N>;
+template <typename Head, typename... Tail>
+auto get_any_copy_method(type_list<Head, Tail...>) {
+  return get_any_copy_method(type_list<Tail...>{});
+}
+template <typename... Methods>
+using some_copy_method = decltype(get_any_copy_method(type_list<Methods...>{}));
+
+// copy_with contains 'move' function too, so if any has copy, then it has move too
+template <typename... Methods>
+constexpr inline bool has_move =
+    !std::is_void_v<some_copy_method<Methods...>> || contains_v<move, Methods...>;
+
+}  // namespace noexport
 
 // enables std::hash specialization for polymorphic value and reference
 struct hash {
@@ -196,11 +222,11 @@ struct vtable {
   noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> table;
 
   template <typename Method>
-  static inline constexpr bool has_method = noexport::contain<Method, Methods...>;
+  static inline constexpr bool has_method = noexport::contains_v<Method, Methods...>;
 
 #ifdef AA_HAS_CPP20
   // sets new value to ALL values of 'Method' in this table
-  template <typename Method, std::enable_if_t<noexport::contain<Method, Methods...>, int> = 0>
+  template <typename Method, std::enable_if_t<noexport::contains_v<Method, Methods...>, int> = 0>
   constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
       noexcept(new_value = new_value)) {
     using do_not_set = decltype([](auto&&...) {});
@@ -626,7 +652,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 
   constexpr ref() noexcept = default;
 
-  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
+  template <typename... Methods2,
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -713,7 +740,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   }
 
  private:
-  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
+  template <typename... Methods2,
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -722,17 +750,20 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
     return result;
   }
 
-  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
+  template <typename... Methods2,
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     return FOO(stateful::cref<Methods2...>(r));
   }
 
-  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
+  template <typename... Methods2,
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     return stateful::ref<Methods...>::FOO(r);
   }
 
-  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
+  template <typename... Methods2,
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
     return FOO(*aa::const_pointer_cast(&p));
   }
@@ -906,20 +937,16 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   using alloc_traits = std::allocator_traits<Alloc>;
   using alloc_pointer_type = typename alloc_traits::pointer;
-  using alloc_size_type = typename alloc_traits::size_type;
 
   friend struct mate;
 
  public:
   template <typename Method>
-  static constexpr bool has_method = vtable<Methods...>::template has_method<Method>;
-
+  static constexpr bool has_method = noexport::contains_v<Method, Methods...>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>>;
-  static constexpr bool has_move = has_method<move>;
+  static constexpr bool has_move = noexport::has_move<Methods...>;
 
-  static_assert(
-      noexport::is_one_of<typename alloc_traits::value_type, std::byte, char, unsigned char>::value);
-  static_assert(has_method<destroy>, "Any requires aa::destroy method");
+  static_assert(noexport::is_byte_like_v<typename alloc_traits::value_type>);
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
 
   using base_any_type = basic_any;
@@ -928,7 +955,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
  private:
   template <typename...>
   struct remove_utility_methods {};
-
   template <typename... Methods1>
   struct remove_utility_methods<destroy, Methods1...> {
     using ptr = poly_ptr<Methods1...>;
@@ -968,7 +994,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (!other.has_value())
       return;
-    value_ptr = invoke<copy_with<Alloc, SooS>>(other, value_ptr, alloc);
+    value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr, alloc);
     vtable_ptr = other.vtable_ptr;
   }
 
@@ -992,8 +1018,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     return *this;
   }
 
-  basic_any& operator=(const basic_any& other) AA_IF_HAS_CPP20(requires(has_copy&& has_move)) {
-    basic_any value{other};
+  basic_any& operator=(const basic_any& other) AA_IF_HAS_CPP20(requires(has_copy)) {
+    basic_any value = other;
     if constexpr (!alloc_traits::is_always_equal::value &&
                   alloc_traits::propagate_on_container_copy_assignment::value) {
       if (alloc != other.alloc) {
@@ -1018,9 +1044,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       reset();
       emplace_in_empty<std::decay_t<V>>(std::forward<V>(val));
     } else {
-      basic_any temp{std::forward<V>(val)};
-      noexport::destroy_at(this);
-      noexport::construct_at(this, std::move(temp));
+      *this = basic_any{std::forward<V>(val)};
     }
     return *this;
   }
@@ -1082,12 +1106,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
       return;
-    value_ptr = invoke<copy_with<Alloc, SooS>>(other, value_ptr, alloc);
+    value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
     vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
   template <
       typename... OtherMethods,
-      std::enable_if_t<(std::is_move_constructible_v<basic_any<Alloc, SooS, OtherMethods...>>&&
+      std::enable_if_t<(noexport::has_move<OtherMethods...> &&
                         noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
                        int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
@@ -1156,9 +1180,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       return;
     // `move` is noexcept (invariant of small state)
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
-    if (!other.memory_allocated())
-      invoke<move>(other, value_ptr);
-    else {
+    if (!other.memory_allocated()) {
+      if constexpr (has_method<move>)
+        invoke<move>(other, value_ptr);
+      else
+        invoke<noexport::some_copy_method<Methods...>>(other).move_fn(other.value_ptr, value_ptr);
+    } else {
       value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
     }
@@ -1193,26 +1220,21 @@ template <typename Alloc = default_allocator, size_t SooS = default_any_soos, ty
                            int> = 0>
 basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{}) {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
-  mate::get_value_ptr(result) =
-      invoke<copy_with<Alloc, SooS>>(ref, mate::get_value_ptr(result), mate::get_alloc(result));
+  mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
+      mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
   mate::get_vtable_ptr(result) = mate::get_vtable_ptr(ref);
   return result;
 }
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
-auto materialize(poly_ref<Methods...> ref, Alloc alloc = Alloc{})
-    -> decltype(materialize<Alloc, SooS>(ref.get_view(), std::move(alloc))) {
-  return materialize<Alloc, SooS>(ref.get_view(), std::move(alloc));
-}
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
-auto materialize(stateful::ref<Methods...> r, Alloc alloc = Alloc{})
-    -> decltype(materialize<Alloc, SooS>(r.get_view(), std::move(alloc))) {
-  return materialize<Alloc, SooS>(r.get_view(), std::move(alloc));
-}
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
-auto materialize(stateful::cref<Methods...> r, Alloc alloc = Alloc{})
-    -> decltype(materialize<Alloc, SooS>(r.get_view(), std::move(alloc))) {
-  return materialize<Alloc, SooS>(r.get_view(), std::move(alloc));
-}
+#define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
+  template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \
+  AA_ALWAYS_INLINE auto materialize(TEMPLATE<Methods...> value, Alloc alloc = Alloc{})               \
+      ->decltype(materialize<Alloc, SooS>(TRANSFORM, std::move(alloc))) {                            \
+    return materialize<Alloc, SooS>(TRANSFORM, std::move(alloc));                                    \
+  }
+AA_DECLARE_MATERIALIZE(poly_ref, const_poly_ref(value))
+AA_DECLARE_MATERIALIZE(stateful::ref, value.get_view())
+AA_DECLARE_MATERIALIZE(stateful::cref, value.get_view())
+#undef AA_DECLARE_MATERIALIZE
 
 // ######################## ACTION any_cast ########################
 
@@ -1377,7 +1399,6 @@ struct type_info {
 // adds operator==
 struct equal_to {
  private:
-  using fn_t = bool (*)(const void*, const void*);
   template <typename T>
   static bool fn(const void* first, const void* second) {
     return bool{*reinterpret_cast<const T*>(first) == *reinterpret_cast<const T*>(second)};
@@ -1385,7 +1406,7 @@ struct equal_to {
 
  public:
   struct value_type {
-    fn_t fn;
+    bool (*fn)(const void*, const void*);
     descriptor_t desc;
   };
   template <typename T>
@@ -1424,8 +1445,6 @@ struct equal_to {
 // enables operator<=> and operator== for any_with
 struct spaceship {
  private:
-  using fn_t = std::partial_ordering (*)(const void*, const void*);
-
   template <typename T>
   static std::partial_ordering fn(const void* first, const void* second) {
     return *reinterpret_cast<const T*>(first) <=> *reinterpret_cast<const T*>(second);
@@ -1433,7 +1452,7 @@ struct spaceship {
 
  public:
   struct value_type {
-    fn_t fn;
+    std::partial_ordering (*fn)(const void*, const void*);
     descriptor_t desc;
   };
   template <typename T>

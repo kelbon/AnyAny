@@ -17,8 +17,7 @@ namespace aa::noexport {
 
 template <typename Method, typename>
 struct invoke_fn {
-  static_assert(
-      ![] {}, "you forget to include anyany.hpp");
+  static_assert((![] {}), "you forget to include anyany.hpp");
 };
 
 }  // namespace aa::noexport
