@@ -2,13 +2,16 @@
 #include "basic_usage.hpp"
 #include "functional_paradigm.hpp"
 #include "polyref.hpp"
+#if __cplusplus >= 202002L
 #include "visit_invoke_example.hpp"
-#include "visit_invoke_example.hpp"
-
+#endif
 int main() {
-  aa::example::multidispatch_usage();
-  aa::example::multidispatch_usage2();
-  aa::example::example1();
-  example_draw();
-  example_polyref();
+  example::use_drawables();
+  example::advanced::use_drawables();
+  example::use_functions();
+  example::use_polyref();
+#if __cplusplus >= 202002L
+  example::use_multidispatch();
+  example::advanced::use_multidispatch();
+#endif
 }

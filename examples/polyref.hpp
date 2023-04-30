@@ -31,7 +31,7 @@ struct Print {
   };
 };
 */
-anyany_method(print, (const& self) requires(std::cout << self << std::endl) -> void);
+anyany_method(print, (const& self) requires(std::cout << self << std::endl)->void);
 
 // all arguments erased, so we dont create a print function for any
 // set of types like in case with void print(auto&&... args) signature
@@ -43,8 +43,8 @@ void print_all(std::initializer_list<aa::cref<print>> l) {
 
 using any_printable = aa::any_with<print>;
 // all types created by any_with<Methods...>
-// have inner aliases ptr/ref/const_ptr/const_ref
-// which are aa::polymorphic_ptr/ref
+// have inner aliases ptr/ref/cptr/cref
+// which are aa::poly_ptr/poly_ref
 void print_one(any_printable::cref p) {
   p.print();
 }
@@ -54,18 +54,19 @@ void may_be_print(any_printable::cptr p) {
 }
 
 // stateful ref contains vtable in itself, so it is most effective way to type erase 1 Method
-// 
+//
 void statefull_print(const aa::stateful::cref<print>& ref) {
   ref.print();
 }
-}  // namespace example
 
-void example_polyref() {
+void use_polyref() {
   struct no_print {};
-  // Method created from 'anyany_method' macro enables SFINAE friend construct
+  // Method created from 'anyany_method' macro enables SFINAE friendly constructing
   static_assert(!std::is_constructible_v<example::any_printable, no_print>);
   example::any_printable value = std::string{"Im a polymorphic value"};
   example::may_be_print(&value);  // operator& of poly_ref returns poly_ptr
   print_one(*&value);             // operator* of poly_ptr returns poly_ref
   example::print_all({5, 10, std::string{"abc"}, std::string_view{"hello world"}});
 }
+
+}  // namespace example

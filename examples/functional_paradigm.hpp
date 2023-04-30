@@ -14,47 +14,57 @@
 /// Also function supports currying and invoking from tuple, as in functional languages
 ///
 
-namespace aa::example {
+namespace example::details {
 
-template <typename, typename...>
-struct select_function {};
+template <typename... Methods, typename R, typename... Args>
+auto get_function_type(R (*)(Args...)) -> aa::any_with<aa::call<R(Args...)>, Methods...>;
 
-template <typename R, typename... Args, typename... Methods>
-struct select_function<R(Args...), Methods...> {
-    using type = aa::any_with<aa::call<R(Args...)>, Methods...>;
-};
+}  // namespace example::details
 
-template<typename Signature, typename... Methods>
-using basic_function = typename select_function<Signature, Methods...>::type;
+namespace example {
 
+template <typename Signature, typename... Methods>
+using basic_function = decltype(details::get_function_type<Methods...>((Signature*)0));
+// similar to std::function, but better
+// * noexcept move
+// * no huge RTTI
+// * customizable alloc and small object optimization buffer size
+// * support for other signatures like R(Args...) const/noexcept (aa::call Method)
+// etc etc
 template <typename Signature>
 using function = basic_function<Signature, aa::copy, aa::move>;
 
+// similar to C++23 move_only_function
 template <typename Signature>
 using move_only_function = basic_function<Signature, aa::move>;
 
+// lightweight wrapper, stores pointer to operator() and const void* to value
+// most effective way to erase function
 template <typename Signature>
-using function_ref = typename function<Signature>::ref;
+using function_ref = aa::stateful::cref<aa::call<Signature>>;
 
-template <typename Signature>
-using effective_function_ref = aa::stateful::cref<aa::call<Signature>>;
+// similar to std::any, but better...
+using any = aa::any_with<aa::copy>;
 
-using any = aa::any_with<aa::copy, aa::move>;
-
-void example1_foo(int x, float y, double z) {
+int example_foo(int x, float y, double z) {
   std::cout << x << y << z << '\n';
+  return 0;
 }
 
-void example1() {
-  auto* fn_ptr = &example1_foo;
-  effective_function_ref<void(int, float, double) const> f1 = fn_ptr;
-  static_assert(std::is_invocable_r_v<void, const decltype(fn_ptr)&, int, float, double>);
-  f1(5, 5.f, 5.);
-  function<void(int, float, double)> f0 = &example1_foo;
+void use_functions() {
+  // Note: function ref want to store pointer to value, so when you pass function into it
+  // it needs pointer to pointer to function
+  auto* fn_ptr = &example_foo;
+  // example_foo returns 'int', but we still can construct f (ignores result, because returns 'void')
 
-  f0 = [](int, float, double) {
+  function_ref<void(int, float, double) const> f_ref = fn_ptr;
+  f_ref(5, 5.f, 5.);
+  function<void(int, float, double)> foo = &example_foo;
+
+  foo = [](int, float, double) {
     // some other function
   };
+  foo(5, 5., 5.);
 }
 
 }  // namespace example

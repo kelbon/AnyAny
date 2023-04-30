@@ -5,7 +5,7 @@
 #include <anyany/visit_invoke.hpp>
 #include <anyany/anyany.hpp>
 
-namespace aa::example {
+namespace example {
 
 // common use cases for multidispatching are the interaction of several things,
 // such as the intersection of geometric shapes or the collision of objects in games
@@ -49,7 +49,7 @@ constexpr inline auto space_objects_collision =
     aa::make_visit_invoke<std::string>(ship_asteroid, ship_star, star_star, ship_ship);
 // return type can be dedacted if all functions have same return type
 
-void multidispatch_usage() {
+void use_multidispatch() {
   // values are type erased here, so it is runtime overload resolution
   // we dont need any Methods(Traits) here, so <> (empty Methods pack) used
   aa::any_with<aa::type_info> player = spaceship{.id = 14};
@@ -59,6 +59,10 @@ void multidispatch_usage() {
   assert(result == "collision between spaceship #14 and asteroid from galaxy Andromeda");
 }
 
+}  // namespace example
+
+namespace example::advanced {
+
 // Another example - just demonstrates, that visit_invoke
 // may accept any count of functions and even functions with different count of arguments
 
@@ -66,30 +70,28 @@ struct A {};
 struct B {};
 struct C {};
 
-template<int Res, typename... Ts>
-constexpr inline auto foo = [](Ts... args) {
-  return Res;
-};
+template <int Res, typename... Ts>
+constexpr inline auto foo = [](Ts... args) { return Res; };
 
 constexpr inline auto wow_what = aa::make_visit_invoke<int>(
     foo<0, B>, foo<1, A, B, C>, foo<2, A, C, B>, foo<3, C, B, A>, foo<4, C, A, B>, foo<5, C>, foo<6, A, B>);
 
-void multidispatch_usage2() {
-    A a;
-    B b;
-    C c;
-    aa::poly_ref<aa::type_info> aref = a;
-    aa::const_poly_ref<aa::type_info> bcref = b;
-    aa::any_with<aa::type_info> cval = c;
-    if(wow_what.resolve(cval, aref, bcref) != 4)
-        throw false;
-    if(wow_what.resolve(cval) != 5)
-        throw false;
-    // may accepts non-polymorphic types too
-    if(wow_what.resolve(A{}, bcref) != 6)
-        throw false;
-    if(wow_what.resolve(B{}) != 0)
-        throw false;
+void use_multidispatch() {
+  A a;
+  B b;
+  C c;
+  aa::poly_ref<aa::type_info> aref = a;
+  aa::const_poly_ref<aa::type_info> bcref = b;
+  aa::any_with<aa::type_info> cval = c;
+  if (wow_what.resolve(cval, aref, bcref) != 4)
+    throw false;
+  if (wow_what.resolve(cval) != 5)
+    throw false;
+  // may accepts non-polymorphic types too
+  if (wow_what.resolve(A{}, bcref) != 6)
+    throw false;
+  if (wow_what.resolve(B{}) != 0)
+    throw false;
 }
 
-}  // namespace aa::example
+}  // namespace example::advanced
