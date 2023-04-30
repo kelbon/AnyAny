@@ -626,8 +626,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 
   constexpr ref() noexcept = default;
 
-  template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -637,7 +636,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   }
 
   template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+            std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -714,8 +713,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   }
 
  private:
-  template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
@@ -724,20 +722,17 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
     return result;
   }
 
-  template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
     return FOO(stateful::cref<Methods2...>(r));
   }
 
-  template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     return stateful::ref<Methods...>::FOO(r);
   }
 
-  template <typename... Methods2,
-            std::enable_if_t<(vtable<Methods2...>::template has_method<Methods> && ...), int> = 0>
+  template <typename... Methods2, std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
   static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
     return FOO(*aa::const_pointer_cast(&p));
   }
@@ -1080,7 +1075,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   template <
       typename... OtherMethods,
-      std::enable_if_t<(vtable<OtherMethods...>::template has_method<copy_with<Alloc, SooS>> &&
+      std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, OtherMethods...> &&
                         noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
                        int> = 0>
   basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
@@ -1092,7 +1087,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
   template <
       typename... OtherMethods,
-      std::enable_if_t<(vtable<OtherMethods...>::template has_method<move> &&
+      std::enable_if_t<(std::is_move_constructible_v<basic_any<Alloc, SooS, OtherMethods...>>&&
                         noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
                        int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
@@ -1193,8 +1188,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 // ######################## materialize(create any_with from polymorphic reference)
 
 template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods,
-          std::enable_if_t<(noexport::contain<copy_with<Alloc, SooS>, Methods...> &&
-                            noexport::contain<destroy, Methods...>),
+          std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, Methods...> &&
+                            noexport::contains_v<destroy, Methods...>),
                            int> = 0>
 basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{}) {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
@@ -1374,6 +1369,7 @@ struct type_info {
     }                                                       \
     return __VA_ARGS__;                                     \
   }
+    // returns aa::descriptor_v<void> if !has_value() (references always have value)
     AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<type_info>(self));
   };
 };
@@ -1419,6 +1415,7 @@ struct equal_to {
       return !operator==(other);
     }
 #endif
+    // returns aa::descriptor_v<void> if !has_value() (references always have value)
     AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<equal_to>(self).desc)
   };
 };
@@ -1468,6 +1465,7 @@ struct spaceship {
         return std::partial_ordering::unordered;
       return fn(mate::get_value_ptr(left), mate::get_value_ptr(right));
     }
+    // returns aa::descriptor_v<void> if !has_value() (references always have value)
     AA_DECLARE_TYPE_DESCRIPTOR_METHOD(invoke<spaceship>(self).desc)
   };
 };
@@ -1555,35 +1553,35 @@ AA_CALL_IMPL(const, noexcept);
 namespace std {
 
 template <typename Alloc, size_t SooS, typename... Methods>
-AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
+AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))
 struct hash<::aa::basic_any<Alloc, SooS, Methods...>> {
   size_t operator()(const ::aa::basic_any<Alloc, SooS, Methods...>& any) const noexcept {
     return any.has_value() ? aa::invoke<::aa::hash>(any) : 0;
   }
 };
 template <typename... Methods>
-AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
+AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))
 struct hash<::aa::poly_ref<Methods...>> {
   size_t operator()(const ::aa::poly_ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
 template <typename... Methods>
-AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
+AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))
 struct hash<::aa::const_poly_ref<Methods...>> {
   size_t operator()(const ::aa::const_poly_ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
 template <typename... Methods>
-AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
+AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))
 struct hash<::aa::stateful::ref<Methods...>> {
   size_t operator()(const ::aa::stateful::ref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);
   }
 };
 template <typename... Methods>
-AA_IF_HAS_CPP20(requires(::aa::vtable<Methods...>::template has_method<::aa::hash>))
+AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))
 struct hash<::aa::stateful::cref<Methods...>> {
   size_t operator()(const ::aa::stateful::cref<Methods...>& r) const noexcept {
     return aa::invoke<::aa::hash>(r);

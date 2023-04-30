@@ -68,10 +68,11 @@ template <typename T, typename... Args>
 constexpr inline size_t number_of_first = number_of_impl<0, T, Args...>::value;
 
 template<typename T, typename... Ts>
-constexpr inline size_t contain = number_of_first<T, Ts...> != npos;
+constexpr inline bool contains_v = number_of_first<T, Ts...> != npos;
 
-template <typename T, typename... Args>
-struct is_one_of : std::bool_constant<(std::is_same_v<T, Args> || ...)> {};
+template<typename T>
+constexpr inline bool is_byte_like_v =
+    std::is_same_v<std::byte, T> || std::is_same_v<char, T> || std::is_same_v<unsigned char, T>;
 
 template <typename>
 constexpr inline bool always_false = false;
