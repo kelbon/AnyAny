@@ -3,9 +3,8 @@ cmake_minimum_required(VERSION 3.21)
 set(AA_PARTS anyany data_parallel_vector variant_swarm visit_invoke utilities)
 foreach(PART ${AA_PARTS})
 	add_executable(${PART} ${CMAKE_CURRENT_SOURCE_DIR}/test_${PART}.cpp)
-	target_include_directories(${PART}
-		PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include
-				${CMAKE_CURRENT_SOURCE_DIR}/../examples)
+	target_link_libraries(${PART} PUBLIC anyanylib)
+	target_include_directories(${PART} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../examples)
 	add_test(NAME test_${PART} COMMAND ${PART})
 	if(${PART} STREQUAL "anyany")
 		set_target_properties(${PART} PROPERTIES CXX_STANDARD 17)

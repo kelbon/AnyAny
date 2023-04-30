@@ -1,45 +1,10 @@
 #pragma once
-#if __cplusplus >= 202002L
-#define AA_HAS_CPP20
-#define AA_CONCEPT(...) __VA_ARGS__
-#define AA_IF_HAS_CPP20(...) __VA_ARGS__
-#define AA_CONSTEVAL_CPP20 consteval
+
+#ifdef AA_HAS_CPP20
 #include <compare>
-#else
-#define AA_IF_HAS_CPP20(...)
-#define AA_CONSTEVAL_CPP20 constexpr
-#define AA_CONCEPT(...) typename
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
-#define AA_UNREACHABLE __builtin_unreachable()
-#elif defined(_MSC_VER)
-#define AA_UNREACHABLE __assume(false)
-#else
-#define AA_UNREACHABLE
-#endif
-
-#if defined(__GNUC__) || defined(__clang__)
-#define AA_ALWAYS_INLINE __attribute__((always_inline)) inline
-#elif defined(_MSC_VER)
-#define AA_ALWAYS_INLINE __forceinline
-#else
-#define AA_ALWAYS_INLINE inline
-#endif
-
-// Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
-#ifdef _MSC_VER
-#define AA_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_MSVC_EBO
-#endif
-
-// MSVC cannot compile 99% of good code without workarounds, it is just unusable compiler
-#if defined(__GNUC__) || defined(__clang__)
-#define AA_MSVC_WORKAROUND(...)
-#else
-#define AA_MSVC_WORKAROUND(...) __VA_ARGS__
-#endif
+#include "file_begin.hpp"
 
 namespace aa::noexport {
 
@@ -77,7 +42,6 @@ constexpr const char* n() {
   // fundamental types has no 'prefix'
   return res;
 #else
-#define AA_CANT_GET_TYPENAME
   // it will not break dll support, because global variables addresses may differ only on windows, where
   // msvc/clang support type names getting
   return nullptr;
@@ -85,13 +49,12 @@ constexpr const char* n() {
 }
 // do not use it explicitly, use aa::descriptor_v
 #ifdef AA_CANT_GET_TYPENAME
-#define AA_CONSTEXPR
 template <typename T>
 constexpr const void* descriptor = &descriptor<T>;
 #else
-#define AA_CONSTEXPR constexpr
 template <typename T>
 constexpr const char* descriptor = n<T>();
 #endif
 
 }  // namespace aa::noexport
+#include "file_end.hpp"

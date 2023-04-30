@@ -9,10 +9,8 @@
 #include <random>
 #include <unordered_set>
 
-#include "anyany/anyany.hpp"
-#include "basic_usage.hpp"
-#include "functional_paradigm.hpp"
-#include "polyref.hpp"
+#include <anyany/anyany.hpp>
+#include <anyany/anyany_macro.hpp>
 
 template <typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
@@ -538,17 +536,19 @@ void stateful_test() {
   (void)sr1, (void)sr2;
 }
 
+anyany_method(print, (const& self) requires(std::cout << self << std::endl)->void);
+
 void ptr_behavior_test() {
   std::string s = "hello";
   int x = 10;
-  aa::poly_ptr<example::print> ptr;
+  aa::poly_ptr<print> ptr;
   if (ptr.raw() != nullptr)
     throw false;
   if (ptr.raw_vtable_ptr() != nullptr)
     throw false;
-  aa::poly_ptr<aa::type_info, example::print> ptr1 = &s;
+  aa::poly_ptr<aa::type_info, print> ptr1 = &s;
   ptr1->print();
-  aa::poly_ptr<aa::type_info, example::print> ptr2 = &x;
+  aa::poly_ptr<aa::type_info, print> ptr2 = &x;
   ptr2->print();
   ptr1 = ptr2;
   ptr2 = nullptr;
@@ -664,10 +664,27 @@ size_t TestTypeDescriptorPluginsInteraction() {
 #endif
   return error_count;
 }
+
+anyany_extern_method(Draw, (const& self, std::ostream& out, int val) requires(self.draw(out, val))->void);
+
+using any_drawable = aa::any_with<aa::type_info, Draw>;
+
+struct Triangle {
+  void draw(std::ostream& out, int val) const {
+    out << val << "Triangle";
+  }
+};
+struct Circle {
+  void draw(std::ostream& out, int val) const {
+    out << val << "Cirle";
+  }
+  int x;
+  std::string y;
+};
 int main() {
-  aa::any_with<example::print, aa::copy, example::print> duplicator;
+  aa::any_with<print, aa::copy, print> duplicator;
   duplicator = 5;
-  aa::invoke<example::print>(duplicator);
+  aa::invoke<print>(duplicator);
   aa::any_with<change_i, aa::type_info> val_change_i = x{};
   val_change_i.change_i();  // must not change 'i', because self by copy
   if (aa::any_cast<x>(&val_change_i)->i != 0)
@@ -739,11 +756,11 @@ int main() {
   if (cpdd != pdd || cpdd1 != pdd1 || cpdd1 == pdd || cpdd == pdd1)
     return -17;
   static_assert(std::is_trivially_copyable_v<decltype(cpdd)>);
-  aa::any_with<aa::type_info, example::print> p = "hello world";
+  aa::any_with<aa::type_info, print> p = "hello world";
   auto* ptr = aa::any_cast<const char*>(&p);
   if (!ptr)
     throw 1;
-  aa::invoke<example::print>(p);
+  aa::invoke<print>(p);
   std::vector<aa::poly_ref<foox>> vec;
   FooAble fef{};
   vec.emplace_back(fef);
@@ -927,9 +944,6 @@ int main() {
   val = std::string{"hello world"};
   val = 0.f;
   val = std::vector<int>{1, 2, 3, 4};
-  aa::example::example1();
-  example_draw();
-  example_polyref();
   std::unordered_set<any_hashable> set;
   set.insert(std::string{"hello world"});
   set.emplace(5);

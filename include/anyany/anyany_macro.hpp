@@ -3,18 +3,7 @@
 // This very light header may be used without #include anyany.hpp
 // for declaring anyany Methods
 
-namespace aa {
-
-// used as placeholder for erased type in signature_type declarations
-// or when library tries to get signature by instanciating 'do_invoke' with this type
-using erased_self_t = int;
-
-template <typename...>
-struct type_list {};
-
-constexpr inline size_t npos = size_t(-1);
-
-}  // namespace aa
+#include "noexport/common.hpp"
 
 namespace aa::noexport {
 
@@ -27,12 +16,6 @@ struct get_return_type<Ret(Self, Args...)> {
 };
 template<typename Signature>
 using return_type_of = typename get_return_type<Signature>::type;
-
-template <typename Method, typename>
-struct invoke_fn {
-  static_assert(
-      ![] {}, "you forget to include anyany.hpp");
-};
 
 }  // namespace noexport
 
@@ -56,17 +39,17 @@ struct invoke_fn {
 #define AA_INJECT_SELF_IN_PARENS(...) (Self __VA_ARGS__)
 #define AA_INJECT_INTERFACE_T_IN_PARENS(...) (int __VA_ARGS__)
 
-// usage: anyany_method(<TRAIT_NAME>, (<SELF ARGUMENT>, <TRAIT_ARGS...>) requires(<EXPR>) -> <RETURN_TYPE>);
+// usage: anyany_method(<METHOD_NAME>, (<SELF ARGUMENT>, <METHOD_ARGS...>) requires(<EXPR>) -> <RETURN_TYPE>);
 // where
 // * <METHOD_NAME>    - is a name, which will be used later in invoke<NAME> or any_with<NAME...>
 // * <SELF ARGUMENT> - is a '&' 'const &' or just nothing('') followed by self-argument name
-// * <TRAIT_ARGS...> - set of Method parameters
+// * <METHOD_ARGS...> - set of Method parameters
 // * <EXPR>          - what will Method do
 // * <RETURN_TYPE>   - return type of Method. Must be non-dependent type
 //                     (same for all 'Self' types, as for virtual functions)
 //
 // Notes:
-//  * macro may use 'Self' type, which is decltype(<SELF_ARGUMENT>)
+//  * macro may use 'Self' type, which is remove_cvref_t<decltype(<SELF_ARGUMENT>)>
 //  * ref/any_with, with Method created by this macro will have member function named NAME
 //  * this macro supports 'template' on top of it, so you can easy create template Methods
 //  * any_with/ref which uses Methods created by this macro are sfinae-friendly constructible
@@ -81,7 +64,6 @@ struct invoke_fn {
 //      anyany_method(bar, (*something*) requires(std::enable_if_t<CONDITION>(), self + 5)->R);
 //
 // EXAMPLES:
-//  Trait which accepts value by const&, invokes .foo(x + y).
 //      * just simple Method, accepts 'self' by const&, returns self.foo(x, y)
 //
 //        anyany_method(foo, (const& self, int x, char y) requires(self.foo(x, y)) -> std::string);

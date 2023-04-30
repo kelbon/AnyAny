@@ -15,6 +15,8 @@
 #include <type_traits>
 #include <string_view>
 
+#include "noexport/file_begin.hpp"
+
 namespace aa::noexport {
 
 #ifndef AA_HAS_CPP20
@@ -64,7 +66,7 @@ struct descriptor_t {
 #endif
   }
 #ifdef AA_HAS_CPP20
-  AA_CONSTEXPR std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
+  AA_CONSTEXPR_TYPE_DESCRIPTOR std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
 #ifdef AA_CANT_GET_TYPENAME
     return (uintptr_t)_value <=> (uintptr_t)other._value;
 #else
@@ -94,19 +96,6 @@ concept poly_traits = requires(T val, int some_val) {
                       };
 
 #endif
-
-#define AA_IS_VALID(STRUCT_NAME, EXPR)                                                       \
-  template <typename U>                                                                      \
-  struct STRUCT_NAME {                                                                       \
-   private:                                                                                  \
-    template <typename T, typename = std::void_t<EXPR>>                                      \
-    static std::true_type check_fn_impl(int);                                                \
-    template <typename>                                                                      \
-    static std::false_type check_fn_impl(...);                                               \
-                                                                                             \
-   public:                                                                                   \
-    static constexpr inline bool value = decltype(check_fn_impl<std::decay_t<U>>(0))::value; \
-  }
 
 AA_IS_VALID(is_polymorphic, typename T::aa_polymorphic_tag);
 template <typename T>
@@ -159,3 +148,4 @@ struct hash<::aa::descriptor_t> {
 };
 
 }  // namespace std
+#include "noexport/file_end.hpp"

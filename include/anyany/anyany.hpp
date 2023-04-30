@@ -14,12 +14,15 @@
 
 */
 
-#include <cassert>  // assert
-#include <exception>
-#include <utility>  // std::exchange
+#include <cassert>    // assert
+#include <exception>  // for any_cast(std::exception)
+#include <utility>    // std::exchange
+
+#include "type_descriptor.hpp"
 
 #include "noexport/anyany_details.hpp"
-#include "type_descriptor.hpp"
+
+#include "noexport/file_begin.hpp"
 
 namespace aa {
 
@@ -1600,14 +1603,5 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 };
 
 }  // namespace std
-#undef AA_ALWAYS_INLINE
-#undef AA_CONSTEVAL_CPP20
-#undef AA_CONSTEXPR
-#undef AA_HAS_CPP20
-#undef AA_IF_HAS_CPP20
-#undef AA_CONCEPT
-#undef AA_MSVC_EBO
-#undef AA_MSVC_WORKAROUND
-#undef AA_UNREACHABLE
-#undef AA_CANT_GET_TYPENAME
-#undef AA_IS_VALID
+
+#include "noexport/file_end.hpp"

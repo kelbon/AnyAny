@@ -1,9 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <type_traits>
+#include <utility>  // forward
 
-#include "anyany/type_descriptor.hpp"
-#include "anyany/anyany_macro.hpp"
+#include "common.hpp"
+
+#include "file_begin.hpp"
 
 namespace aa::noexport {
 
@@ -205,3 +208,4 @@ constexpr inline bool is_fits_in_soo_buffer =
     std::is_nothrow_move_constructible_v<std::decay_t<T>> && sizeof(std::decay_t<T>) <= SooS;
 
 }  // namespace aa::noexport
+#include "file_end.hpp"

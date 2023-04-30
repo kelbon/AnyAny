@@ -2,15 +2,17 @@
 
 #include <array>
 #include <algorithm>
+#include <functional>
 #include <cassert>
 
-#include "type_descriptor.hpp"
-#include "noexport/anyany_details.hpp"
+#include "anyany_details.hpp"
+
+#include "file_begin.hpp"
 
 namespace aa::noexport {
 // returns false if it is ill-formed to pass non-const reference into function which accepts T
 template <typename T>
-AA_CONSTEVAL_CPP20 bool is_const_arg() {
+constexpr bool is_const_arg() {
   return !std::is_reference_v<T> || std::is_const_v<std::remove_reference_t<T>>;
 }
 template <typename T>
@@ -77,3 +79,4 @@ struct flat_map {
 };
 
 }  // namespace aa::noexport
+#include "file_end.hpp"

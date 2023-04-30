@@ -1,6 +1,9 @@
 #pragma once
 
 #include <anyany/anyany.hpp>
+#include <anyany/anyany_macro.hpp>  // 'anyany_method' macro
+
+#include <iostream>
 
 ///
 /// This example shows how to use aa::poly_ref / ptr
@@ -13,7 +16,7 @@
 namespace example {
 
 /*
-Macros generates +- this code
+Macro generates +- this code, but better
 
 template <typename T>
 struct Print {
@@ -59,7 +62,7 @@ void statefull_print(const aa::stateful::cref<print>& ref) {
 
 void example_polyref() {
   struct no_print {};
-  // trait created from macro enables SFINAE friend construct
+  // Method created from 'anyany_method' macro enables SFINAE friend construct
   static_assert(!std::is_constructible_v<example::any_printable, no_print>);
   example::any_printable value = std::string{"Im a polymorphic value"};
   example::may_be_print(&value);  // operator& of poly_ref returns poly_ptr

@@ -18,6 +18,8 @@
 #include "type_descriptor.hpp"
 #include "noexport/visit_invoke_details.hpp"
 
+#include "noexport/file_begin.hpp"
+
 namespace aa {
 
 // -- Result -- .resolve method will return std::optional<Result> by converting Foos results to this type
@@ -164,3 +166,4 @@ constexpr inline auto make_visit_invoke(Foos... f) {
 }
 
 }  // namespace aa
+#include "noexport/file_end.hpp"

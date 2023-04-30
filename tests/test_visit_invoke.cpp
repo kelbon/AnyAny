@@ -1,4 +1,7 @@
-#include "visit_invoke_example.hpp"
+#include <anyany/visit_invoke.hpp>
+#include <anyany/utility.hpp>
+
+#include <string>
 
 struct spaceship {
   std::string s = "hello";
@@ -30,8 +33,6 @@ constexpr inline auto vars_collision = aa::make_visit_invoke<std::string, aa::st
     case_sp, case_ps, [](int) { return "int"; });
 
 int main() {
-  aa::example::multidispatch_usage();
-  aa::example::multidispatch_usage2();
   using var_type = std::variant<int, spaceship, planet, double, char>;
   var_type var1 = spaceship{};
   const var_type var2 = planet{};
