@@ -353,8 +353,8 @@ size_t TestInvoke() {
   error_if(aa::invoke<barx>(f1, 3, "hello world") != "bar called");
   error_if(aa::invoke<barx>(f2, 3, "hello world") != "bar called");
   error_if(aa::invoke<barx>(f3, 3, "hello world") != "bar called");
-  static_assert(aa::const_method<foox>);
-  static_assert(!aa::const_method<barx>);
+  static_assert(aa::is_const_method_v<foox>);
+  static_assert(!aa::is_const_method_v<barx>);
   error_if(aa::invoke<foox>(std::as_const(f3)) != 1.f);
   f0 = f2 = f1 = f0 = f0 = f0 = std::move(f1) = f2 = f3 = any_fooable{} = f3 = std::move(f2) = f1 = f2 = f3 =
       f3 = f1 = f2;
@@ -681,7 +681,20 @@ struct Circle {
   int x;
   std::string y;
 };
+
+void anyany_concepts_test() {
+#if __cplusplus >= 202002L
+  static_assert(aa::method<aa::copy_with<>>);
+  static_assert(aa::pseudomethod<aa::copy_with<>>);
+  static_assert(!aa::regular_method<aa::copy_with<>>);
+  static_assert(aa::method<Draw>);
+  static_assert(!aa::pseudomethod<Draw>);
+  static_assert(aa::regular_method<Draw>);
+#endif
+}
+
 int main() {
+  anyany_concepts_test();
   aa::any_with<print, aa::copy, print> duplicator;
   duplicator = 5;
   aa::invoke<print>(duplicator);

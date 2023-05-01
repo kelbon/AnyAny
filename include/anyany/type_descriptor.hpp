@@ -17,18 +17,6 @@
 
 #include "noexport/file_begin.hpp"
 
-namespace aa::noexport {
-
-#ifndef AA_HAS_CPP20
-template <typename T>
-struct type_identity {
-  using type = T;
-};
-#else
-using std::type_identity;
-#endif
-
-}  // namespace aa::noexport
 namespace aa {
 
 // Values of this type represent unique id of type,

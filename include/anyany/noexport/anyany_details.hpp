@@ -10,6 +10,15 @@
 
 namespace aa::noexport {
 
+#ifndef AA_HAS_CPP20
+template <typename T>
+struct type_identity {
+  using type = T;
+};
+#else
+using std::type_identity;
+#endif
+
 // this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
 template <typename T, size_t>
 struct value_in_tuple {
@@ -92,7 +101,7 @@ struct any_method_traits {
 
 // Note: for signature && added to arguments for forwarding
 template <typename R, typename Self, typename... Args>
-struct any_method_traits<R (*)(Self, Args...)> {
+struct any_method_traits<R(Self, Args...)> {
   using self_sample_type = Self;
   using result_type = R;
   static constexpr bool is_const =
@@ -103,7 +112,7 @@ struct any_method_traits<R (*)(Self, Args...)> {
 };
 // noexcept version
 template <typename R, typename Self, typename... Args>
-struct any_method_traits<R (*)(Self, Args...) noexcept> {
+struct any_method_traits<R(Self, Args...) noexcept> {
   using self_sample_type = Self;
   using result_type = R;
   static constexpr bool is_const =
@@ -195,11 +204,15 @@ template <typename, typename>
 auto get_plugin(...) -> void;
 
 template <typename Method>
-auto get_method_signature_ptr(int) -> typename Method::signature_type*;
+auto get_method_signature(int) -> type_identity<typename Method::signature_type>;
 template <typename Method>
-auto get_method_signature_ptr(bool) -> decltype(&Method::template do_invoke<erased_self_t>);
+auto get_method_signature(bool)
+    -> type_identity<std::remove_pointer_t<decltype(&Method::template do_invoke<erased_self_t>)>>;
 template <typename Method>
-auto get_method_signature_ptr(...) -> typename Method::value_type;
+auto get_method_signature(...) -> type_identity<typename Method::value_type>;
+
+template<typename Method>
+using signature_t = typename decltype(get_method_signature<Method>(0))::type;
 
 AA_IS_VALID(has_has_value, decltype(std::declval<T>().has_value()));
 
@@ -221,6 +234,16 @@ AA_ALWAYS_INLINE void relocate(T* src, T* dest) noexcept {
     AA_UNREACHABLE;
   }
 }
+
+#ifdef AA_HAS_CPP20
+
+template <typename T>
+concept has_signature = requires { typename signature_t<T>; };
+
+template <typename T>
+concept signature_is_function = std::is_function_v<signature_t<T>>;
+
+#endif
 
 }  // namespace aa::noexport
 #include "file_end.hpp"
