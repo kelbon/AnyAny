@@ -22,21 +22,14 @@ using std::type_identity;
 // this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
 template <typename T, size_t>
 struct value_in_tuple {
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] T value{};
-#if __clang__
-#pragma clang diagnostic pop
-#endif
+  T value{};
 };
 
 template <typename...>
 struct tuple_base {};
 
 template <size_t... Is, typename... Ts>
-struct AA_MSVC_EBO tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
+struct tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
   constexpr tuple_base() noexcept = default;
   constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
   }
@@ -52,11 +45,11 @@ struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
 
 template <size_t I, typename U>
 constexpr U& get(value_in_tuple<U, I>& v) noexcept {
-  return v.value;
+    return v.value;
 }
 template <size_t I, typename U>
 constexpr const U& get(const value_in_tuple<U, I>& v) noexcept {
-  return v.value;
+    return v.value;
 }
 
 template <size_t I, typename... Args>

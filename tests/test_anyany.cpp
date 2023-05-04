@@ -12,6 +12,9 @@
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
+#define error_if(Cond) error_count += static_cast<bool>((Cond))
+#define TEST(NAME) size_t TEST##NAME(size_t error_count = 0)
+
 template <typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template <typename Alloc = std::allocator<char>>
@@ -66,8 +69,9 @@ struct nomove {
   nomove(nomove&&) = delete;
   void operator=(nomove&&) = delete;
 };
-#define error_if(Cond) error_count += static_cast<bool>((Cond));
-size_t TestConstructors() {
+
+anyany_method(boo, (const& self, int i) requires(self.boo(i))->int);
+TEST(constructors) {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
   ilist.emplace<std::vector<int>>({1, 2, 3});
   // problems with emplaceing std::array(aggregate construct) because of construct_at
@@ -76,8 +80,17 @@ size_t TestConstructors() {
   nomove_any a0(std::in_place_type<nomove>, 5, Xy);
   a0.emplace<int>();
   a0.reset();
-
-  size_t error_count = 0;
+  struct boobl {
+    mutable int x = 0;
+    int boo(int i) const {
+      x = i;
+      return i * 2;
+    }
+  };
+  boobl bval;
+  aa::any_with<boo> l{std::in_place_type<aa::poly_ref<boo>>, bval};
+  error_if(l.boo(15) != 30);
+  error_if(bval.x != 15);
   std::mt19937 generator{std::random_device{}()};
   // MOVE ONLY
   {
@@ -250,6 +263,45 @@ size_t TestConstructors() {
   error_if(leaked_resource_count != 0);
   return error_count;
 }
+
+TEST(special_member_functions) {
+  static_assert(!std::is_constructible_v<aa::any_with<aa::copy>, aa::poly_ref<aa::copy>>);
+  // transmutate ctor
+  static_assert(std::is_constructible_v<aa::any_with<aa::copy>, aa::any_with<aa::copy, aa::equal_to>>);
+  const std::vector<int> vec(100, 5);
+  auto do_test = [&](auto x) {
+    std::vector<decltype(x)> vec_anys;
+    vec_anys.reserve(5);
+    vec_anys.emplace_back(vec);
+    vec_anys.emplace_back(aa::allocator_arg, aa::default_allocator{}, vec);
+    vec_anys.emplace_back(std::in_place_type<std::vector<int>>, vec);
+    vec_anys.emplace_back(aa::force_stable_pointers, vec);
+    vec_anys.emplace_back(aa::force_stable_pointers, std::in_place_type<std::vector<int>>, vec);
+    error_if(!vec_anys[3].is_stable_pointers());
+    error_if(!vec_anys[4].is_stable_pointers());
+    error_if(std::any_of(begin(vec_anys), end(vec_anys), [](auto& x) { return !x.has_value(); }));
+    error_if(std::any_of(begin(vec_anys), end(vec_anys), [&](auto& x) { return x != vec_anys.front(); }));
+    error_if(std::any_of(begin(vec_anys), end(vec_anys),
+                         [&](auto& x) { return aa::any_cast<std::vector<int>&>(x) != vec; }));
+    auto m = std::move(vec_anys.front());
+    error_if(*aa::any_cast<std::vector<int>>(&m) != vec);
+    error_if(vec_anys.front().has_value());
+    vec_anys.front() = std::move(m);
+    error_if(*aa::any_cast<std::vector<int>>(&vec_anys.front()) != vec);
+    error_if(m.has_value());
+    if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
+      auto vec_copy = vec_anys;
+      error_if(vec_copy != vec_anys);
+    }
+  };
+  do_test(aa::any_with<aa::copy, aa::equal_to>{});
+  do_test(aa::any_with<aa::move, aa::equal_to>{});
+  do_test(aa::any_with<aa::copy, aa::move, aa::move, aa::copy, aa::equal_to>{});
+  // uses only move from copy_with<...> Method
+  do_test(aa::any_with<aa::copy_with<aa::unreachable_allocator>, aa::equal_to>{});
+  return error_count;
+}
+
 void noallocate_test() {
   using any_noallocate = aa::basic_any_with<aa::unreachable_allocator, aa::default_any_soos,
                                             aa::copy_with<aa::unreachable_allocator>>;
@@ -270,8 +322,7 @@ static_assert(
                    aa::const_poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
 
-size_t TestCompare() {
-  size_t error_count = 0;
+TEST(compare) {
   any_compare v1(5.);
   error_if((v1 <=> v1) != std::partial_ordering::equivalent);
   error_if(v1 != v1);
@@ -289,7 +340,7 @@ size_t TestCompare() {
   return error_count;
 }
 #else
-size_t TestCompare() {
+size_t TESTcompare() {
   return 0;
 }
 #endif
@@ -325,8 +376,7 @@ struct barx {
 
 using any_fooable = aa::any_with<aa::type_info, aa::copy, foox, barx>;
 
-size_t TestAnyCast() {
-  size_t error_count = 0;
+TEST(any_cast) {
   any_fooable v0 = destroy_me<3>{};
   v0.foo();
   aa::invoke<foox>(v0);
@@ -342,8 +392,7 @@ size_t TestAnyCast() {
   return error_count;
 }
 
-size_t TestInvoke() {
-  size_t error_count = 0;
+TEST(invoke) {
   any_fooable f0(std::in_place_type<destroy_me<5>>);
   any_fooable f1(std::in_place_type<destroy_me<50>>);
   any_fooable f2(std::in_place_type<destroy_me<500>>);
@@ -361,8 +410,7 @@ size_t TestInvoke() {
   return error_count;
 }
 
-size_t TestCasts() {
-  size_t error_count = 0;
+TEST(any_cast2) {
   any_copyable<> cp;
   error_if(aa::any_cast<int>(std::addressof(cp)) != nullptr);
   cp = 5;
@@ -396,8 +444,6 @@ size_t TestCasts() {
 using any_hashable = aa::any_with<aa::hash, aa::equal_to, aa::copy>;
 
 using xyz = aa::basic_any_with<std::allocator<std::byte>, 8, aa::copy, aa::equal_to>;
-
-// EXAMPLE WITH POLYMORPHIC_PTR
 
 struct Drawi {
   template <typename T>
@@ -496,21 +542,19 @@ struct kekabl1 {
     return s + std::string(i, (char)k);
   }
 };
-void transmute_test() {
+TEST(transmutate_ctors) {
   aa::any_with<aa::type_info, aa::move, aa::copy> v1;
   v1 = std::string("abc");
-  if ((uintptr_t)(&v1).raw() != (uintptr_t)(std::addressof(v1)) + 16)
-    throw false;
+  error_if((uintptr_t)(&v1).raw() != (uintptr_t)(std::addressof(v1)) + 16);
   auto xx = v1;
   aa::any_with<aa::type_info, aa::move> v2 = v1;
-  if ((uintptr_t)(&v2).raw() == (uintptr_t)(&v1).raw())
-    throw false;
+  error_if((uintptr_t)(&v2).raw() == (uintptr_t)(&v1).raw());
   auto copyv2 = std::move(v2);
   auto copyv1 = v1;
-  if (copyv2.type_descriptor() != copyv1.type_descriptor())
-    throw false;
+  error_if(copyv2.type_descriptor() != copyv1.type_descriptor());
+  return error_count;
 }
-void stateful_test() {
+TEST(stateful) {
   int i = 5;
   aa::cref<aa::copy, aa::move, aa::equal_to> r = i;
   aa::stateful::cref sr = r;
@@ -519,46 +563,38 @@ void stateful_test() {
   aa::stateful::cref<aa::move> sr2 = sr;
   kekabl1 val;
   aa::stateful::ref<aa::copy, Kekab, aa::move> rr = val;
-  if (rr.Kekab(4, 'a') != "abcaaaa")
-    throw false;
+  error_if(rr.Kekab(4, 'a') != "abcaaaa");
   auto copyrr = rr;
-  if (copyrr.Kekab(4, 'a') != "abcaaaa")
-    throw false;
+  error_if(copyrr.Kekab(4, 'a') != "abcaaaa");
   aa::stateful::ref<Kekab> rrkk = rr;
-  if (rrkk.Kekab(4, 'a') != "abcaaaa")
-    throw false;
+  error_if(rrkk.Kekab(4, 'a') != "abcaaaa");
   aa::stateful::cref crrkk = rrkk;
-  if (crrkk.Kekab(4, 'a') != "abcaaaa")
-    throw false;
+  error_if(crrkk.Kekab(4, 'a') != "abcaaaa");
   aa::stateful::cref<Kekab> crrkk2 = rr;
-  if (crrkk2.Kekab(4, 'a') != "abcaaaa")
-    throw false;
+  error_if(crrkk2.Kekab(4, 'a') != "abcaaaa");
   (void)sr1, (void)sr2;
+  return error_count;
 }
 
 anyany_method(print, (const& self) requires(std::cout << self << std::endl)->void);
 
-void ptr_behavior_test() {
+TEST(ptr_behavior) {
   std::string s = "hello";
   int x = 10;
   aa::poly_ptr<print> ptr;
-  if (ptr.raw() != nullptr)
-    throw false;
-  if (ptr.raw_vtable_ptr() != nullptr)
-    throw false;
+  error_if(ptr.raw() != nullptr);
+  error_if(ptr.raw_vtable_ptr() != nullptr);
   aa::poly_ptr<aa::type_info, print> ptr1 = &s;
   ptr1->print();
   aa::poly_ptr<aa::type_info, print> ptr2 = &x;
   ptr2->print();
   ptr1 = ptr2;
   ptr2 = nullptr;
-  if (ptr2)
-    throw false;
-  if (ptr2.type_descriptor() != aa::descriptor_v<void>)
-    throw false;
+  error_if(ptr2);
+  error_if(ptr2.type_descriptor() != aa::descriptor_v<void>);
   aa::const_poly_ptr p = ptr1;
-  if (p != ptr1)
-    throw false;
+  error_if(p != ptr1);
+  return error_count;
 }
 template <typename T, typename U>
 using ac_res = decltype(aa::any_cast<T>(std::declval<U>()));
@@ -616,8 +652,7 @@ anyany_method(change_i, (self) requires(self.i = 4)->void);
 struct x {
   int i = 0;
 };
-size_t TestTypeDescriptorPluginsInteraction() {
-  size_t error_count = 0;
+TEST(type_descriptor_and_plugins_interaction) {
 #if __cplusplus >= 202002
   int i = 10;
   auto check = [&](auto ref) {
@@ -682,19 +717,84 @@ struct Circle {
   std::string y;
 };
 
+anyany_pseudomethod(test_pseudomethod, requires(aa::descriptor_v<Self>)->aa::descriptor_t);
+struct empty_struct_t {};
+template<typename>
+anyany_pseudomethod(empty_value_pseudomethod, requires(empty_struct_t{})->empty_struct_t);
+
 void anyany_concepts_test() {
 #if __cplusplus >= 202002L
+  aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
+  (void)compiles;
+  static_assert(aa::method<empty_value_pseudomethod<int>>);
+  static_assert(aa::pseudomethod<empty_value_pseudomethod<int>>);
+  static_assert(!aa::regular_method<empty_value_pseudomethod<int>>);
+  static_assert(aa::const_method<empty_value_pseudomethod<int>>);
+  static_assert(aa::method<test_pseudomethod>);
+  static_assert(aa::pseudomethod<test_pseudomethod>);
+  static_assert(!aa::regular_method<test_pseudomethod>);
+  static_assert(aa::const_method<test_pseudomethod>);
   static_assert(aa::method<aa::copy_with<>>);
   static_assert(aa::pseudomethod<aa::copy_with<>>);
   static_assert(!aa::regular_method<aa::copy_with<>>);
   static_assert(aa::method<Draw>);
   static_assert(!aa::pseudomethod<Draw>);
   static_assert(aa::regular_method<Draw>);
+  static_assert(!aa::method<int>);
+  static_assert(!aa::pseudomethod<int>);
+  static_assert(!aa::regular_method<int>);
+  static_assert(!aa::method<void>);
+  static_assert(!aa::pseudomethod<void>);
+  static_assert(!aa::regular_method<void>);
+  static_assert(!aa::const_method<void>);
+  static_assert(!aa::const_method<int>);
+  static_assert(!aa::const_method<aa::move>);
+  static_assert(aa::const_method<aa::copy>);
+  static_assert(aa::const_method<aa::destroy>);
+  static_assert(aa::const_method<print>);
+  static_assert(!aa::const_method<visit<int>>);
+  static_assert(aa::method<visit<int>>);
+  static_assert(aa::regular_method<visit<int>>);
+  static_assert(!aa::pseudomethod<visit<int>>);
 #endif
 }
 
+template<typename T>
+using ebop = empty_value_pseudomethod<T>;
+template<int I>
+anyany_pseudomethod(m2, requires(I)->int);
+
+TEST(subtable_ptr) {
+  aa::vtable<ebop<int>, aa::type_info, ebop<float>> tbl{
+      {}, aa::descriptor_v<int>, {}};
+  error_if(aa::get<1>(*aa::subtable_ptr<ebop<int>, aa::type_info>(&tbl)) != aa::descriptor_v<int>);
+  error_if(aa::get<0>(*aa::subtable_ptr<aa::type_info, ebop<float>>(&tbl)) != aa::descriptor_v<int>);
+  aa::vtable<> tbl2{};
+  auto* x = aa::subtable_ptr<>(&tbl2);
+  error_if(x != &tbl2);
+  using m1 = ebop<void>;
+  auto table = aa::vtable_for<int, m2<1>, m2<2>, m2<1>, ebop<int>, m1, m2<1>, m2<2>, m1, m1>;
+  error_if(((void*)aa::subtable_ptr<m2<1>, m2<2>>(&table) != (void*)&table));
+  auto* p = aa::subtable_ptr<m2<1>, m2<2>, m1>(&table);
+  error_if(aa::get<0>(*p) != 1);
+  error_if(aa::get<1>(*p) != 2);
+  auto* p_end1 = (char*)aa::subtable_ptr<m1, m1>(&table);
+  auto* p_end2 = (char*)aa::subtable_ptr<m2<2>, m1, m1>(&table);
+  static_assert(aa::noexport::find_subsequence(
+                    aa::type_list<m2<2>, m1, m1>{},
+                    aa::type_list<m2<1>, m2<2>, m2<1>, ebop<int>, m1, m2<1>, m2<2>, m1, m1>{}) == 6);
+  static_assert(aa::noexport::find_subsequence(
+                    aa::type_list<m1, m1>{},
+                    aa::type_list<m2<1>, m2<2>, m2<1>, ebop<int>, m1, m2<1>, m2<2>, m1, m1>{}) == 7);
+  error_if(std::abs(p_end2 - p_end1) != sizeof(typename m2<2>::value_type));
+  return error_count;
+}
+
 int main() {
+  // compile tim checks
   anyany_concepts_test();
+  any_cast_test();
+  noallocate_test();
   aa::any_with<print, aa::copy, print> duplicator;
   duplicator = 5;
   aa::invoke<print>(duplicator);
@@ -703,10 +803,7 @@ int main() {
   if (aa::any_cast<x>(&val_change_i)->i != 0)
     return -114;
   static_assert(!std::is_trivially_copyable_v<aa::any_with<aa::move, aa::copy>>);
-  ptr_behavior_test();
-  noallocate_test();
-  transmute_test();
-  stateful_test();
+
   any_kekable_ kek_0 = kekabl1{"str"};
   aa::stateful::ref st_r = *&kek_0;
   aa::stateful::cref st_cr = *&kek_0;
@@ -827,8 +924,8 @@ int main() {
 #if __cplusplus >= 202002
     aa::vtable<aa::type_info, aa::copy, aa::type_info> tbl;
     tbl.change<aa::type_info>(aa::descriptor_v<int>);
-    if (aa::noexport::get<0>(tbl.table) != aa::descriptor_v<int> ||
-        aa::noexport::get<2>(tbl.table) != aa::descriptor_v<int>)
+    if (aa::noexport::get<0>(tbl) != aa::descriptor_v<int> ||
+        aa::noexport::get<2>(tbl) != aa::descriptor_v<int>)
       return -10;
 #endif
     // create
@@ -962,6 +1059,7 @@ int main() {
   set.emplace(5);
   set.emplace(5.);
   srand(time(0));
-  return TestConstructors() + TestAnyCast() + TestCompare() + TestInvoke() + TestCasts() +
-         TestTypeDescriptorPluginsInteraction();
+  return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
+         TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
+         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr();
 }

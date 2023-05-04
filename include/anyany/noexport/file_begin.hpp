@@ -36,11 +36,14 @@ Try set it manually (see anyany/CMakeLists.txt for example)
 #endif
 // Yes, msvc do not support EBO which is already GUARANTEED by C++ standard for ~13 years
 // MSVC cannot compile 99% of good code without workarounds, it is just unusable compiler
-#if defined(_MSC_VER) && !defined(__clang__)
+#ifdef _MSC_VER
 #define AA_MSVC_EBO __declspec(empty_bases)
-#define AA_MSVC_WORKAROUND(...) __VA_ARGS__
 #else
 #define AA_MSVC_EBO
+#endif
+#if defined(_MSC_VER) && !defined(__clang__)
+#define AA_MSVC_WORKAROUND(...) __VA_ARGS__
+#else
 #define AA_MSVC_WORKAROUND(...)
 #endif
 

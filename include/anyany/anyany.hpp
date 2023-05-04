@@ -56,7 +56,7 @@ constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 #ifdef AA_HAS_CPP20
 
 // pseudomethod is just a value, which is stored in vtable
-template<typename T>
+template <typename T>
 concept pseudomethod = noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
                        requires {
                          typename T::value_type;
@@ -67,7 +67,7 @@ concept pseudomethod = noexport::has_signature<T> && (!noexport::signature_is_fu
                          // failure)
                        };
 // presented as function ptr in vtable
-template<typename T>
+template <typename T>
 concept regular_method = noexport::has_signature<T> && noexport::signature_is_function<T>
     /* && requires { T::do_invoke<X>,}
     where 'do_invoke' is a static addressable function template and X - some type for which 'do_invoke'
@@ -75,9 +75,9 @@ concept regular_method = noexport::has_signature<T> && noexport::signature_is_fu
     */
     ;
 
-template<typename T>
+template <typename T>
 concept method = regular_method<T> || pseudomethod<T>;
-template<typename T>
+template <typename T>
 concept const_method = method<T> && is_const_method_v<T>;
 #define anyany_method_concept method
 #else
@@ -246,8 +246,13 @@ struct hash {
 // ######################## VTABLE TYPE ########################
 
 template <anyany_method_concept... Methods>
-struct vtable {
-  noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> table;
+struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> {
+ private:
+  using base_t = noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...>;
+
+ public:
+  using base_t::base_t;
+  using base_t::operator=;
 
   template <typename Method>
   static inline constexpr bool has_method = noexport::contains_v<Method, Methods...>;
@@ -258,11 +263,11 @@ struct vtable {
     requires(noexport::contains_v<Method, Methods...>)
   constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
       noexcept(new_value = new_value)) {
-    using do_not_set = decltype([](auto&&...) {});
+    using do_not_set = decltype([](auto&&...){});
     using do_set = decltype([](const auto& src, auto& dest) { dest = src; });
     [&]<size_t... Is>(std::index_sequence<Is...>) {
       (..., std::conditional_t<std::is_same_v<Method, Methods>, do_set, do_not_set>{}(
-                new_value, noexport::get<Is>(table)));
+                new_value, noexport::get<Is>(*this)));
     }
     (std::index_sequence_for<Methods...>{});
   }
@@ -270,20 +275,30 @@ struct vtable {
   template <typename Method, typename... Args>
   AA_ALWAYS_INLINE result_t<Method> invoke(Args&&... args) const {
     static_assert(has_method<Method>);
-    return noexport::get<noexport::number_of_first<Method, Methods...>>(table)(std::forward<Args>(args)...);
+    return noexport::get<noexport::number_of_first<Method, Methods...>>(*this)(std::forward<Args>(args)...);
   }
   template <typename Method>
   AA_ALWAYS_INLINE constexpr result_t<Method> invoke() const
       noexcept(std::is_nothrow_copy_constructible_v<result_t<Method>>) {
     static_assert(std::is_same_v<args_list<Method>, noexport::aa_pseudomethod_tag>);
-    return noexport::get<noexport::number_of_first<Method, Methods...>>(table);
+    return noexport::get<noexport::number_of_first<Method, Methods...>>(*this);
   }
 };
 
+template <size_t I, anyany_method_concept... Methods>
+AA_ALWAYS_INLINE constexpr decltype(auto) get(vtable<Methods...>& v) noexcept {
+  return noexport::get<I>(v);
+}
+template <size_t I, anyany_method_concept... Methods>
+AA_ALWAYS_INLINE constexpr decltype(auto) get(const vtable<Methods...>& v) noexcept {
+  return noexport::get<I>(v);
+}
+
 namespace noexport {
-// It is msvc workaround to make it struct(this 'compiler' cannot deduce types in call)
+
 template <typename... ToMethods>
 struct get_subtable_ptr_t {
+    // TODO после добавления compount методов нужно будет здесь flat делать переданных юзером методов...(ToMethods...)
   template <anyany_method_concept... FromMethods,
             std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
                                                          type_list<FromMethods...>{}) != npos),
@@ -292,8 +307,22 @@ struct get_subtable_ptr_t {
     assert(ptr != nullptr);
     constexpr std::size_t Index =
         noexport::find_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{});
-    const auto* new_ptr = std::addressof(noexport::get<Index>(ptr->table));
+    const auto* new_ptr = std::addressof(get<Index>(*ptr));
     return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
+  }
+  template <anyany_method_concept... FromMethods,
+            std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
+                                                         type_list<FromMethods...>{}) != npos),
+                             int> = 0>
+  vtable<ToMethods...>* operator()(vtable<FromMethods...>* ptr) const noexcept {
+    const vtable<FromMethods...>* cptr = ptr;
+    return const_cast<vtable<ToMethods...>*>((*this)(cptr));
+  }
+  constexpr const vtable<ToMethods...>* operator()(const vtable<ToMethods...>* ptr) const noexcept {
+    return ptr;
+  }
+  constexpr vtable<ToMethods...>* operator()(vtable<ToMethods...>* ptr) const noexcept {
+    return ptr;
   }
 };
 }  // namespace noexport
@@ -305,7 +334,7 @@ constexpr inline noexport::get_subtable_ptr_t<ToMethods...> subtable_ptr = {};
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, anyany_method_concept... Methods>
-constexpr vtable<Methods...> vtable_for{{&invoker_for<T, Methods>::value...}};
+constexpr vtable<Methods...> vtable_for{&invoker_for<T, Methods>::value...};
 
 // always decays type
 template <typename T, anyany_method_concept... Methods>
@@ -686,8 +715,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
-    result.vtable_value = vtable<Methods...>{
-        {noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_ptr(r)->table)...}};
+    result.vtable_value =
+        vtable<Methods...>{get<noexport::number_of_first<Methods, Methods2...>>(*mate::get_vtable_ptr(r))...};
     return result;
   }
 
@@ -697,7 +726,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value = vtable<Methods...>{
-        noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r).table)...};
+        get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r))...};
     return result;
   }
 
@@ -710,7 +739,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
                        int> = 0>
   constexpr ref(T& value) noexcept
       : value_ptr(std::addressof(value)),
-        vtable_value(vtable<Methods...>{{&invoker_for<std::decay_t<T>, Methods>::value...}}) {
+        vtable_value(vtable<Methods...>{&invoker_for<std::decay_t<T>, Methods>::value...}) {
     static_assert(!std::is_function_v<T> && !std::is_array_v<T>);
   }
 
@@ -752,8 +781,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
   constexpr cref(const T& value) noexcept
-      : value_ptr(std::addressof(value)),
-        vtable_value(vtable<Methods...>{{&invoker_for<std::decay_t<T>, Methods>::value...}}) {
+      : value_ptr(std::addressof(value)), vtable_value{&invoker_for<std::decay_t<T>, Methods>::value...} {
     static_assert(!std::is_function_v<T> && !std::is_array_v<T>);
   }
 
@@ -775,7 +803,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value = vtable<Methods...>{
-        {noexport::get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r).table)...}};
+        get<noexport::number_of_first<Methods, Methods2...>>(mate::get_vtable_value(r))...};
     return result;
   }
 

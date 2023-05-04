@@ -39,10 +39,10 @@ using return_type_of = typename get_return_type<Signature>::type;
 #define AA_INJECT_SELF_IN_PARENS(...) (Self __VA_ARGS__)
 #define AA_INJECT_INTERFACE_T_IN_PARENS(...) (int __VA_ARGS__)
 
-// usage: anyany_method(<METHOD_NAME>, (<SELF ARGUMENT>, <METHOD_ARGS...>) requires(<EXPR>) -> <RETURN_TYPE>);
+// usage: anyany_method(<METHOD_NAME>, (<SELF_ARGUMENT>, <METHOD_ARGS...>) requires(<EXPR>) -> <RETURN_TYPE>);
 // where
 // * <METHOD_NAME>    - is a name, which will be used later in invoke<NAME> or any_with<NAME...>
-// * <SELF ARGUMENT> - is a '&' 'const &' or just nothing('') followed by self-argument name
+// * <SELF_ARGUMENT> - is a '&' 'const &' or just nothing('') followed by self-argument name
 // * <METHOD_ARGS...> - set of Method parameters
 // * <EXPR>          - what will Method do
 // * <RETURN_TYPE>   - return type of Method. Must be non-dependent type
@@ -127,3 +127,26 @@ using return_type_of = typename get_return_type<Signature>::type;
       return static_cast<return_type>(AA_GET_REQUIREMENT(__VA_ARGS__));                                     \
     }                                                                                                       \
   }
+
+#define AA_IMPL_ANYANY_PSEUDOMETHOD(NAME, ...)                                                           \
+  struct NAME {                                                                                          \
+   private:                                                                                              \
+    using fn_t = auto() AA_GET_ALL_AFTER_REQUIREMENT(__VA_ARGS__);                                       \
+                                                                                                         \
+   public:                                                                                               \
+    using value_type = decltype(static_cast<fn_t*>(0)());                                                \
+    template <typename Self>                                                                             \
+    static constexpr auto do_value()                                                                     \
+        -> decltype(static_cast<value_type>(AA_GET_REQUIREMENT(__VA_ARGS__)), static_cast<fn_t*>(0)()) { \
+      return static_cast<value_type>(AA_GET_REQUIREMENT(__VA_ARGS__));                                   \
+    }                                                                                                    \
+  }
+// usage: anyany_pseudomethod(<METHOD_NAME>, requires(<EXPR>) -> <RETURN_TYPE>);
+// see 'anyany_method' macro for explanation what arguments mean
+// <EXPR> may use 'Self' for access to self type
+//
+// Declares pseudomethod(value in vtable, invoke<NAME> will just return this value)
+// do not declares plugin(you can still add it by creating specialization aa::plugin<Any, NAME>)
+// example:
+//  anyany_pseudomethod(type_info, requires(aa::descriptor_v<T>) -> aa::descriptor_t)
+#define anyany_pseudomethod(NAME, ...) AA_IMPL_ANYANY_PSEUDOMETHOD(NAME, () __VA_ARGS__)
