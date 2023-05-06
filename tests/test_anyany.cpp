@@ -793,6 +793,7 @@ TEST(subtable_ptr) {
 }
 
 int main() {
+  std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile tim checks
   anyany_concepts_test();
   any_cast_test();
