@@ -276,16 +276,25 @@ struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_sig
   static inline constexpr bool has_method = noexport::contains_v<Method, Methods...>;
 
 #ifdef AA_HAS_CPP20
+ private:
+  struct do_change_one {
+    template <typename T>
+    constexpr void operator()(const T& src, T& dest) {
+      dest = src;
+    }
+    template <typename T, typename U>
+    constexpr void operator()(const T&, const U&) {
+    }
+  };
+
+ public:
   // sets new value to ALL values of 'Method' in this table
   template <method Method>
     requires(noexport::contains_v<Method, Methods...>)
   constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
       noexcept(new_value = new_value)) {
-    using do_not_set = decltype([](auto&&...){});
-    using do_set = decltype([](const auto& src, auto& dest) { dest = src; });
     [&]<size_t... Is>(std::index_sequence<Is...>) {
-      (..., std::conditional_t<std::is_same_v<Method, Methods>, do_set, do_not_set>{}(
-                new_value, noexport::get<Is>(*this)));
+      (do_change_one{}(new_value, noexport::get<Is>(*this)), ...);
     }
     (std::index_sequence_for<Methods...>{});
   }
