@@ -673,6 +673,8 @@ TEST(type_descriptor_and_plugins_interaction) {
   static_assert(std::derived_from<one_t, aa::equal_to::plugin<one_t>>);
   static_assert(!std::derived_from<one_t, aa::type_info::plugin<one_t>>);
   check(ref);
+  static_assert(std::is_same_v<decltype(aa::mate::get_vtable_ptr(ref)),
+                               const aa::vtable<aa::type_info, aa::equal_to, aa::spaceship>*&>);
   check(aa::poly_ref<aa::type_info>(ref));
   check(aa::poly_ref<aa::type_info>(i));
   check(aa::poly_ref<aa::equal_to>(ref));
@@ -877,9 +879,13 @@ int main() {
   A1 u;
   A2 u1;
   aa::poly_ref<M1, M2, aa::copy, aa::move> fi = u;
+  static_assert(std::is_same_v<decltype(aa::poly_ref(fi)), decltype(fi)>);
+  static_assert(std::is_same_v<decltype(*aa::const_pointer_cast(&aa::const_poly_ref(fi))), decltype(fi)>);
   aa::const_poly_ref<M1, M2, aa::move> cfi = u1;
   aa::invoke<M1>(cfi, -1);
   aa::const_poly_ref<M2, aa::move> cfi2 = cfi;
+  static_assert(std::is_same_v<decltype(aa::const_poly_ref(cfi2)), decltype(cfi2)>);
+  static_assert(std::is_same_v<decltype(aa::const_poly_ref(*aa::const_pointer_cast(&cfi2))), decltype(cfi2)>);
   aa::const_poly_ptr<M2, aa::move> cfi2p = &cfi;
   aa::const_poly_ptr copy = cfi2p;
   (void)copy;

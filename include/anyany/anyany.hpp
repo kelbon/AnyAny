@@ -55,9 +55,27 @@ constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
 #ifdef AA_HAS_CPP20
 
+namespace noexport {
+
+// presented as function ptr in vtable
+// searches signature as
+//  * T::signature_type
+//  * or (if not present) as decltype(&T::do_invoke<erased_self_t>)
+//  * or, for pseudomethods, as T::value_type
+template <typename T>
+concept has_signature = requires { typename signature_t<T>; };
+
+template <typename T>
+concept signature_is_function = std::is_function_v<signature_t<T>>;
+
+template <typename T>
+concept empty_type = std::is_empty_v<T>;
+
+}  // namespace noexport
+
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod = noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
+concept pseudomethod = noexport::empty_type<T> && noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
                        requires {
                          typename T::value_type;
                          // T::do_value<X>(),
@@ -66,9 +84,9 @@ concept pseudomethod = noexport::has_signature<T> && (!noexport::signature_is_fu
                          // for which 'do_value' exist(not substitution
                          // failure)
                        };
-// presented as function ptr in vtable
+
 template <typename T>
-concept regular_method = noexport::has_signature<T> && noexport::signature_is_function<T>
+concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> && noexport::signature_is_function<T>
     /* && requires { T::do_invoke<X>,}
     where 'do_invoke' is a static addressable function template and X - some type for which 'do_invoke'
     exist(not substitution failure)
@@ -296,25 +314,22 @@ AA_ALWAYS_INLINE constexpr decltype(auto) get(const vtable<Methods...>& v) noexc
 
 namespace noexport {
 
-template <typename... ToMethods>
-struct get_subtable_ptr_t {
-    // TODO после добавления compount методов нужно будет здесь flat делать переданных юзером методов...(ToMethods...)
-  template <anyany_method_concept... FromMethods,
-            std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
-                                                         type_list<FromMethods...>{}) != npos),
-                             int> = 0>
-  const vtable<ToMethods...>* operator()(const vtable<FromMethods...>* ptr) const noexcept {
+template <anyany_method_concept... ToMethods>
+struct subtable_ptr_fn {
+  template <anyany_method_concept... FromMethods>
+  auto operator()(const vtable<FromMethods...>* ptr) const noexcept
+      -> std::enable_if_t<noexport::has_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{}),
+                          const vtable<ToMethods...>*> {
     assert(ptr != nullptr);
     constexpr std::size_t Index =
         noexport::find_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{});
     const auto* new_ptr = std::addressof(get<Index>(*ptr));
     return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
   }
-  template <anyany_method_concept... FromMethods,
-            std::enable_if_t<(noexport::find_subsequence(type_list<ToMethods...>{},
-                                                         type_list<FromMethods...>{}) != npos),
-                             int> = 0>
-  vtable<ToMethods...>* operator()(vtable<FromMethods...>* ptr) const noexcept {
+  template <anyany_method_concept... FromMethods>
+  auto operator()(vtable<FromMethods...>* ptr) const noexcept
+      -> std::enable_if_t<noexport::has_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{}),
+                          vtable<ToMethods...>*> {
     const vtable<FromMethods...>* cptr = ptr;
     return const_cast<vtable<ToMethods...>*>((*this)(cptr));
   }
@@ -325,12 +340,14 @@ struct get_subtable_ptr_t {
     return ptr;
   }
 };
+
 }  // namespace noexport
 
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subsequence of
 // FromMethods For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
+// precondition: vtable_ptr != nullptr
 template <anyany_method_concept... ToMethods>
-constexpr inline noexport::get_subtable_ptr_t<ToMethods...> subtable_ptr = {};
+constexpr inline noexport::subtable_ptr_fn<ToMethods...> subtable_ptr = {};
 
 // must be never named explicitly, use addr_vtable_for
 template <typename T, anyany_method_concept... Methods>
@@ -382,7 +399,7 @@ template <typename CRTP, anyany_method_concept... Methods>
 using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<Methods, CRTP>...>;
 
 // non nullable non owner view to any type which satisfies Methods...
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
@@ -391,7 +408,7 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
   void* value_ptr;
 
   friend struct mate;
-  template <typename...>
+  template <anyany_method_concept...>
   friend struct poly_ptr;
   // only for poly_ptr implementation
   constexpr poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
@@ -432,7 +449,7 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
 
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
@@ -441,7 +458,7 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
   const void* value_ptr;
 
   friend struct mate;
-  template <typename...>
+  template <anyany_method_concept...>
   friend struct const_poly_ptr;
   // only for const_poly_ptr implementation
   constexpr const_poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
@@ -478,11 +495,11 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
   constexpr auto operator&() const noexcept;
 };
 
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -509,8 +526,8 @@ struct poly_ptr {
   }
   // from mutable pointer to Any
   template <typename Any, std::enable_if_t<(std::conjunction_v<not_const_type<Any>, is_any<Any>> &&
-                                            noexport::find_subsequence(type_list<Methods...>{},
-                                                                       typename Any::methods_list{}) != npos),
+                                            noexport::has_subsequence(type_list<Methods...>{},
+                                                                      typename Any::methods_list{})),
                                            int> = 0>
   constexpr poly_ptr(Any* ptr) noexcept {
     if (ptr != nullptr && ptr->has_value()) [[likely]] {
@@ -518,9 +535,9 @@ struct poly_ptr {
       mate::get_value_ptr(*this) = mate::get_value_ptr(*ptr);
     }
   }
-  template <
-      typename... FromMethods,
-      typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
+  template <typename... FromMethods,
+            std::enable_if_t<noexport::has_subsequence(type_list<Methods...>{}, type_list<FromMethods...>{}),
+                             int> = 0>
   constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept {
     if (p != nullptr) [[likely]] {
       mate::get_value_ptr(*this) = mate::get_value_ptr(p);
@@ -567,7 +584,7 @@ struct poly_ptr {
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct const_poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -591,10 +608,10 @@ struct const_poly_ptr {
     mate::get_vtable_ptr(*this) = addr_vtable_for<T, Methods...>;
   }
   // from pointer to Any
-  template <typename Any, std::enable_if_t<(is_any<Any>::value &&
-                                            noexport::find_subsequence(type_list<Methods...>{},
-                                                                       typename Any::methods_list{}) != npos),
-                                           int> = 0>
+  template <typename Any,
+            std::enable_if_t<(is_any<Any>::value &&
+                              noexport::has_subsequence(typename Any::methods_list{}, type_list<Methods...>{})),
+                             int> = 0>
   constexpr const_poly_ptr(const Any* p) noexcept {
     if (p != nullptr && p->has_value()) [[likely]] {
       mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(*p));
@@ -662,17 +679,17 @@ struct const_poly_ptr {
   }
 };
 
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
   poly_ptr<Methods...> result;
   mate::get_value_ptr(result) = value_ptr;
   mate::get_vtable_ptr(result) = vtable_ptr;
   return result;
 }
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   const_poly_ptr<Methods...> result;
   mate::get_value_ptr(result) = value_ptr;
@@ -1154,11 +1171,10 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // 'transmutate' constructors (from basic_any with more Methods)
 
-  template <
-      typename... OtherMethods,
-      std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, OtherMethods...> &&
-                        noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
-                       int> = 0>
+  template <typename... OtherMethods,
+            std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, OtherMethods...> &&
+                              noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
+                             int> = 0>
   basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
@@ -1166,11 +1182,10 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
     vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
-  template <
-      typename... OtherMethods,
-      std::enable_if_t<(noexport::has_move<OtherMethods...> &&
-                        noexport::find_subsequence(methods_list{}, type_list<OtherMethods...>{}) != npos),
-                       int> = 0>
+  template <typename... OtherMethods,
+            std::enable_if_t<(noexport::has_move<OtherMethods...> &&
+                              noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
+                             int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
     if (!other.has_value())
       return;

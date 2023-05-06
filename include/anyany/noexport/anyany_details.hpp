@@ -45,11 +45,11 @@ struct tuple : tuple_base<std::index_sequence_for<Ts...>, Ts...> {
 
 template <size_t I, typename U>
 constexpr U& get(value_in_tuple<U, I>& v) noexcept {
-    return v.value;
+  return v.value;
 }
 template <size_t I, typename U>
 constexpr const U& get(const value_in_tuple<U, I>& v) noexcept {
-    return v.value;
+  return v.value;
 }
 
 template <size_t I, typename... Args>
@@ -69,10 +69,10 @@ struct number_of_impl<I, T, First, Args...> {
 template <typename T, typename... Args>
 constexpr inline size_t number_of_first = number_of_impl<0, T, Args...>::value;
 
-template<typename T, typename... Ts>
+template <typename T, typename... Ts>
 constexpr inline bool contains_v = number_of_first<T, Ts...> != npos;
 
-template<typename T>
+template <typename T>
 constexpr inline bool is_byte_like_v =
     std::is_same_v<std::byte, T> || std::is_same_v<char, T> || std::is_same_v<unsigned char, T>;
 
@@ -133,8 +133,7 @@ AA_CONSTEVAL_CPP20 bool starts_with(aa::type_list<Head, Ts1...>, aa::type_list<H
 // no such index
 template <typename... Ts1, typename Head, typename... Ts2>
 AA_CONSTEVAL_CPP20 size_t find_subsequence_impl(aa::type_list<Ts1...> needle,
-                                                aa::type_list<Head, Ts2...> haystack,
-                                           size_t n) noexcept {
+                                                aa::type_list<Head, Ts2...> haystack, size_t n) noexcept {
   if constexpr (sizeof...(Ts1) >= sizeof...(Ts2) + 1)
     return std::is_same_v<aa::type_list<Ts1...>, aa::type_list<Head, Ts2...>> ? n : ::aa::npos;
   else if constexpr (starts_with(needle, haystack))
@@ -151,6 +150,10 @@ AA_CONSTEVAL_CPP20 size_t find_subsequence(Needle needle, Haystack haystack) noe
     return std::is_same_v<Needle, type_list<>> ? 0 : npos;
   else
     return find_subsequence_impl(needle, haystack, 0);
+}
+template <typename Needle, typename Haystack>
+AA_CONSTEVAL_CPP20 bool has_subsequence(Needle needle, Haystack haystack) {
+  return find_subsequence(needle, haystack) != aa::npos;
 }
 
 template <typename T, typename... Args,
@@ -185,12 +188,13 @@ auto inherit_without_duplicates(type_list<Head, Tail...>, type_list<Results...> 
 }
 
 template <typename... Ts>
-using inheritor_without_duplicates_t = decltype(inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
+using inheritor_without_duplicates_t =
+    decltype(inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
 template <typename Any, typename Method>
 auto get_plugin(int) -> typename Method::template plugin<Any>;
 #if __cpp_explicit_this_parameter >= 202110L
-template<typename Any, typename Method>
+template <typename Any, typename Method>
 auto get_plugin(bool) -> typename Method::plugin;
 #endif
 template <typename, typename>
@@ -204,7 +208,7 @@ auto get_method_signature(bool)
 template <typename Method>
 auto get_method_signature(...) -> type_identity<typename Method::value_type>;
 
-template<typename Method>
+template <typename Method>
 using signature_t = typename decltype(get_method_signature<Method>(0))::type;
 
 AA_IS_VALID(has_has_value, decltype(std::declval<T>().has_value()));
@@ -227,16 +231,6 @@ AA_ALWAYS_INLINE void relocate(T* src, T* dest) noexcept {
     AA_UNREACHABLE;
   }
 }
-
-#ifdef AA_HAS_CPP20
-
-template <typename T>
-concept has_signature = requires { typename signature_t<T>; };
-
-template <typename T>
-concept signature_is_function = std::is_function_v<signature_t<T>>;
-
-#endif
 
 }  // namespace aa::noexport
 #include "file_end.hpp"
