@@ -8,6 +8,13 @@ add_subdirectory("${ANYANY_DIRECTORY}" build)
 file(GLOB ANYANY_EXAMPLES_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp")
 add_executable(anyany_examples "${ANYANY_EXAMPLES_HEADERS}" "${CMAKE_CURRENT_SOURCE_DIR}/examples_main.cpp")
 
+set_target_properties(anyany_examples PROPERTIES
+	CMAKE_CXX_EXTENSIONS OFF
+	LINKER_LANGUAGE CXX
+	CXX_STANDARD ${CMAKE_CXX_STANDARD}
+	CMAKE_CXX_STANDARD_REQUIRED ON
+)
+
 target_link_libraries(anyany_examples PUBLIC anyanylib)
 # just 'test' for executing from command line
 include(CTest)
