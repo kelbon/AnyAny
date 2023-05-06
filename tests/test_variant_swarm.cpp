@@ -1,4 +1,4 @@
-
+#if __cplusplus >= 202002L
 #include "anyany/variant_swarm.hpp"
 
 #include <iostream>
@@ -89,3 +89,6 @@ int main() {
     return -155;
   std::cout << "end test\n";
 }
+#else
+int main() {}
+#endif

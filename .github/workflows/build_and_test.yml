@@ -22,11 +22,11 @@ jobs:
           sudo ln -sf /usr/local/bin/ld /usr/bin/lld
       - name: Configure CMake
         run: |
-          cmake . -DAA_ENABLE_TESTING=ON -B build        \
-            -G "Ninja"                                   \
-            -DCMAKE_BUILD_TYPE=${{matrix.build_type}}    \
-            -DCMAKE_CXX_COMPILER=${{matrix.compiler}}    \
-            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}
+          cmake . -DAA_ENABLE_TESTING=ON              \
+            -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+            -DCMAKE_CXX_COMPILER=${{matrix.compiler}} \
+            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}   \
+            -B build -G "Ninja"
       - name: Build
         run:
           cmake --build build
@@ -38,10 +38,10 @@ jobs:
       - name: Run examples
         run: |
           cd examples
-          cmake . -B build -G "Ninja"                    \
-            -DCMAKE_BUILD_TYPE=${{matrix.build_type}}    \
-            -DCMAKE_CXX_COMPILER=${{matrix.compiler}}    \
-            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}
+          cmake . -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+            -DCMAKE_CXX_COMPILER=${{matrix.compiler}}       \
+            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}         \
+            -B build -G "Ninja"
           cmake --build build
           cd build
           ctest --output-on-failure -C ${{matrix.build_type}} -V

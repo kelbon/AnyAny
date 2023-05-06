@@ -1,3 +1,4 @@
+#if __cplusplus >= 202002L 
 #include <string>
 #include <iostream>
 #include <set>
@@ -344,3 +345,6 @@ int main() {
   static_assert(std::is_same_v<std::span<bool>, decltype(cx)>);
   std::cout << "end test\n";
 }
+#else
+int main() {}
+#endif

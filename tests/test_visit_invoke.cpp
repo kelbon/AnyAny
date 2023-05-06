@@ -1,3 +1,4 @@
+#if __cplusplus >= 202002L 
 #include <anyany/visit_invoke.hpp>
 #include <anyany/utility.hpp>
 
@@ -65,3 +66,6 @@ int main() {
   if (collisions.resolve(aa::poly_ref<aa::type_info>(fake_space)) != "int")
     return -5;
 }
+#else
+int main() {}
+#endif

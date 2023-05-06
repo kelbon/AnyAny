@@ -6,15 +6,9 @@ foreach(PART ${AA_PARTS})
 	target_link_libraries(${PART} PUBLIC anyanylib)
 	target_include_directories(${PART} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../examples)
 	add_test(NAME test_${PART} COMMAND ${PART})
-	if(${PART} STREQUAL "anyany")
-		set_target_properties(${PART} PROPERTIES CXX_STANDARD 17)
-	else()
-		set_target_properties(${PART} PROPERTIES CXX_STANDARD 20)
-	endif()
 	set_target_properties(${PART} PROPERTIES
 		CMAKE_CXX_EXTENSIONS OFF
 		LINKER_LANGUAGE CXX
-		CXX_STANDARD ${CMAKE_CXX_STANDARD}
 		CMAKE_CXX_STANDARD_REQUIRED ON
 	)
 	if(MSVC)
