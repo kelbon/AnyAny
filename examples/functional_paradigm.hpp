@@ -32,7 +32,7 @@ using basic_function = decltype(details::get_function_type<Methods...>((Signatur
 // * support for other signatures like R(Args...) const/noexcept (aa::call Method)
 // etc etc
 template <typename Signature>
-using function = basic_function<Signature, aa::copy, aa::move>;
+using function = basic_function<Signature, aa::copy>;
 
 // similar to C++23 move_only_function
 template <typename Signature>
@@ -46,21 +46,15 @@ using function_ref = aa::stateful::cref<aa::call<Signature>>;
 // similar to std::any, but better...
 using any = aa::any_with<aa::copy>;
 
-int example_foo(int x, float y, double z) {
+auto example_foo = [](int x, float y, double z) {
   std::cout << x << y << z << '\n';
   return 0;
-}
+};
 
 void use_functions() {
-  // Note: function ref want to store pointer to value, so when you pass function into it
-  // it needs pointer to pointer to function
-  auto* fn_ptr = &example_foo;
-  // example_foo returns 'int', but we still can construct f (ignores result, because returns 'void')
-
-  function_ref<void(int, float, double) const> f_ref = fn_ptr;
+  function_ref<void(int, float, double) const> f_ref = example_foo;
   f_ref(5, 5.f, 5.);
-  function<void(int, float, double)> foo = &example_foo;
-
+  function<void(int, float, double)> foo = example_foo;
   foo = [](int, float, double) {
     // some other function
   };

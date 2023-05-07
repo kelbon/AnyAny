@@ -440,10 +440,8 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
       typename T,
       std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>,
                        int> = 0>
-  constexpr poly_ref(T& value) noexcept
+  constexpr poly_ref(T& value ANYANY_LIFETIMEBOUND) noexcept
       : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
-    static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
-                  "Decay it before emplace, ambigious pointer");
   }
 
   template <
@@ -479,10 +477,8 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
   // from value
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
-  constexpr const_poly_ref(const T& value) noexcept
+  constexpr const_poly_ref(const T& value ANYANY_LIFETIMEBOUND) noexcept
       : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
-    static_assert(!std::is_array_v<T> && !std::is_function_v<T>,
-                  "Decay it before emplace, ambigious pointer");
   }
   // from non-const ref
   constexpr const_poly_ref(poly_ref<Methods...> r) noexcept
@@ -529,7 +525,7 @@ struct poly_ptr {
   template <typename T,
             std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_any<T>, exist_for<T, Methods...>>,
                              int> = 0>
-  constexpr poly_ptr(T* ptr) noexcept {
+  constexpr poly_ptr(T* ptr ANYANY_LIFETIMEBOUND) noexcept {
     mate::get_value_ptr(*this) = ptr;
     mate::get_vtable_ptr(*this) = addr_vtable_for<T, Methods...>;
   }
@@ -538,7 +534,7 @@ struct poly_ptr {
                                             noexport::has_subsequence(type_list<Methods...>{},
                                                                       typename Any::methods_list{})),
                                            int> = 0>
-  constexpr poly_ptr(Any* ptr) noexcept {
+  constexpr poly_ptr(Any* ptr ANYANY_LIFETIMEBOUND) noexcept {
     if (ptr != nullptr && ptr->has_value()) [[likely]] {
       mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(*ptr));
       mate::get_value_ptr(*this) = mate::get_value_ptr(*ptr);
@@ -612,7 +608,7 @@ struct const_poly_ptr {
   // from pointer to value
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
-  constexpr const_poly_ptr(const T* ptr) noexcept {
+  constexpr const_poly_ptr(const T* ptr ANYANY_LIFETIMEBOUND) noexcept {
     mate::get_value_ptr(*this) = ptr;
     mate::get_vtable_ptr(*this) = addr_vtable_for<T, Methods...>;
   }
@@ -621,7 +617,7 @@ struct const_poly_ptr {
             std::enable_if_t<(is_any<Any>::value &&
                               noexport::has_subsequence(typename Any::methods_list{}, type_list<Methods...>{})),
                              int> = 0>
-  constexpr const_poly_ptr(const Any* p) noexcept {
+  constexpr const_poly_ptr(const Any* p ANYANY_LIFETIMEBOUND) noexcept {
     if (p != nullptr && p->has_value()) [[likely]] {
       mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(*p));
       mate::get_value_ptr(*this) = mate::get_value_ptr(*p);
@@ -763,10 +759,9 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
       typename T,
       std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>,
                        int> = 0>
-  constexpr ref(T& value) noexcept
+  constexpr ref(T& value ANYANY_LIFETIMEBOUND) noexcept
       : value_ptr(std::addressof(value)),
         vtable_value(vtable<Methods...>{&invoker_for<std::decay_t<T>, Methods>::value...}) {
-    static_assert(!std::is_function_v<T> && !std::is_array_v<T>);
   }
 
   constexpr ref(poly_ref<Methods...> r) noexcept
@@ -806,9 +801,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
 
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
-  constexpr cref(const T& value) noexcept
+  constexpr cref(const T& value ANYANY_LIFETIMEBOUND) noexcept
       : value_ptr(std::addressof(value)), vtable_value{&invoker_for<std::decay_t<T>, Methods>::value...} {
-    static_assert(!std::is_function_v<T> && !std::is_array_v<T>);
   }
 
   constexpr cref(const_poly_ref<Methods...> r) noexcept
@@ -1372,8 +1366,6 @@ struct any_cast_fn<T, anyany_poly_traits> {
   }
 
  public:
-  static_assert(!(std::is_array_v<T> || std::is_function_v<T> || std::is_void_v<T>),
-                "Incorrect call, it will be always nullptr");
   template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
   std::add_pointer_t<T> operator()(U* ptr) const noexcept {
     return any_cast_impl(static_cast<typename U::base_any_type*>(ptr));

@@ -556,6 +556,9 @@ TEST(transmutate_ctors) {
 }
 TEST(stateful) {
   int i = 5;
+  aa::stateful::cref<aa::copy, aa::type_info> ccl = i;
+  aa::stateful::ref<aa::type_info, aa::copy> cl = i;
+  (void)ccl, (void)cl;
   aa::cref<aa::copy, aa::move, aa::equal_to> r = i;
   aa::stateful::cref sr = r;
   static_assert(std::is_same_v<decltype(sr), aa::stateful::cref<aa::copy, aa::move, aa::equal_to>>);
@@ -794,7 +797,7 @@ TEST(subtable_ptr) {
 
 int main() {
   std::cout << "C++ standard: " << __cplusplus << std::endl;
-  // compile tim checks
+  // compile time checks
   anyany_concepts_test();
   any_cast_test();
   noallocate_test();
