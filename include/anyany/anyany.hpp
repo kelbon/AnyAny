@@ -75,15 +75,15 @@ concept empty_type = std::is_empty_v<T>;
 
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod = noexport::empty_type<T> && noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
-                       requires {
-                         typename T::value_type;
-                         // T::do_value<X>(),
-                         // where 'do_value' is a
-                         // static consteval function template and X - some type
-                         // for which 'do_value' exist(not substitution
-                         // failure)
-                       };
+concept pseudomethod = noexport::empty_type<T> && noexport::has_signature<T> &&
+                       (!noexport::signature_is_function<T>) && requires {
+                                                                  typename T::value_type;
+                                                                  // T::do_value<X>(),
+                                                                  // where 'do_value' is a
+                                                                  // static consteval function template and X
+                                                                  // - some type for which 'do_value'
+                                                                  // exist(not substitution failure)
+                                                                };
 
 template <typename T>
 concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> && noexport::signature_is_function<T>
@@ -516,7 +516,7 @@ struct poly_ptr {
   constexpr poly_ptr() noexcept = default;
   constexpr poly_ptr(std::nullptr_t) noexcept : poly_ptr() {
   }
-  constexpr poly_ptr& operator=(std::nullptr_t) noexcept {
+  constexpr poly_ptr& operator=(std::nullptr_t) noexcept ANYANY_LIFETIMEBOUND {
     *this = poly_ptr<Methods...>(nullptr);
     return *this;
   }
@@ -601,7 +601,7 @@ struct const_poly_ptr {
   constexpr const_poly_ptr() noexcept = default;
   constexpr const_poly_ptr(std::nullptr_t) noexcept : const_poly_ptr() {
   }
-  constexpr const_poly_ptr& operator=(std::nullptr_t) noexcept {
+  constexpr const_poly_ptr& operator=(std::nullptr_t) noexcept ANYANY_LIFETIMEBOUND {
     *this = const_poly_ptr<Methods...>(nullptr);
     return *this;
   }
@@ -718,23 +718,29 @@ namespace stateful {
 
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
   void* value_ptr;
-  vtable<Methods...> vtable_value;
-
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-attributes"
+#endif
+  [[no_unique_address]] vtable<Methods...> vtable_value;
+#if __clang__
+#pragma clang diagnostic pop
+#endif
   friend struct ::aa::mate;
-  template <typename...>
+  template <anyany_method_concept...>
   friend struct cref;
 
   constexpr ref() noexcept = default;
 
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
+  static constexpr ref<Methods...> FOO(poly_ref<Methods2...> r) {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value =
@@ -744,7 +750,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
+  static constexpr ref<Methods...> FOO(const stateful::ref<Methods2...>& r) {
     ref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value = vtable<Methods...>{
@@ -772,9 +778,9 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   // (not fixable now)
   template <typename X, std::enable_if_t<is_polymorphic<X>::value, int> = 0,
             std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
-  constexpr ref(const X& x) noexcept : ref(FOO(x)) {
+  constexpr ref(const X& x) : ref(FOO(x)) {
   }
-  constexpr poly_ref<Methods...> get_view() const noexcept {
+  constexpr poly_ref<Methods...> get_view() const noexcept ANYANY_LIFETIMEBOUND {
     poly_ptr<Methods...> ptr;
     mate::get_value_ptr(ptr) = value_ptr;
     mate::get_vtable_ptr(ptr) = &vtable_value;
@@ -785,14 +791,20 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
 // also can reference arrays and functions without decay
-template <typename... Methods>
+template <anyany_method_concept... Methods>
 struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
   const void* value_ptr;
-  vtable<Methods...> vtable_value;
-
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-attributes"
+#endif
+  [[no_unique_address]] vtable<Methods...> vtable_value;
+#if __clang__
+#pragma clang diagnostic pop
+#endif
   friend struct ::aa::mate;
   constexpr cref() noexcept = default;
 
@@ -820,7 +832,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
  private:
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) noexcept {
+  static constexpr cref<Methods...> FOO(const stateful::cref<Methods2...>& r) {
     cref result;
     result.value_ptr = mate::get_value_ptr(r);
     result.vtable_value = vtable<Methods...>{
@@ -830,19 +842,19 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
 
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) noexcept {
+  static constexpr cref<Methods...> FOO(const stateful::ref<Methods2...>& r) {
     return FOO(stateful::cref<Methods2...>(r));
   }
 
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) noexcept {
+  static constexpr cref<Methods...> FOO(poly_ref<Methods2...> r) {
     return stateful::ref<Methods...>::FOO(r);
   }
 
   template <typename... Methods2,
             std::enable_if_t<(noexport::contains_v<Methods, Methods2...> && ...), int> = 0>
-  static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) noexcept {
+  static constexpr cref<Methods...> FOO(const_poly_ref<Methods2...> p) {
     return FOO(*aa::const_pointer_cast(&p));
   }
 
@@ -854,7 +866,7 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
             std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr cref(const X& x) : cref(FOO(x)) {
   }
-  constexpr const_poly_ref<Methods...> get_view() const noexcept {
+  constexpr const_poly_ref<Methods...> get_view() const noexcept ANYANY_LIFETIMEBOUND {
     const_poly_ptr<Methods...> ptr;
     mate::get_value_ptr(ptr) = value_ptr;
     mate::get_vtable_ptr(ptr) = &vtable_value;
@@ -1053,10 +1065,10 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using const_ref = cref;
   // aliases without 'destroy' for usage like any_with<a, b, c>::ref
   // but operator& return with 'destroy' method(implicitly converitble anyway)
-  constexpr poly_ptr<Methods...> operator&() noexcept {
+  constexpr poly_ptr<Methods...> operator&() noexcept ANYANY_LIFETIMEBOUND {
     return {this};
   }
-  constexpr const_poly_ptr<Methods...> operator&() const noexcept {
+  constexpr const_poly_ptr<Methods...> operator&() const noexcept ANYANY_LIFETIMEBOUND {
     return {this};
   }
   constexpr basic_any() = default;
@@ -1083,7 +1095,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   basic_any(basic_any&& other) noexcept AA_IF_HAS_CPP20(requires(has_move)) : alloc(std::move(other.alloc)) {
     move_value_from(std::move(other));
   }
-  basic_any& operator=(basic_any&& other) noexcept AA_IF_HAS_CPP20(requires(has_move)) {
+  basic_any& operator=(basic_any&& other) noexcept ANYANY_LIFETIMEBOUND AA_IF_HAS_CPP20(requires(has_move)) {
     // nocheck about this == &other
     // because after move assign other by C++ standard in unspecified(valid) state
     reset();
@@ -1096,7 +1108,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     return *this;
   }
 
-  basic_any& operator=(const basic_any& other) AA_IF_HAS_CPP20(requires(has_copy)) {
+  basic_any& operator=(const basic_any& other) ANYANY_LIFETIMEBOUND AA_IF_HAS_CPP20(requires(has_copy)) {
     basic_any value = other;
     if constexpr (!alloc_traits::is_always_equal::value &&
                   alloc_traits::propagate_on_container_copy_assignment::value) {
@@ -1116,7 +1128,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
                               (Self::has_move || (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
                                                   any_is_small_for<std::decay_t<V>>))),
                              int> = 0>
-  basic_any& operator=(V&& val) {
+  basic_any& operator=(V&& val) ANYANY_LIFETIMEBOUND {
     if constexpr (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
                   any_is_small_for<std::decay_t<V>>) {
       reset();
@@ -1132,7 +1144,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // postconditions : has_value() == true, *this is empty if exception thrown
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
+      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
     reset();
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
@@ -1141,7 +1153,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
             std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
-          any_is_small_for<std::decay_t<T>>) {
+          any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
     reset();
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
     return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
