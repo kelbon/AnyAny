@@ -5,7 +5,7 @@ Goals are efficiency, understandability and extensibility.
 
 clang, gcc, msvc
 [![](
-https://github.com/kelbon/AnyAny/actions/workflows/build_and_test.yml/badge.svg?branch=cpp17_support)](
+https://github.com/kelbon/AnyAny/actions/workflows/build_and_test.yml/badge.svg?branch=main)](
 https://github.com/kelbon/AnyAny/actions/workflows/build_and_test.yml)
 
 ### See /examples folder for fast start!
