@@ -727,6 +727,10 @@ struct empty_struct_t {};
 template<typename>
 anyany_pseudomethod(empty_value_pseudomethod, requires(empty_struct_t{})->empty_struct_t);
 
+anyany_extern_method(a, (&self) requires((void)0)->void);
+anyany_extern_method(b, (const &self) requires(5)->int);
+anyany_extern_method(c, (self) requires(3.14)->float);
+
 void anyany_concepts_test() {
 #if __cplusplus >= 202002L
   aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
@@ -762,6 +766,17 @@ void anyany_concepts_test() {
   static_assert(aa::regular_method<visit<int>>);
   static_assert(!aa::pseudomethod<visit<int>>);
 #endif
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, a, b, c>,
+                               aa::any_with<a, b, c>>);
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, aa::type_list<a, b, c>>,
+                               aa::any_with<a, b, c>>);
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with>, aa::any_with<>>);
+  static_assert(
+      std::is_same_v<aa::insert_flatten_into<aa::cref, aa::type_list<aa::type_list<aa::type_list<>>>>,
+                     aa::cref<>>);
+  static_assert(std::is_same_v<
+                aa::insert_flatten_into<aa::any_with, aa::type_list<>, aa::type_list<a, aa::type_list<b>, c>>,
+                aa::any_with<a, b, c>>);
 }
 
 template<typename T>

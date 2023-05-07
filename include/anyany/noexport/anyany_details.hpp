@@ -10,14 +10,10 @@
 
 namespace aa::noexport {
 
-#ifndef AA_HAS_CPP20
 template <typename T>
 struct type_identity {
   using type = T;
 };
-#else
-using std::type_identity;
-#endif
 
 // this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
 template <typename T, size_t>
@@ -231,6 +227,46 @@ AA_ALWAYS_INLINE void relocate(T* src, T* dest) noexcept {
     AA_UNREACHABLE;
   }
 }
+
+template <typename... Ts, typename T>
+auto operator+(type_identity<aa::type_list<Ts...>>, type_identity<T>)
+    -> type_identity<aa::type_list<Ts..., T>>;
+template <typename... Ts, typename T>
+auto operator+(type_identity<T>, type_identity<aa::type_list<Ts...>>)
+    -> type_identity<aa::type_list<T, Ts...>>;
+template <typename... Ts1, typename... Ts2>
+auto operator+(type_identity<aa::type_list<Ts1...>>, type_identity<aa::type_list<Ts2...>>)
+    -> type_identity<aa::type_list<Ts1..., Ts2...>>;
+
+template <typename... Types>
+using flatten_type_lists_one_layer =
+    typename decltype((type_identity<aa::type_list<>>{} + ... + type_identity<Types>{}))::type;
+
+template <typename>
+struct is_type_list : std::false_type {};
+template <typename... Ts>
+struct is_type_list<aa::type_list<Ts...>> : std::true_type {};
+
+template <typename... Ts>
+constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
+  return (is_type_list<Ts>::value || ...);
+}
+template <typename... Types>
+auto flatten_types(aa::type_list<Types...>) {
+  using step = flatten_type_lists_one_layer<Types...>;
+  if constexpr (contains_second_layer_list(step{}))
+    return flatten_types(step{});
+  else
+    return step{};
+}
+template <typename... Ts>
+using flatten_types_t = decltype(flatten_types(aa::type_list<Ts...>{}));
+
+template <template <typename...> typename, typename>
+struct insert_types {};
+
+template <template <typename...> typename Template, typename... Types>
+struct insert_types<Template, aa::type_list<Types...>> : type_identity<Template<Types...>> {};
 
 }  // namespace aa::noexport
 #include "file_end.hpp"

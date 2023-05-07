@@ -1455,6 +1455,16 @@ using cptr = const_poly_ptr<Methods...>;
 template <anyany_method_concept... Methods>
 using cref = const_poly_ref<Methods...>;
 
+// just an alias for set of interface requirements, may be used later in 'insert_flatten_into'
+template<typename...MethodOrInterfaceAlias>
+using interface_alias = type_list<MethodOrInterfaceAlias...>;
+// Methods may be aa::compound_method<...> or just anyany Methods
+// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>; 
+// example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
+// same as aa::any_with<next, is_done, aa::move, foo, bar>;
+template <template <typename...> typename Template, typename... Methods>
+using insert_flatten_into = typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
+
 // enables any_cast, type_switch, visit_invoke etc
 // adds method 'type_descriptor' which returns descriptor of current dynamic type or
 // descriptor<void> if !has_value()
