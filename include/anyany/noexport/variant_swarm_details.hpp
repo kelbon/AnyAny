@@ -4,6 +4,8 @@
 #include <ranges>
 #include <tuple>
 
+#include "file_begin.hpp"
+
 namespace aa::noexport {
 
 // binds std::allocator so 'vector' has only one template arg(or error on clang)
@@ -61,18 +63,12 @@ struct inserter {
   }
 };
 
-#if defined(_MSC_VER)
-#define AA_VS_MSVC_EBO __declspec(empty_bases)
-#else
-#define AA_VS_MSVC_EBO
-#endif
-
 template <typename CRTP, template <typename> typename Container, typename... Ts>
-struct AA_VS_MSVC_EBO inserters : inserter<CRTP, Container<Ts>>... {
+struct AA_MSVC_EBO inserters : inserter<CRTP, Container<Ts>>... {
   using inserter<CRTP, Container<Ts>>::insert...;
   using inserter<CRTP, Container<Ts>>::erase...;
 };
 
-#undef AA_VS_MSVC_EBO
-
 }  // namespace aa::noexport
+#include "file_end.hpp"
+

@@ -3,7 +3,7 @@
 #include <iostream>
 #include <functional>
 
-#include <anyany.hpp>
+#include <anyany/anyany.hpp>
 
 ///
 /// This example implements all of type erase in C++ standard library before AnyAny
@@ -14,69 +14,51 @@
 /// Also function supports currying and invoking from tuple, as in functional languages
 ///
 
-namespace aa::example {
+namespace example::details {
 
-template <typename Signature, template <typename> typename... Methods>
-struct basic_function {};
+template <typename... Methods, typename R, typename... Args>
+auto get_function_type(R (*)(Args...)) -> aa::any_with<aa::call<R(Args...)>, Methods...>;
 
-template <typename R, typename Head, typename... Args, template <typename> typename... Methods>
-struct basic_function<R(Head, Args...), Methods...>
-    : aa::any_with<aa::call<R(Head, Args...)>::template method, Methods...> {
-  using base_t = aa::any_with<aa::call<R(Head, Args...)>::template method, Methods...>;
-  using base_t::base_t;
-  using base_t::operator=;
-  using base_t::operator();
+}  // namespace example::details
 
-  // support currying and invoking from tuple like in functional languages
+namespace example {
 
-  //  all functions just accepts a tuple of arguments if you think about it
-  R operator()(std::tuple<Head, Args...> args_tpl) {
-    return std::apply(
-        [&](Head&& arg, Args&&... args) {
-          return (*this)(static_cast<Head&&>(arg), static_cast<Args&&>(args)...);
-        },
-        std::move(args_tpl));
-  }
-  // exposition only (can be more effective with && versions of operator())
-  [[nodiscard("currying!")]] auto operator()(Head value)
-    requires(sizeof...(Args) > 0)
-  {
-    return [&]<typename... Tail>(aa::type_list<Tail...>) {
-      return basic_function<R(Args...), Methods...>(std::bind_front(*this, static_cast<Head&&>(value)));
-    }(aa::type_list<Head, Args...>{});
-  }
-};
-
+template <typename Signature, typename... Methods>
+using basic_function = decltype(details::get_function_type<Methods...>((Signature*)0));
+// similar to std::function, but better
+// * noexcept move
+// * no huge RTTI
+// * customizable alloc and small object optimization buffer size
+// * support for other signatures like R(Args...) const/noexcept (aa::call Method)
+// etc etc
 template <typename Signature>
-using function = basic_function<Signature, aa::copy, aa::move>;
+using function = basic_function<Signature, aa::copy>;
 
+// similar to C++23 move_only_function
 template <typename Signature>
 using move_only_function = basic_function<Signature, aa::move>;
 
+// lightweight wrapper, stores pointer to operator() and const void* to value
+// most effective way to erase function
 template <typename Signature>
-using function_ref = typename function<Signature>::ref;
+using function_ref = aa::stateful::cref<aa::call<Signature>>;
 
-template <typename Signature>
-using effective_function_ref = aa::statefull::cref<aa::call<Signature>::template method>;
+// similar to std::any, but better...
+using any = aa::any_with<aa::copy>;
 
-using any = aa::any_with<aa::copy, aa::move>;
-
-void example1_foo(int x, float y, double z) {
+auto example_foo = [](int x, float y, double z) {
   std::cout << x << y << z << '\n';
-}
+  return 0;
+};
 
-void example1() {
-  auto* fn_ptr = &example1_foo;
-  effective_function_ref<void(int, float, double) const> f1 = fn_ptr;
-  f1(5, 5.f, 5.);
-  function<void(int, float, double)> f0 = &example1_foo;
-  f0({5, 5.f, 10.});
-  f0(5, 5, 10);
-  f0(5)(5, 10);
-  f0(5)(5)(10);
-  f0 = [](int, float, double) {
+void use_functions() {
+  function_ref<void(int, float, double) const> f_ref = example_foo;
+  f_ref(5, 5.f, 5.);
+  function<void(int, float, double)> foo = example_foo;
+  foo = [](int, float, double) {
     // some other function
   };
+  foo(5, 5., 5.);
 }
 
 }  // namespace example

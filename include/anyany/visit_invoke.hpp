@@ -13,9 +13,12 @@
 */
 
 #include <optional>      // for visit_invoke.resolve result
+#include <tuple>         // apply
 
 #include "type_descriptor.hpp"
 #include "noexport/visit_invoke_details.hpp"
+
+#include "noexport/file_begin.hpp"
 
 namespace aa {
 
@@ -23,11 +26,11 @@ namespace aa {
 // -- Traits -- is a customization point, it describes what types visit_invoke_fn sees as polymorphic.
 // example: you can add Traits for some your virtual/LLVM-type-id hierarchy
 // (see anyany_poly_traits or std_variant_poly_traits as examples)
-template <typename Result, poly_traits Traits, lambda_without_capture... Foos>
+template <typename Result, typename Traits, typename... Foos>
 struct visit_invoke_fn {
  private:
   template <typename F>
-  using traits = noexport::any_method_traits<F>;
+  using traits = noexport::visit_invoke_traits<F>;
 
   static constexpr std::size_t overload_count = sizeof...(Foos);
   static constexpr std::size_t args_count = std::max({traits<Foos>::args_count...});
@@ -46,24 +49,26 @@ struct visit_invoke_fn {
 #pragma clang diagnostic pop
 #endif
 
-  static_assert((... && std::is_convertible_v<typename traits<Foos>::result_type, result_type>),
-                "invoke_match overloads result types must be convertible to result type");
-
   // verifies that atleast one of Foos may accept input args based on const arg or not
   template <typename... Voids>
-  static consteval bool verify_const_correctness(Voids*...) noexcept {
+  static AA_CONSTEVAL_CPP20 bool verify_const_correctness(Voids*...) noexcept {
 #if defined(_MSC_VER) && !defined(__clang__)
     // really do not want support msvc, its full of bugs, cant compile
     return true;
 #else
     std::array<bool, args_count> bitset;
-    bitset.fill(false);
-    std::ranges::copy(std::initializer_list<bool>{std::is_const_v<Voids>...}, bitset.begin());
+    auto it = std::copy_n(std::initializer_list<bool>{std::is_const_v<Voids>...}.begin(), sizeof...(Voids),
+                          bitset.begin());
+    std::fill(it, bitset.end(), false);
     std::array<std::array<bool, args_count>, overload_count> all_foos_bitsets;
     for (auto& arr : all_foos_bitsets)
       arr.fill(true);
-    std::apply([](auto&... arrs) { (..., std::ranges::copy(traits<Foos>::args_const, arrs.begin())); },
-               all_foos_bitsets);
+    std::apply(
+        [](auto&... arrs) {
+          (...,
+           std::copy(std::begin(traits<Foos>::args_const), std::end(traits<Foos>::args_const), arrs.begin()));
+        },
+        all_foos_bitsets);
     auto may_accept_args = [&](auto& foo_args) {
       auto b = bitset.begin();
       for (bool may_accept_const : foo_args) {
@@ -76,18 +81,19 @@ struct visit_invoke_fn {
     return std::ranges::any_of(all_foos_bitsets, may_accept_args);
 #endif
   }
-  template <typename... Args>
-  static bool runtime_const_correctness_check(auto* overload_winner) {
-    auto make_value_constness_array_pair = []<typename F, typename... Ts>(std::type_identity<F>,
+  template <typename... Args, typename X>
+  static bool runtime_const_correctness_check(X* overload_winner) {
+    auto make_value_constness_array_pair = []<typename F, typename... Ts>(noexport::type_identity<F>,
                                                                           type_list<Ts...>) {
       std::array<bool, args_count> value;
       value.fill(true);
-      std::ranges::copy(traits<F>::args_const, value.begin());
+      std::copy(std::begin(traits<F>::args_const), std::end(traits<F>::args_const), value.begin());
       return std::pair(&match_invoker<F, Ts...>, value);
     };
-    std::array m{
-        make_value_constness_array_pair(std::type_identity<Foos>{}, typename traits<Foos>::all_args{})...};
-    auto cit = std::ranges::find(m, overload_winner, [](auto& pair) { return pair.first; });
+    std::array m{make_value_constness_array_pair(noexport::type_identity<Foos>{},
+                                                 typename traits<Foos>::all_args{})...};
+    auto cit =
+        std::find_if(std::begin(m), std::end(m), [&](auto& pair) { return pair.first == overload_winner; });
     auto& [_, can_accept_const] = *cit;
     constexpr std::array is_const_input_arg{
         std::is_const_v<std::remove_pointer_t<decltype(poly_traits.to_address(std::declval<Args>()))>>...};
@@ -101,7 +107,7 @@ struct visit_invoke_fn {
   template <typename Foo, typename... Ts>
   static result_type match_invoker(const std::array<void*, args_count>& args) {
     std::array<void*, sizeof...(Ts)> necessary_args;
-    std::ranges::copy_n(args.begin(), sizeof...(Ts), necessary_args.begin());
+    std::copy_n(args.begin(), sizeof...(Ts), necessary_args.begin());
     return std::apply(
         [](auto*... void_ptrs) {
           return Foo{}(static_cast<Ts&&>(*reinterpret_cast<std::add_pointer_t<Ts>>(void_ptrs))...);
@@ -128,8 +134,8 @@ struct visit_invoke_fn {
   // or winner overload cant accept args due const-qualifiers(when Unsafe == false)
   // If Unsafe == false, then const qualifiers on overload-winner function and input args will be checked,
   // otherwise its UB to pass const-qualified arg into non-const qualified function
-  template <bool Unsafe = true, typename... Args>
-    requires(sizeof...(Args) <= args_count)
+  template <bool Unsafe = true, typename... Args,
+            std::enable_if_t<(sizeof...(Args) <= args_count), int> = 0>
   std::optional<result_type> resolve(Args&&... args) const noexcept((traits<Foos>::is_noexcept && ...)) {
     static_assert(((traits<Foos>::args_count == sizeof...(Args)) || ...),
                   "No overload with this count of arguments");
@@ -154,22 +160,10 @@ struct visit_invoke_fn {
 
 // vist_invoke its like runtime overload resolution for Foos with converting result to Result
 // Each in Foos may be function pointer or lambda without capture(with NON overloaded operator())
-template <typename Result, auto... Foos, poly_traits Traits = anyany_poly_traits>
-AA_CONSTEVAL inline auto make_visit_invoke(Traits t = Traits{}) {
-  return visit_invoke_fn<Result, Traits, typename noexport::make_wrapper<Foos>::type...>{std::move(t)};
-}
-// deducts return type if all return types of Foos are same
-template <auto... Foos, poly_traits Traits = anyany_poly_traits>
-AA_CONSTEVAL inline auto make_visit_invoke(Traits t = Traits{}) {
-  using result_type =
-      typename decltype((noexport::any_method_traits<std::decay_t<decltype(Foos)>>{}, ...))::result_type;
-  static_assert(
-      (std::is_same_v<result_type,
-                      typename noexport::any_method_traits<std::decay_t<decltype(Foos)>>::result_type> &&
-       ...),
-      "Return type cannot be deducted, because Foos have different return types, use second "
-      "'make_visit_invoke' overload and specify return type by hands");
-  return visit_invoke_fn<result_type, Traits, typename noexport::make_wrapper<Foos>::type...>{std::move(t)};
+template <typename Result, typename Traits = anyany_poly_traits, typename... Foos>
+constexpr inline auto make_visit_invoke(Foos... f) {
+  return visit_invoke_fn<Result, Traits, Foos...>{};
 }
 
 }  // namespace aa
+#include "noexport/file_end.hpp"

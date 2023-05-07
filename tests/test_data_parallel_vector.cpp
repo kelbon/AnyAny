@@ -1,3 +1,4 @@
+#if __cplusplus >= 202002L 
 #include <string>
 #include <iostream>
 #include <set>
@@ -8,7 +9,7 @@
 #include <utility>
 #include <random>
 
-#include "data_parallel_vector.hpp"
+#include "anyany/data_parallel_vector.hpp"
 
 #define ASSERT(...)   \
   if (!(__VA_ARGS__)) \
@@ -344,3 +345,6 @@ int main() {
   static_assert(std::is_same_v<std::span<bool>, decltype(cx)>);
   std::cout << "end test\n";
 }
+#else
+int main() {}
+#endif

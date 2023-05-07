@@ -1,0 +1,47 @@
+name: build_and_test
+
+on: push
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04]
+        compiler: [g++-12, clang++-14]
+        cpp_standard: [17, 20]
+        build_type: [Debug, Release]
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install ninja-build lld gcc-12 clang-14
+          sudo ln -sf /usr/local/bin/ld /usr/bin/lld
+      - name: Configure CMake
+        run: |
+          cmake . -DAA_ENABLE_TESTING=ON              \
+            -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+            -DCMAKE_CXX_COMPILER=${{matrix.compiler}} \
+            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}   \
+            -B build -G "Ninja"
+      - name: Build
+        run:
+          cmake --build build
+
+      - name: Test
+        run: |
+          cd build
+          ctest --output-on-failure -C ${{matrix.build_type}} -V
+      - name: Run examples
+        run: |
+          cd examples
+          cmake . -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+            -DCMAKE_CXX_COMPILER=${{matrix.compiler}}       \
+            -DCMAKE_CXX_STANDARD=${{matrix.cpp_standard}}         \
+            -B build -G "Ninja"
+          cmake --build build
+          cd build
+          ctest --output-on-failure -C ${{matrix.build_type}} -V
