@@ -30,6 +30,7 @@ namespace aa {
 //
 // Default version searches for Method::plugin<Any> or,
 // if deducing this supported, typename Method::plugin
+// or returns 'void' which means Method has no plugin(not a error)
 template <typename Any, typename Method>
 struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {};
 
@@ -38,7 +39,7 @@ using plugin_t = typename plugin<Any, Method>::type;
 
 // ######################## compilt time information about Methods(Traits) ########################
 
-// Searches for Method::signaturue_type if exist, or instanciates
+// Searches for Method::signature_type if exist, or instanciates
 // Method::do_invoke with 'aa::erased_self_t'
 // Or, for pseudomethods, just uses typename Method::value_type
 template <typename Method>
