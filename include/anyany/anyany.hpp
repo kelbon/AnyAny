@@ -770,7 +770,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   // accepts poly_ref and stateful::ref with more Methods
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  template <typename X, std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
+  template <typename X, std::enable_if_t<is_polymorphic<X>::value, int> = 0,
+            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr ref(const X& x) noexcept : ref(FOO(x)) {
   }
   constexpr poly_ref<Methods...> get_view() const noexcept {
@@ -849,8 +850,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   // accepts poly_ref/const_poly_ref and stateful::ref/cref with more Methods, effectivelly converts
   // 'FOO' is a hack, because compilers really bad with deducing guides in this case
   // (not fixable now)
-  template <typename X, AA_MSVC_WORKAROUND(std::enable_if_t<is_polymorphic<X>::value, int> = 0, )
-                            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
+  template <typename X, std::enable_if_t<is_polymorphic<X>::value, int> = 0,
+            std::void_t<decltype(FOO(std::declval<X>()))>* = nullptr>
   constexpr cref(const X& x) : cref(FOO(x)) {
   }
   constexpr const_poly_ref<Methods...> get_view() const noexcept {
