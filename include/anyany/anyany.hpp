@@ -1317,8 +1317,8 @@ basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, A
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
   template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \
   AA_ALWAYS_INLINE auto materialize(TEMPLATE<Methods...> value, Alloc alloc = Alloc{})               \
-      ->decltype(materialize<Alloc, SooS>(TRANSFORM, std::move(alloc))) {                            \
-    return materialize<Alloc, SooS>(TRANSFORM, std::move(alloc));                                    \
+      ->decltype(materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc))) {                \
+    return materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc));                        \
   }
 AA_DECLARE_MATERIALIZE(poly_ref, const_poly_ref(value))
 AA_DECLARE_MATERIALIZE(stateful::ref, value.get_view())
