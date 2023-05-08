@@ -1316,7 +1316,7 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
 }
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
   template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \
-  AA_ALWAYS_INLINE auto materialize(TEMPLATE<Methods...> value, Alloc alloc = Alloc{})               \
+  AA_ALWAYS_INLINE auto materialize(const TEMPLATE<Methods...>& value, Alloc alloc = Alloc{})        \
       ->decltype(materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc))) {                \
     return materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc));                        \
   }
@@ -1438,6 +1438,14 @@ struct any_cast_fn<T, anyany_poly_traits> {
     if (ptr == nullptr) [[unlikely]]
       throw aa::bad_cast{};
     return *ptr;
+  }
+  template<typename... Methods>
+  decltype(auto) operator()(const stateful::ref<Methods...>& r) const {
+    return (*this)(r.get_view());
+  }
+  template <typename... Methods>
+  decltype(auto) operator()(const stateful::cref<Methods...>& r) const {
+    return (*this)(r.get_view());
   }
 };
 
