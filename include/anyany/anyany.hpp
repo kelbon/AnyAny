@@ -1303,11 +1303,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
 // ######################## materialize(create any_with from polymorphic reference)
 
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods,
-          std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, Methods...> &&
-                            noexport::contains_v<destroy, Methods...>),
-                           int> = 0>
-basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{}) {
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
+auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
+    -> std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, Methods...> &&
+                         noexport::contains_v<destroy, Methods...>),
+                        basic_any<Alloc, SooS, Methods...>> {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
   mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
       mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
@@ -1321,8 +1321,8 @@ basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, A
     return materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc));                        \
   }
 AA_DECLARE_MATERIALIZE(poly_ref, const_poly_ref(value))
-AA_DECLARE_MATERIALIZE(stateful::ref, value.get_view())
-AA_DECLARE_MATERIALIZE(stateful::cref, value.get_view())
+AA_DECLARE_MATERIALIZE(stateful::ref, const_poly_ref(value.get_view()))
+AA_DECLARE_MATERIALIZE(stateful::cref, const_poly_ref(value.get_view()))
 #undef AA_DECLARE_MATERIALIZE
 
 // ######################## ACTION any_cast ########################
