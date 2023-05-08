@@ -34,9 +34,6 @@ namespace aa {
 template <typename Any, typename Method>
 struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {};
 
-template <typename Method, typename Any>
-using plugin_t = typename plugin<Any, Method>::type;
-
 // ######################## compilt time information about Methods(Traits) ########################
 
 // Searches for Method::signature_type if exist, or instanciates
@@ -403,10 +400,11 @@ struct mate {
     return friend_.alloc;
   }
 };
-
+template <typename Any, anyany_method_concept Method>
+using plugin_t = typename plugin<Any, Method>::type;
 // creates type from which you can inherit from to get sum of Methods plugins
 template <typename CRTP, anyany_method_concept... Methods>
-using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<Methods, CRTP>...>;
+using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
 
 // non nullable non owner view to any type which satisfies Methods...
 template <anyany_method_concept... Methods>
