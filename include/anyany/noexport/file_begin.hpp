@@ -63,4 +63,8 @@ Try set it manually (see anyany/CMakeLists.txt for example)
    public:                                                                   \
     static constexpr inline bool value = check_fn_impl<std::decay_t<U>>(0);  \
   }
+#ifdef __clang__
 #define ANYANY_LIFETIMEBOUND [[clang::lifetimebound]]
+#else
+#define ANYANY_LIFETIMEBOUND
+#endif

@@ -1039,7 +1039,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   static_assert(noexport::is_byte_like_v<typename alloc_traits::value_type>);
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
- 
   using base_any_type = basic_any;
   using methods_list = ::aa::type_list<Methods...>;
 
