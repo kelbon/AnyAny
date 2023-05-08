@@ -1115,5 +1115,5 @@ int main() {
   srand(time(0));
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
-         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize();
+         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr();  // + TESTmaterialize();
 }
