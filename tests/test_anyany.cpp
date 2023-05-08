@@ -809,7 +809,36 @@ TEST(subtable_ptr) {
   error_if(std::abs(p_end2 - p_end1) != sizeof(typename m2<2>::value_type));
   return error_count;
 }
-
+template<typename Alloc, size_t SooS>
+struct inserter {
+  template <typename... Ts>
+  using type = aa::basic_any<Alloc, SooS, Ts...>;
+};
+TEST(materialize) {
+  auto test = [&](auto type_list_v, auto alloc, auto soos) {
+    std::string s = "hello world";
+    aa::insert_flatten_into<aa::poly_ref, decltype(type_list_v)> ref0 = s;
+    aa::const_poly_ref ref1 = ref0;
+    aa::stateful::ref ref2 = ref0;
+    aa::stateful::cref ref3 = ref0;
+    std::vector v{
+        aa::materialize<decltype(alloc), soos.value>(ref0),
+        aa::materialize<decltype(alloc), soos.value>(ref1),
+        aa::materialize<decltype(alloc), soos.value>(ref2),
+        aa::materialize<decltype(alloc), soos.value>(ref3),
+    };
+    error_if(
+        std::any_of(begin(v), end(v),
+                    [obj = aa::insert_flatten_into<inserter<decltype(alloc), soos.value>::template type,
+                                                   decltype(type_list_v)>(s)](auto& x) { return x != obj; }));
+  };
+  test(aa::interface_alias<aa::destroy, aa::copy, aa::equal_to>{}, aa::default_allocator{},
+       std::integral_constant<size_t, aa::default_any_soos>{});
+  test(
+      aa::interface_alias<aa::equal_to, aa::destroy, aa::destroy, aa::copy_with<aa::unreachable_allocator>>{},
+      aa::unreachable_allocator{}, std::integral_constant<size_t, aa::default_any_soos>{});
+  return error_count;
+}
 int main() {
   std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile time checks
@@ -1086,5 +1115,5 @@ int main() {
   srand(time(0));
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
-         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr();
+         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize();
 }
