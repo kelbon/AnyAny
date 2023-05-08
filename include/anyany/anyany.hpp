@@ -1039,20 +1039,20 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   static_assert(noexport::is_byte_like_v<typename alloc_traits::value_type>);
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
-
   using base_any_type = basic_any;
   using methods_list = ::aa::type_list<Methods...>;
 
  private:
-  template <typename...>
-  struct remove_utility_methods {};
   template <typename... Methods1>
-  struct remove_utility_methods<destroy, Methods1...> {
+  struct remove_utility_methods {
+    // only way to create basic_any without first 'destroy' method - aa::materialize
     using ptr = poly_ptr<Methods1...>;
     using const_ptr = const_poly_ptr<Methods1...>;
     using ref = poly_ref<Methods1...>;
     using const_ref = const_poly_ref<Methods1...>;
   };
+  template <typename... Methods1>
+  struct remove_utility_methods<destroy, Methods1...> : remove_utility_methods<Methods1...> {};
 
   using purified = remove_utility_methods<Methods...>;
 
@@ -1303,11 +1303,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
 // ######################## materialize(create any_with from polymorphic reference)
 
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods,
-          std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, Methods...> &&
-                            noexport::contains_v<destroy, Methods...>),
-                           int> = 0>
-basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{}) {
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods>
+auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
+    -> std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, Methods...> &&
+                         noexport::contains_v<destroy, Methods...>),
+                        basic_any<Alloc, SooS, Methods...>> {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
   mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
       mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
@@ -1316,13 +1316,13 @@ basic_any<Alloc, SooS, Methods...> materialize(const_poly_ref<Methods...> ref, A
 }
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
   template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \
-  AA_ALWAYS_INLINE auto materialize(TEMPLATE<Methods...> value, Alloc alloc = Alloc{})               \
-      ->decltype(materialize<Alloc, SooS>(TRANSFORM, std::move(alloc))) {                            \
-    return materialize<Alloc, SooS>(TRANSFORM, std::move(alloc));                                    \
+  AA_ALWAYS_INLINE auto materialize(const TEMPLATE<Methods...>& value, Alloc alloc = Alloc{})        \
+      ->decltype(materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc))) {                \
+    return materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc));                        \
   }
 AA_DECLARE_MATERIALIZE(poly_ref, const_poly_ref(value))
-AA_DECLARE_MATERIALIZE(stateful::ref, value.get_view())
-AA_DECLARE_MATERIALIZE(stateful::cref, value.get_view())
+AA_DECLARE_MATERIALIZE(stateful::ref, const_poly_ref(value.get_view()))
+AA_DECLARE_MATERIALIZE(stateful::cref, const_poly_ref(value.get_view()))
 #undef AA_DECLARE_MATERIALIZE
 
 // ######################## ACTION any_cast ########################
@@ -1439,13 +1439,23 @@ struct any_cast_fn<T, anyany_poly_traits> {
       throw aa::bad_cast{};
     return *ptr;
   }
+  template<typename... Methods>
+  decltype(auto) operator()(const stateful::ref<Methods...>& r) const {
+    return (*this)(r.get_view());
+  }
+  template <typename... Methods>
+  decltype(auto) operator()(const stateful::cref<Methods...>& r) const {
+    return (*this)(r.get_view());
+  }
 };
 
 template <typename T, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits>
 constexpr inline any_cast_fn<T, Traits> any_cast = {};
 
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
-using basic_any_with = basic_any<Alloc, SooS, destroy, Methods...>;
+using basic_any_with =
+    std::conditional_t<noexport::contains_v<destroy, Methods...>, basic_any<Alloc, SooS, Methods...>,
+                       basic_any<Alloc, SooS, destroy, Methods...>>;
 
 template <anyany_method_concept... Methods>
 using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
@@ -1459,7 +1469,7 @@ using cref = const_poly_ref<Methods...>;
 // just an alias for set of interface requirements, may be used later in 'insert_flatten_into'
 template<typename...MethodOrInterfaceAlias>
 using interface_alias = type_list<MethodOrInterfaceAlias...>;
-// Methods may be aa::compound_method<...> or just anyany Methods
+// Methods may be aa::interface_alias<...> or just anyany Methods
 // using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>; 
 // example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
 // same as aa::any_with<next, is_done, aa::move, foo, bar>;
