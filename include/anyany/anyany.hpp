@@ -32,7 +32,9 @@ namespace aa {
 // if deducing this supported, typename Method::plugin
 // or returns 'void' which means Method has no plugin(not a error)
 template <typename Any, typename Method>
-struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {};
+struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {
+  using aa_not_specialized_tag = int;
+};
 
 // ######################## compilt time information about Methods(Traits) ########################
 
@@ -400,8 +402,21 @@ struct mate {
     return friend_.alloc;
   }
 };
+
+namespace noexport {
+
+// if not specialized, then ::type searched,
+// if specialized by user, then type itself used
+template <typename Plugin, typename = typename Plugin::aa_not_specialized_tag>
+auto get_plugin(int) -> typename Plugin::type;
+template <typename Plugin>
+auto get_plugin(...) -> Plugin;
+
+}  // namespace noexport
+
 template <typename Any, anyany_method_concept Method>
-using plugin_t = typename plugin<Any, Method>::type;
+using plugin_t = decltype(noexport::get_plugin<plugin<Any, Method>>(0));
+
 // creates type from which you can inherit from to get sum of Methods plugins
 template <typename CRTP, anyany_method_concept... Methods>
 using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
@@ -1028,6 +1043,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using alloc_pointer_type = typename alloc_traits::pointer;
 
   friend struct mate;
+  template<typename, size_t, typename...>
+  friend struct basic_any;
 
  public:
   template <typename Method>
@@ -1202,14 +1219,22 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
   basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept {
+    // same logic as 'move_value_from', but for other type
     if (!other.has_value())
       return;
-    static_assert(sizeof(*this) == sizeof(other) &&
-                  alignof(basic_any) == alignof(basic_any<Alloc, SooS, OtherMethods...>));
-    auto* this_ = noexport::construct_at(reinterpret_cast<basic_any<Alloc, SooS, OtherMethods...>*>(this),
-                                         std::move(other));
-    std::launder(reinterpret_cast<decltype(this)>(this_))->vtable_ptr =
-        subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
+    // `move` is noexcept (invariant of small state)
+    // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
+    if (!other.memory_allocated()) {
+      if constexpr (basic_any<Alloc, SooS, OtherMethods...>::template has_method<move>)
+        invoke<move>(other, value_ptr);
+      else
+        invoke<noexport::some_copy_method<OtherMethods...>>(other).move_fn(other.value_ptr, value_ptr);
+    } else {
+      value_ptr = std::exchange(other.value_ptr, other.data);
+      size_allocated = other.size_allocated;
+    }
+    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+    other.vtable_ptr = nullptr;
   }
 
   // force allocate versions
