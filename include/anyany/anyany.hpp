@@ -333,14 +333,14 @@ struct subtable_ptr_fn {
     constexpr std::size_t Index =
         noexport::find_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{});
     const auto* new_ptr = std::addressof(get<Index>(*ptr));
-    return std::launder(reinterpret_cast<const vtable<ToMethods...>*>(new_ptr));
+    return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
   }
   template <anyany_method_concept... FromMethods>
   auto operator()(vtable<FromMethods...>* ptr) const noexcept
       -> std::enable_if_t<noexport::has_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{}),
                           vtable<ToMethods...>*> {
     const vtable<FromMethods...>* cptr = ptr;
-    return std::launder(const_cast<vtable<ToMethods...>*>((*this)(cptr)));
+    return const_cast<vtable<ToMethods...>*>((*this)(cptr));
   }
   constexpr const vtable<ToMethods...>* operator()(const vtable<ToMethods...>* ptr) const noexcept {
     return ptr;
