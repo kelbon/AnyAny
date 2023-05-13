@@ -75,15 +75,17 @@ concept empty_type = std::is_empty_v<T>;
 
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod = noexport::empty_type<T> && noexport::has_signature<T> &&
-                       (!noexport::signature_is_function<T>) && requires {
-                                                                  typename T::value_type;
-                                                                  // T::do_value<X>(),
-                                                                  // where 'do_value' is a
-                                                                  // static consteval function template and X
-                                                                  // - some type for which 'do_value'
-                                                                  // exist(not substitution failure)
-                                                                };
+concept pseudomethod =
+    noexport::empty_type<T> && noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
+    requires {
+      typename T::value_type;
+      // T::do_value<X>(),
+      // where 'do_value' is a
+      // static consteval function template and X
+      // - some type for which 'do_value'
+      // exist(not substitution failure)
+    } && std::is_trivially_copyable_v<typename T::value_type>;  // for guarantee that poly_ref(specialization
+                                                                // with 1 Method)/vtable is trivially copyable
 
 template <typename T>
 concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> && noexport::signature_is_function<T>
@@ -375,7 +377,7 @@ using not_const_type = std::negation<std::is_const<T>>;
 struct mate {
  private:
   AA_IS_VALID(has_field_poly_, decltype(std::declval<T>().poly_));
-
+  AA_IS_VALID(has_field_vtable_value, decltype(std::declval<T>().vtable_value));
  public:
   template <typename Friend>
   AA_ALWAYS_INLINE static constexpr auto& get_value_ptr(Friend& friend_) noexcept {
@@ -385,11 +387,22 @@ struct mate {
       return friend_.value_ptr;
   }
   template <typename Friend>
-  AA_ALWAYS_INLINE static constexpr auto& get_vtable_ptr(Friend& friend_) noexcept {
+  AA_ALWAYS_INLINE static constexpr auto* get_vtable_ptr(Friend& friend_) noexcept {
     if constexpr (has_field_poly_<Friend>::value)
       return get_vtable_ptr(friend_.poly_);
+    else if constexpr (has_field_vtable_value<Friend>::value)
+      return std::addressof(friend_.vtable_value);
     else
       return friend_.vtable_ptr;
+  }
+  template <typename Friend, typename Vtable>
+  AA_ALWAYS_INLINE static constexpr void set_vtable_ptr(Friend& friend_, Vtable* vtable_ptr) {
+    if constexpr (has_field_poly_<Friend>::value)
+      set_vtable_ptr(friend_.poly_, vtable_ptr);
+    else if constexpr (has_field_vtable_value<Friend>::value)
+      friend_.vtable_value = *vtable_ptr;
+    else
+      friend_.vtable_ptr = vtable_ptr;
   }
   // stateful ref/cref
   template <typename Friend>
@@ -421,21 +434,51 @@ using plugin_t = decltype(noexport::get_plugin<plugin<Any, Method>>(0));
 template <typename CRTP, anyany_method_concept... Methods>
 using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
 
-// non nullable non owner view to any type which satisfies Methods...
-template <anyany_method_concept... Methods>
-struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
+namespace noexport {
+
+template <typename... Methods>
+struct vtable_view {
+  using aa_polymorphic_tag = int;
+
+ protected:
+  friend struct aa::mate;
+  const vtable<Methods...>* vtable_ptr = nullptr;
+
+  constexpr vtable_view() noexcept = default;
+  AA_ALWAYS_INLINE constexpr vtable_view(const vtable<Methods...>* vtable_ptr) noexcept
+      : vtable_ptr(vtable_ptr) {
+  }
+};
+// specialization for one Method, containing vtable itself
+template <typename Method>
+struct vtable_view<Method> {
   using aa_polymorphic_tag = int;
 
  private:
-  const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
-  void* value_ptr;
+  friend struct aa::mate;
+  vtable<Method> vtable_value{};
 
+ public:
+  constexpr vtable_view() noexcept = default;
+  AA_ALWAYS_INLINE constexpr vtable_view(const vtable<Method>* vtable_ptr) noexcept
+      : vtable_value(*vtable_ptr) {
+  }
+};
+
+}  // namespace noexport
+
+// non nullable non owner view to any type which satisfies Methods...
+template <anyany_method_concept... Methods>
+struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...>, noexport::vtable_view<Methods...> {
+ private:
+  void* value_ptr = nullptr;
+
+  using vtable_view_t = noexport::vtable_view<Methods...>;
   friend struct mate;
-  template <anyany_method_concept...>
+  template<anyany_method_concept...>
   friend struct poly_ptr;
   // only for poly_ptr implementation
-  constexpr poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
-  }
+  constexpr poly_ref() noexcept = default;
 
  public:
   // if user want rebind reference it must be explicit: REF = REF(value);
@@ -455,14 +498,14 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
       std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_polymorphic<T>, exist_for<T, Methods...>>,
                        int> = 0>
   constexpr poly_ref(T& value ANYANY_LIFETIMEBOUND) noexcept
-      : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
+      : vtable_view_t(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
   }
 
   template <
       typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr poly_ref(poly_ref<FromMethods...> r) noexcept
-      : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
+      : vtable_view_t(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
   }
   // returns poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
@@ -471,19 +514,16 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...> {
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
 template <anyany_method_concept... Methods>
-struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods...> {
-  using aa_polymorphic_tag = int;
-
+struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods...>, noexport::vtable_view<Methods...> {
  private:
-  const vtable<Methods...>* vtable_ptr;  // unspecified value if value_ptr == nullptr
-  const void* value_ptr;
+  using vtable_view_t = noexport::vtable_view<Methods...>;
+  const void* value_ptr = nullptr;
 
   friend struct mate;
   template <anyany_method_concept...>
   friend struct const_poly_ptr;
   // only for const_poly_ptr implementation
-  constexpr const_poly_ref() noexcept : vtable_ptr(nullptr), value_ptr(nullptr) {
-  }
+  constexpr const_poly_ref() noexcept = default;
 
  public:
   AA_TRIVIAL_COPY_EXPLICIT_REBIND(const_poly_ref);
@@ -492,23 +532,23 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
   constexpr const_poly_ref(const T& value ANYANY_LIFETIMEBOUND) noexcept
-      : vtable_ptr(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
+      : vtable_view_t(addr_vtable_for<T, Methods...>), value_ptr(std::addressof(value)) {
   }
   // from non-const ref
   constexpr const_poly_ref(poly_ref<Methods...> r) noexcept
-      : vtable_ptr(mate::get_vtable_ptr(r)), value_ptr(mate::get_value_ptr(r)) {
+      : vtable_view_t(mate::get_vtable_ptr(r)), value_ptr(mate::get_value_ptr(r)) {
   }
   template <
       typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(const_poly_ref<FromMethods...> r) noexcept
-      : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
+      : vtable_view_t(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
   }
   template <
       typename... FromMethods,
       typename = std::void_t<decltype(subtable_ptr<Methods...>(std::declval<vtable<FromMethods...>*>()))>>
   constexpr const_poly_ref(poly_ref<FromMethods...> r) noexcept
-      : vtable_ptr(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
+      : vtable_view_t(subtable_ptr<Methods...>(mate::get_vtable_ptr(r))), value_ptr(mate::get_value_ptr(r)) {
   }
   // returns const_poly_ptr<Methods...>
   constexpr auto operator&() const noexcept;
@@ -540,8 +580,8 @@ struct poly_ptr {
             std::enable_if_t<std::conjunction_v<not_const_type<T>, is_not_any<T>, exist_for<T, Methods...>>,
                              int> = 0>
   constexpr poly_ptr(T* ptr ANYANY_LIFETIMEBOUND) noexcept {
+    mate::set_vtable_ptr(*this, addr_vtable_for<T, Methods...>);
     mate::get_value_ptr(*this) = ptr;
-    mate::get_vtable_ptr(*this) = addr_vtable_for<T, Methods...>;
   }
   // from mutable pointer to Any
   template <typename Any, std::enable_if_t<(std::conjunction_v<not_const_type<Any>, is_any<Any>> &&
@@ -550,7 +590,7 @@ struct poly_ptr {
                                            int> = 0>
   constexpr poly_ptr(Any* ptr ANYANY_LIFETIMEBOUND) noexcept {
     if (ptr != nullptr && ptr->has_value()) [[likely]] {
-      mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(*ptr));
+      mate::set_vtable_ptr(*this, subtable_ptr<Methods...>(mate::get_vtable_ptr(*ptr)));
       mate::get_value_ptr(*this) = mate::get_value_ptr(*ptr);
     }
   }
@@ -559,17 +599,14 @@ struct poly_ptr {
                              int> = 0>
   constexpr poly_ptr(poly_ptr<FromMethods...> p) noexcept {
     if (p != nullptr) [[likely]] {
+      mate::set_vtable_ptr(*this, subtable_ptr<Methods...>(mate::get_vtable_ptr(p)));
       mate::get_value_ptr(*this) = mate::get_value_ptr(p);
-      mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(p));
     }
   }
   // observers
 
   constexpr void* raw() const noexcept {
     return mate::get_value_ptr(*this);
-  }
-  constexpr const vtable<Methods...>* raw_vtable_ptr() const noexcept {
-    return mate::get_vtable_ptr(*this);
   }
   constexpr bool has_value() const noexcept {
     return mate::get_value_ptr(*this) != nullptr;
@@ -623,8 +660,8 @@ struct const_poly_ptr {
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
   constexpr const_poly_ptr(const T* ptr ANYANY_LIFETIMEBOUND) noexcept {
+    mate::set_vtable_ptr(*this, addr_vtable_for<T, Methods...>);
     mate::get_value_ptr(*this) = ptr;
-    mate::get_vtable_ptr(*this) = addr_vtable_for<T, Methods...>;
   }
   // from pointer to Any
   template <typename Any,
@@ -633,14 +670,14 @@ struct const_poly_ptr {
                              int> = 0>
   constexpr const_poly_ptr(const Any* p ANYANY_LIFETIMEBOUND) noexcept {
     if (p != nullptr && p->has_value()) [[likely]] {
-      mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(*p));
+      mate::set_vtable_ptr(*this, subtable_ptr<Methods...>(mate::get_vtable_ptr(*p)));
       mate::get_value_ptr(*this) = mate::get_value_ptr(*p);
     }
   }
   // from non-const poly pointer
   constexpr const_poly_ptr(poly_ptr<Methods...> p) noexcept {
+    mate::set_vtable_ptr(*this, mate::get_vtable_ptr(p));
     mate::get_value_ptr(*this) = mate::get_value_ptr(p);
-    mate::get_vtable_ptr(*this) = mate::get_vtable_ptr(p);
   }
   template <
       typename... FromMethods,
@@ -650,8 +687,8 @@ struct const_poly_ptr {
       *this = nullptr;
       return;
     }
+    mate::set_vtable_ptr(*this, subtable_ptr<Methods...>(mate::get_vtable_ptr(p)));
     mate::get_value_ptr(*this) = mate::get_value_ptr(p);
-    mate::get_vtable_ptr(*this) = subtable_ptr<Methods...>(mate::get_vtable_ptr(p));
   }
   template <
       typename... FromMethods,
@@ -663,9 +700,6 @@ struct const_poly_ptr {
 
   constexpr const void* raw() const noexcept {
     return mate::get_value_ptr(*this);
-  }
-  constexpr const vtable<Methods...>* raw_vtable_ptr() const noexcept {
-    return mate::get_vtable_ptr(*this);
   }
   constexpr bool has_value() const noexcept {
     return raw() != nullptr;
@@ -704,15 +738,15 @@ const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 template <anyany_method_concept... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
   poly_ptr<Methods...> result;
+  mate::set_vtable_ptr(result, mate::get_vtable_ptr(*this));
   mate::get_value_ptr(result) = value_ptr;
-  mate::get_vtable_ptr(result) = vtable_ptr;
   return result;
 }
 template <anyany_method_concept... Methods>
 constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   const_poly_ptr<Methods...> result;
+  mate::set_vtable_ptr(result, mate::get_vtable_ptr(*this));
   mate::get_value_ptr(result) = value_ptr;
-  mate::get_vtable_ptr(result) = vtable_ptr;
   return result;
 }
 
@@ -721,8 +755,8 @@ constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
 template <typename... Methods>
 constexpr poly_ptr<Methods...> const_pointer_cast(const_poly_ptr<Methods...> from) noexcept {
   poly_ptr<Methods...> result;
+  mate::set_vtable_ptr(result, mate::get_vtable_ptr(from));
   mate::get_value_ptr(result) = const_cast<void*>(mate::get_value_ptr(from));
-  mate::get_vtable_ptr(result) = mate::get_vtable_ptr(from);
   return result;
 }
 
@@ -796,8 +830,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   }
   constexpr poly_ref<Methods...> get_view() const noexcept ANYANY_LIFETIMEBOUND {
     poly_ptr<Methods...> ptr;
+    mate::set_vtable_ptr(ptr, &vtable_value);
     mate::get_value_ptr(ptr) = value_ptr;
-    mate::get_vtable_ptr(ptr) = &vtable_value;
     return *ptr;
   }
 };
@@ -882,8 +916,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
   }
   constexpr const_poly_ref<Methods...> get_view() const noexcept ANYANY_LIFETIMEBOUND {
     const_poly_ptr<Methods...> ptr;
+    mate::set_vtable_ptr(ptr, &vtable_value);
     mate::get_value_ptr(ptr) = value_ptr;
-    mate::get_vtable_ptr(ptr) = &vtable_value;
     return *ptr;
   }
 };
@@ -1332,9 +1366,9 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
                          noexport::contains_v<destroy, Methods...>),
                         basic_any<Alloc, SooS, Methods...>> {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
+  mate::set_vtable_ptr(result, mate::get_vtable_ptr(ref));
   mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
       mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
-  mate::get_vtable_ptr(result) = mate::get_vtable_ptr(ref);
   return result;
 }
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \

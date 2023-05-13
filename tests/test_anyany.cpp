@@ -620,7 +620,6 @@ TEST(ptr_behavior) {
   int x = 10;
   aa::poly_ptr<print> ptr;
   error_if(ptr.raw() != nullptr);
-  error_if(ptr.raw_vtable_ptr() != nullptr);
   aa::poly_ptr<aa::type_info, print> ptr1 = &s;
   ptr1->print();
   aa::poly_ptr<aa::type_info, print> ptr2 = &x;
@@ -711,7 +710,7 @@ TEST(type_descriptor_and_plugins_interaction) {
   static_assert(!std::derived_from<one_t, aa::type_info::plugin<one_t>>);
   check(ref);
   static_assert(std::is_same_v<decltype(aa::mate::get_vtable_ptr(ref)),
-                               const aa::vtable<aa::type_info, aa::equal_to, aa::spaceship>*&>);
+                               const aa::vtable<aa::type_info, aa::equal_to, aa::spaceship>*>);
   check(aa::poly_ref<aa::type_info>(ref));
   check(aa::poly_ref<aa::type_info>(i));
   check(aa::poly_ref<aa::equal_to>(ref));

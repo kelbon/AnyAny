@@ -38,10 +38,9 @@ using function = basic_function<Signature, aa::copy>;
 template <typename Signature>
 using move_only_function = basic_function<Signature, aa::move>;
 
-// lightweight wrapper, stores pointer to operator() and const void* to value
-// most effective way to erase function
+// lightweight wrapper, most effective way to erase function
 template <typename Signature>
-using function_ref = aa::stateful::cref<aa::call<Signature>>;
+using function_ref = aa::cref<aa::call<Signature>>;
 
 // similar to std::any, but better...
 using any = aa::any_with<aa::copy>;
