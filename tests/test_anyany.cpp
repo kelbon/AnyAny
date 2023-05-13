@@ -292,7 +292,7 @@ TEST(special_member_functions) {
     if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
       auto vec_copy = vec_anys;
       error_if(vec_copy != vec_anys);
-      }
+    }
   };
   do_test(aa::any_with<aa::copy, aa::equal_to>{});
   do_test(aa::any_with<aa::move, aa::equal_to>{});
@@ -573,6 +573,9 @@ TEST(transmutate_ctors) {
     std::vector<aa::any_with<aa::move, aa::equal_to>> vec_transmutate_move;
     for (auto& x : vec_anys)
       vec_transmutate_move.push_back(std::move(x));
+    error_if(std::any_of(begin(vec_anys), end(vec_anys), [](const auto& x) { return x.has_value(); }));
+    error_if(std::any_of(begin(vec_transmutate_move), end(vec_transmutate_move),
+                         [](const auto& x) { return !x.has_value(); }));
     error_if(std::any_of(begin(vec_transmutate_move), end(vec_transmutate_move),
                          [&](auto& x) { return aa::any_cast<const std::vector<int>&>(x) != vec; }));
     error_if(std::any_of(begin(vec_transmutate_move), end(vec_transmutate_move),
