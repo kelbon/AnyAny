@@ -636,7 +636,7 @@ Example:
 ```C++
 
 auto ship_asteroid = [](spaceship s, asteroid a) -> std::string { ... }
-auti ship_star = [](spaceship s, star) -> std::string { ... }
+auto ship_star = [](spaceship s, star) -> std::string { ... }
 auto star_star = [](star a, star b) -> std::string { ... }
 auto ship_ship = [](spaceship a, spaceship b) -> std::string { ... }
 
@@ -901,13 +901,29 @@ void foo() {
 ``` 
  
 ## Using with CMake
-1. Clone this repository into folder with your project
+Fetch content:
+```CMake
+
+include(FetchContent)
+FetchContent_Declare(
+  AnyAny
+  GIT_REPOSITORY https://github.com/kelbon/AnyAny
+  GIT_TAG        origin/main
+)
+FetchContent_MakeAvailable(AnyAny)
+target_link_libraries(MyTargetName anyanylib)
+```
+<details>
+<summary>or use add_subdirectory</summary>
+  1. Clone this repository into folder with your project
 2. Add these lines to it's CMakeLists.txt
   
 ```CMake
 add_subdirectory(AnyAny)
-target_link_libraries(MyProjectName PUBLIC anyanylib)
+target_link_libraries(MyTargetName PUBLIC anyanylib)
 ```
+</details>
+
 ### `build`
   
 ```shell
