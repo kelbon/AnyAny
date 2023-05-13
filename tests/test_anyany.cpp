@@ -292,7 +292,7 @@ TEST(special_member_functions) {
     if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
       auto vec_copy = vec_anys;
       error_if(vec_copy != vec_anys);
-    }
+      }
   };
   do_test(aa::any_with<aa::copy, aa::equal_to>{});
   do_test(aa::any_with<aa::move, aa::equal_to>{});
@@ -552,6 +552,37 @@ TEST(transmutate_ctors) {
   auto copyv2 = std::move(v2);
   auto copyv1 = v1;
   error_if(copyv2.type_descriptor() != copyv1.type_descriptor());
+  const std::vector<int> vec(100, 5);
+  auto do_test = [&](auto x) {
+    std::vector<decltype(x)> vec_anys;
+    vec_anys.reserve(5);
+    vec_anys.emplace_back(vec);
+    vec_anys.emplace_back(aa::allocator_arg, aa::default_allocator{}, vec);
+    vec_anys.emplace_back(std::in_place_type<std::vector<int>>, vec);
+    vec_anys.emplace_back(aa::force_stable_pointers, vec);
+    vec_anys.emplace_back(aa::force_stable_pointers, std::in_place_type<std::vector<int>>, vec);
+    if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
+      std::vector<aa::any_with<aa::move, aa::equal_to>> vec_transmutate;
+      for (auto& x : vec_anys)
+        vec_transmutate.push_back(x);
+      error_if(std::any_of(begin(vec_transmutate), end(vec_transmutate),
+                           [&](auto& x) { return aa::any_cast<std::vector<int>&>(x) != vec; }));
+      error_if(std::any_of(begin(vec_transmutate), end(vec_transmutate),
+                           [&](auto& x) { return x != vec_transmutate.front(); }));
+    }
+    std::vector<aa::any_with<aa::move, aa::equal_to>> vec_transmutate_move;
+    for (auto& x : vec_anys)
+      vec_transmutate_move.push_back(std::move(x));
+    error_if(std::any_of(begin(vec_transmutate_move), end(vec_transmutate_move),
+                         [&](auto& x) { return aa::any_cast<const std::vector<int>&>(x) != vec; }));
+    error_if(std::any_of(begin(vec_transmutate_move), end(vec_transmutate_move),
+                         [&](auto& x) { return x != vec_transmutate_move.front(); }));
+  };
+  do_test(aa::any_with<aa::copy, aa::destroy, aa::move, aa::equal_to>{});
+  do_test(aa::any_with<aa::destroy, aa::move, aa::equal_to>{});
+  do_test(aa::any_with<aa::copy, aa::move, aa::copy, aa::destroy, aa::move, aa::equal_to>{});
+  // uses only move from copy_with<...> Method
+  do_test(aa::any_with<aa::copy_with<aa::unreachable_allocator>, aa::destroy, aa::move, aa::equal_to>{});
   return error_count;
 }
 TEST(stateful) {
