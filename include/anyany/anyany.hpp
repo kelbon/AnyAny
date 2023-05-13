@@ -461,7 +461,7 @@ struct vtable_view<Method> {
  public:
   constexpr vtable_view() noexcept = default;
   AA_ALWAYS_INLINE constexpr vtable_view(const vtable<Method>* vtable_ptr) noexcept
-      : vtable_value(aa::get<0>(*vtable_ptr)) {
+      : vtable_value(*vtable_ptr) {
   }
 };
 
