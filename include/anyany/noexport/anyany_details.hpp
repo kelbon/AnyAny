@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <type_traits>
 #include <utility>  // forward
+#include <cstring>  // memcpy
 #ifdef AA_HAS_CPP20
 #include <memory>   // construct_at/destroy_at
 #endif
