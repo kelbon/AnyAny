@@ -298,7 +298,7 @@ static void* trivial_copy_small_fn_empty_alloc(const void* src_raw, void* dest) 
 
 template <size_t Sizeof, typename Alloc>
 static void* trivial_copy_big_fn(const void* src_raw, void* dest, void* alloc_) {
-  static_assert(is_byte_like<typename Alloc::value_type>);
+  static_assert(is_byte_like_v<typename Alloc::value_type>);
   Alloc& alloc = *reinterpret_cast<Alloc*>(alloc_);
   void* result = alloc.allocate(Sizeof);
   std::memcpy(result, src_raw, Sizeof);
