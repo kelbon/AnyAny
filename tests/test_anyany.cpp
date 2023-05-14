@@ -790,7 +790,7 @@ void anyany_concepts_test() {
   static_assert(!aa::regular_method<void>);
   static_assert(!aa::const_method<void>);
   static_assert(!aa::const_method<int>);
-  static_assert(!aa::const_method<aa::move>);
+  static_assert(aa::const_method<aa::move>);
   static_assert(aa::const_method<aa::copy>);
   static_assert(aa::const_method<aa::destroy>);
   static_assert(aa::const_method<print>);

@@ -161,18 +161,51 @@ struct exist_for {
 // ######################## BASIC METHODS for basic_any ########################
 
 struct destroy {
+ private:
   template <typename T>
-  static auto do_invoke(const T& self) noexcept -> std::enable_if_t<std::is_nothrow_destructible_v<T>> {
-    noexport::destroy_at(std::addressof(self));
+  static void destroy_fn(const void* p) noexcept {
+    noexport::destroy_at(reinterpret_cast<const T*>(p));
+  }
+  static void noop_fn(const void*) noexcept {
+  }
+
+ public:
+  using value_type = void (*)(const void*) noexcept;
+  template <typename T>
+  static AA_CONSTEVAL_CPP20 auto do_value() noexcept
+      -> std::enable_if_t<std::is_nothrow_destructible_v<T>, value_type> {
+    // makes address of noop_fn same for all trivial types in program, increase chance to be in processor
+    // cache, this reduces binary size and improves performance
+    if constexpr (std::is_trivially_destructible_v<T>)
+      return &noop_fn;
+    else
+      return &destroy_fn<T>;
   }
 };
 
 struct move {
+ private:
+  static void noop_fn(void*, void*) noexcept {
+  }
+
+ public:
+  using value_type = void (*)(void*, void*) noexcept;
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
-  // constructible. Actially relocates
+  // constructible. Actually relocates
   template <typename T>
-  static auto do_invoke(T& src, void* dest) noexcept -> std::enable_if_t<std::is_move_constructible_v<T>> {
-    noexport::relocate(std::addressof(src), reinterpret_cast<T*>(dest));
+  static AA_CONSTEVAL_CPP20 auto do_value() noexcept
+      -> std::enable_if_t<(std::is_move_constructible_v<T> && std::is_nothrow_destructible_v<T>),
+                          value_type> {
+    // reduces count of functions as possible, because compiler cannot optimize them
+    if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
+                  std::is_trivially_destructible_v<T>)
+      return &noop_fn;
+    else if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>)
+      return &noexport::relocate_trivial<sizeof(T)>;
+    else if constexpr (std::is_nothrow_move_constructible_v<T>)
+      return &noexport::relocate<T>;
+    else
+      return nullptr;  // never called if may throw for strong exception guarantee
   }
 };
 
@@ -185,51 +218,41 @@ using default_allocator = std::allocator<std::byte>;
 template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
 struct copy_with {
  private:
-  // preconditions:
-  //    * no object under 'dest'
-  //    * atleast 'SooS' bytes under 'dest' and alignment == alignof(std::max_align_t)
-  // postconditions:
-  //    * returns pointer to created copy
-  //    * if return != 'dest', then value was allocated by 'alloc' and allocation size storoed under
-  //    'dest'(size_t)
-  template <typename T>
-  static void* copy_fn(const void* src_raw, void* dest, Alloc& alloc) {
-    static_assert(SooS >= sizeof(size_t));
-    const T& src = *reinterpret_cast<const T*>(src_raw);
-    if constexpr (noexport::is_fits_in_soo_buffer<T, SooS>) {
-      return noexport::construct_at(reinterpret_cast<T*>(dest), src);
+  template<typename T>
+  static AA_CONSTEVAL_CPP20 auto* select_copy_fn() {
+    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+      if constexpr (std::is_empty_v<T>)
+        return &noexport::noop_copy_fn_empty_alloc;
+      else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
+        return &noexport::trivial_copy_small_fn_empty_alloc<sizeof(T)>;
+      else if constexpr (std::is_trivially_copyable_v<T> && !noexport::is_fits_in_soo_buffer<T, SooS>)
+        return &noexport::trivial_copy_big_fn_empty_alloc<sizeof(T), Alloc>;
+      else
+        return &noexport::copy_fn_empty_alloc<T, Alloc, SooS>;
     } else {
-      constexpr size_t allocation_size = sizeof(T);
-      // no fancy pointers supported
-      auto* ptr = alloc.allocate(allocation_size);
-      if constexpr (std::is_nothrow_copy_constructible_v<T>) {
-        noexport::construct_at(reinterpret_cast<T*>(ptr), src);
-      } else {
-        try {
-          noexport::construct_at(reinterpret_cast<T*>(ptr), src);
-        } catch (...) {
-          alloc.deallocate(ptr, allocation_size);
-          throw;
-        }
-      }
-      noexport::construct_at(reinterpret_cast<std::size_t*>(dest), allocation_size);
-      return ptr;
+      if constexpr (std::is_empty_v<T>)
+        return &noexport::noop_copy_fn;
+      else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
+        return &noexport::trivial_copy_small_fn<sizeof(T)>;
+      else if constexpr (std::is_trivially_copyable_v<T> && !noexport::is_fits_in_soo_buffer<T, SooS>)
+        return &noexport::trivial_copy_big_fn<sizeof(T), Alloc>;
+      else
+        return &noexport::copy_fn<T, Alloc, SooS>;
     }
   }
-  template <typename T>
-  static void move_fn(void* src, void* dest) noexcept {
-    noexport::relocate(reinterpret_cast<T*>(src), reinterpret_cast<T*>(dest));
-  }
-
+  using copy_fn_t = std::conditional_t<(std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>),
+                                       void* (*)(const void*, void*), void* (*)(const void*, void*, void*)>;
  public:
   struct value_type {
-    void* (*copy_fn)(const void* src, void* dest, Alloc&);
-    void (*move_fn)(void* src, void* dest);
+    copy_fn_t copy_fn;
+    void (*move_fn)(void* src, void* dest) noexcept;
   };
   template <typename T>
   static AA_CONSTEVAL_CPP20 auto do_value()
-      -> std::enable_if_t<(std::is_copy_constructible_v<T> && std::is_move_constructible_v<T>), value_type> {
-    return value_type{&copy_fn<T>, &move_fn<T>};
+      -> std::enable_if_t<(std::is_copy_constructible_v<T> && std::is_move_constructible_v<T> &&
+                           std::is_nothrow_destructible_v<T>),
+                          value_type> {
+    return value_type{select_copy_fn<T>(), move::do_value<T>()};
   }
 };
 
@@ -975,7 +998,7 @@ struct invoke_fn<Method, type_list<Args...>> {
 template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
-  constexpr result_t<Method> operator()(const T& value) const noexcept {
+  [[nodiscard]] constexpr result_t<Method> operator()(const T& value) const noexcept {
     return mate::get_vtable_ptr(value)->template invoke<Method>();
   }
 };
@@ -1134,7 +1157,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (!other.has_value())
       return;
-    value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr, alloc);
+    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
+    } else {
+      value_ptr =
+          invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr, std::addressof(alloc));
+    }
     vtable_ptr = other.vtable_ptr;
   }
 
@@ -1245,7 +1273,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
       return;
-    value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
+    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr);
+    } else {
+      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
+    }
     vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
   template <typename... OtherMethods,
@@ -1260,7 +1292,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
       if constexpr (basic_any<Alloc, SooS, OtherMethods...>::template has_method<move>)
-        invoke<move>(other, value_ptr);
+        invoke<move>(other)(other.value_ptr, value_ptr);
       else
         invoke<noexport::some_copy_method<OtherMethods...>>(other).move_fn(other.value_ptr, value_ptr);
     } else {
@@ -1328,7 +1360,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
       if constexpr (has_method<move>)
-        invoke<move>(other, value_ptr);
+        invoke<move>(other)(other.value_ptr, value_ptr);
       else
         invoke<noexport::some_copy_method<Methods...>>(other).move_fn(other.value_ptr, value_ptr);
     } else {
@@ -1350,7 +1382,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     return size_allocated;
   }
   void destroy_value() noexcept {
-    invoke<destroy>(*this);
+    invoke<destroy> (*this)(value_ptr);
     if (memory_allocated()) {
       alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
       value_ptr = data;
@@ -1367,8 +1399,13 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
                         basic_any<Alloc, SooS, Methods...>> {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
   mate::set_vtable_ptr(result, mate::get_vtable_ptr(ref));
-  mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
-      mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
+  if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+    mate::get_value_ptr(result) =
+        invoke<copy_with<Alloc, SooS>>(ref).copy_fn(mate::get_value_ptr(ref), mate::get_value_ptr(result));
+  } else {
+    mate::get_value_ptr(result) = invoke<copy_with<Alloc, SooS>>(ref).copy_fn(
+        mate::get_value_ptr(ref), mate::get_value_ptr(result), mate::get_alloc(result));
+  }
   return result;
 }
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
