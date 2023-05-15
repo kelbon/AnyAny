@@ -1383,6 +1383,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // when allocates stores in size in unused buffer
     return size_allocated;
   }
+  // precondition - has_value() == true
   void destroy_value() noexcept {
     invoke<destroy> (*this)(value_ptr);
     if (memory_allocated()) {
