@@ -204,8 +204,6 @@ TEST(constructors) {
       return i * 2;
     }
   };
-  // TODO улучшить этот тест чекая всё что надо
-  // TODO отметить, что подобная оптимизация размера бинарника невозможна на виртуальных функциях
   boobl bval;
   aa::any_with<boo> l{std::in_place_type<aa::poly_ref<boo>>, bval};
   error_if(l.boo(15) != 30);
