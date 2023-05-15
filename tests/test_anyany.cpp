@@ -188,8 +188,41 @@ TEST(constructors) {
          test_type<Ts, true>{}),
      ...);
   };
-  repeat_test_for(aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial,
-                                big_non_trivial>{});
+  using test_types_pack =
+      aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial, big_non_trivial>;
+  repeat_test_for(test_types_pack{});
+  auto test_swap = [&]<typename Any>(std::type_identity<Any>, auto v1, auto v2) {
+    Any a = v1;
+    auto a_copy = a;
+    Any b = v2;
+    auto b_copy = b;
+    auto id1 = a.type_descriptor();
+    auto id2 = b.type_descriptor();
+    error_if(a != a_copy);
+    error_if(b != b_copy);
+    using std::swap;
+    swap(a, b);
+    error_if(a != b_copy);
+    error_if(b != a_copy);
+    error_if(id1 != b.type_descriptor());
+    error_if(id2 != a.type_descriptor());
+    swap(a, b);
+    error_if(a != a_copy);
+    error_if(b != b_copy);
+    error_if(id1 != a.type_descriptor());
+    error_if(id2 != b.type_descriptor());
+  };
+  auto do_test_swap_for_each_pair = [&]<typename T, typename... Ts>(aa::type_list<T, Ts...>) {
+    using tt1 = aa::any_with<aa::copy, aa::equal_to>;
+    (test_swap(std::type_identity<tt1>{}, T{}, Ts{}), ...);
+    using alloc = std::pmr::polymorphic_allocator<std::byte>;
+    using tt2 = aa::basic_any_with<alloc, aa::default_any_soos, aa::copy_with<alloc>, aa::equal_to>;
+    (test_swap(std::type_identity<tt2>{}, T{}, Ts{}), ...);
+  };
+  auto test_swap_for_each_pair = [&]<typename... Ts>(aa::type_list<Ts...>) {
+    (do_test_swap_for_each_pair(aa::type_list<Ts, Ts...>{}), ...);
+  };
+  test_swap_for_each_pair(test_types_pack{});
 #endif
   // problems with emplaceing std::array(aggregate construct) because of construct_at
   constexpr auto Xy = [] {};

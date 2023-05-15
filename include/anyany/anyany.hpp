@@ -1293,10 +1293,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` is noexcept (invariant of small state)
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
-      if constexpr (basic_any<Alloc, SooS, OtherMethods...>::template has_method<move>)
-        invoke<move>(other)(other.value_ptr, value_ptr);
-      else
-        invoke<noexport::some_copy_method<OtherMethods...>>(other).move_fn(other.value_ptr, value_ptr);
+      other.get_move_fn()(other.value_ptr, value_ptr);
     } else {
       value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
@@ -1327,6 +1324,42 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : basic_any(force_stable_pointers, std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
 
+  void swap(basic_any& other) noexcept {
+    using std::swap;
+    auto swap_one_allocated_case = [](basic_any& a, basic_any& b) {
+      // assumes 'a'.allocated value and 'b' - no
+      size_t allocated_bytes_count = a.size_allocated;
+      b.get_move_fn()(b.value_ptr, a.data);
+      b.value_ptr = std::exchange(a.value_ptr, a.data);
+      b.size_allocated = allocated_bytes_count;
+    };
+    if (memory_allocated()) {
+      if (other.memory_allocated()) {
+        swap(value_ptr, other.value_ptr);
+        swap(size_allocated, other.size_allocated);
+      } else {
+        swap_one_allocated_case(*this, other);
+      }
+    } else { // !this->memory_allocated()
+      if (other.memory_allocated()) {
+        swap_one_allocated_case(other, *this);
+      } else { // case when two on local storage
+        alignas(std::max_align_t) std::byte tmp[SooS];
+        auto* other_move_fn = other.get_move_fn();
+        other_move_fn(other.value_ptr, tmp);
+        get_move_fn()(value_ptr, other.data);
+        other_move_fn(tmp, data);
+      }
+    }
+    if constexpr (!alloc_traits::is_always_equal::value && alloc_traits::propagate_on_container_swap::value) {
+      if (alloc != other.alloc)
+        swap(alloc, other.alloc);
+    }
+    swap(vtable_ptr, other.vtable_ptr);
+  }
+  friend void swap(basic_any& a, basic_any& b) noexcept {
+    a.swap(b);
+  }
   // postconditions : has_value() == false
   void reset() noexcept {
     if (!has_value())
@@ -1354,6 +1387,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
 
  private:
+  constexpr auto* get_move_fn() const noexcept {
+    if constexpr (has_method<move>)
+      return invoke<move>(*this);
+    else
+      return invoke<noexport::some_copy_method<Methods...>>(*this).move_fn;
+  }
   // precodition - has_value() == false
   void move_value_from(basic_any&& other) noexcept {
     if (!other.has_value())
@@ -1361,10 +1400,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` is noexcept (invariant of small state)
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
-      if constexpr (has_method<move>)
-        invoke<move>(other)(other.value_ptr, value_ptr);
-      else
-        invoke<noexport::some_copy_method<Methods...>>(other).move_fn(other.value_ptr, value_ptr);
+      other.get_move_fn()(other.value_ptr, value_ptr);
     } else {
       value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
