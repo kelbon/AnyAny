@@ -196,7 +196,7 @@ struct move {
   static AA_CONSTEVAL_CPP20 auto do_value() noexcept
       -> std::enable_if_t<(std::is_move_constructible_v<T> && std::is_nothrow_destructible_v<T>),
                           value_type> {
-    if constexpr (!noexport::is_fits_in_soo_buffer<T, std::numeric_limits<size_t>::max()>)
+    if constexpr (!noexport::is_fits_in_soo_buffer<T, static_cast<size_t>(-1)>)
       return nullptr;  // never called if value on heap
     // reduces count of functions as possible, because compiler cannot optimize them
     if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
