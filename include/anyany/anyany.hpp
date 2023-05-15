@@ -196,16 +196,16 @@ struct move {
   static AA_CONSTEVAL_CPP20 auto do_value() noexcept
       -> std::enable_if_t<(std::is_move_constructible_v<T> && std::is_nothrow_destructible_v<T>),
                           value_type> {
+    if constexpr (!noexport::is_fits_in_soo_buffer<T, std::numeric_limits<size_t>::max()>)
+      return nullptr;  // never called if value on heap
     // reduces count of functions as possible, because compiler cannot optimize them
     if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
                   std::is_trivially_destructible_v<T>)
       return &noop_fn;
     else if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>)
       return &noexport::relocate_trivial<sizeof(T)>;
-    else if constexpr (std::is_nothrow_move_constructible_v<T>)
-      return &noexport::relocate<T>;
     else
-      return nullptr;  // never called if may throw for strong exception guarantee
+      return &noexport::relocate<T>;
   }
 };
 
@@ -221,20 +221,22 @@ struct copy_with {
   template<typename T>
   static AA_CONSTEVAL_CPP20 auto* select_copy_fn() {
     if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
-      if constexpr (std::is_empty_v<T>)
+      if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
+                    noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::noop_copy_fn_empty_alloc;
       else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::trivial_copy_small_fn_empty_alloc<sizeof(T)>;
-      else if constexpr (std::is_trivially_copyable_v<T> && !noexport::is_fits_in_soo_buffer<T, SooS>)
+      else if constexpr (std::is_trivially_copyable_v<T>)
         return &noexport::trivial_copy_big_fn_empty_alloc<sizeof(T), Alloc>;
       else
         return &noexport::copy_fn_empty_alloc<T, Alloc, SooS>;
     } else {
-      if constexpr (std::is_empty_v<T>)
+      if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
+                    noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::noop_copy_fn;
       else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::trivial_copy_small_fn<sizeof(T)>;
-      else if constexpr (std::is_trivially_copyable_v<T> && !noexport::is_fits_in_soo_buffer<T, SooS>)
+      else if constexpr (std::is_trivially_copyable_v<T>)
         return &noexport::trivial_copy_big_fn<sizeof(T), Alloc>;
       else
         return &noexport::copy_fn<T, Alloc, SooS>;

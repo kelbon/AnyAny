@@ -70,10 +70,127 @@ struct nomove {
   void operator=(nomove&&) = delete;
 };
 
+#if __cplusplus >= 202002L
+
+const float correct_float = 314.f;
+const int correct_int = 334156;
+const int correct_val = correct_int + correct_float;
+
+bool good_flag0 = false;
+
+struct empty {
+  void validate() const {
+  }
+  bool operator==(const empty&) const = default;
+};
+struct empty_non_trivial {
+  void validate() const {
+  }
+  bool operator==(const empty_non_trivial&) const = default;
+  empty_non_trivial() = default;
+  empty_non_trivial(const empty_non_trivial&) {
+    good_flag0 = true;
+  }
+  ~empty_non_trivial() {
+    if (!good_flag0)
+      std::exit(10);
+  }
+};
+struct small_trivial {
+  int i = 146;
+  void validate() const {
+    if (i != 146)
+      throw false;
+  }
+  bool operator==(const small_trivial&) const = default;
+};
+struct small_non_trivial {
+  std::string s = "hello world";
+  void validate() const {
+    if (s != "hello world")
+      throw false;
+  }
+  bool operator==(const small_non_trivial&) const = default;
+};
+struct big_trivial {
+  char arr[aa::default_any_soos + 5] = {};
+  int i = 146;
+  void validate() const {
+    if (i != 146)
+      throw false;
+  }
+  bool operator==(const big_trivial&) const = default;
+};
+struct big_non_trivial {
+  char arr[aa::default_any_soos + 5] = {};
+  std::string s = "hello world";
+  void validate() const {
+    if (s != "hello world")
+      throw false;
+  }
+  bool operator==(const big_non_trivial&) const = default;
+};
+
+template<typename Base, bool IsGoodAlign>
+struct alignas(IsGoodAlign ? alignof(Base) : 64) test_type : Base {
+  using Base::validate;
+  int operator()(float f) {
+    return correct_int + f;
+  }
+  bool operator==(const test_type&) const = default;
+};
+
+// и ещё с другим аллокатором когда any...(не пустым)
+
+anyany_method(validate, (const& self) requires(self.validate()) -> void);
+#endif
 anyany_method(boo, (const& self, int i) requires(self.boo(i))->int);
 TEST(constructors) {
   any_copyable<> ilist{std::in_place_type<std::vector<int>>, {1, 2, 3}};
   ilist.emplace<std::vector<int>>({1, 2, 3});
+#if __cplusplus >= 202002L
+  auto do_test = [&]<typename T>(std::type_identity<T>, auto value) {
+    using std::swap;
+    T a = value;
+    error_if(!a.has_value());
+    a.validate();
+    error_if(a(correct_float) != correct_val);
+    auto copy = a;
+    copy.validate();
+    error_if(!copy.has_value());
+    error_if(copy(correct_float) != correct_val);
+    error_if(a != copy);
+    swap(a, copy);
+    a.validate();
+    copy.validate();
+    error_if(!a.has_value());
+    error_if(a(correct_float) != correct_val);
+    error_if(!copy.has_value());
+    error_if(copy(correct_float) != correct_val);
+    error_if(a != copy);
+  };
+  auto repeat_test_for = [&]<typename... Ts>(aa::type_list<Ts...>) {
+    (do_test(std::type_identity<aa::any_with<validate, aa::call<int(float)>, aa::copy, aa::equal_to>>{},
+             test_type<Ts, false>{}),
+     ...);
+    (do_test(std::type_identity<aa::any_with<validate, aa::call<int(float)>, aa::copy, aa::equal_to>>{},
+             test_type<Ts, true>{}),
+     ...);
+    using alloc = std::pmr::polymorphic_allocator<std::byte>;
+    (do_test(
+         std::type_identity<aa::basic_any_with<alloc, aa::default_any_soos, validate, aa::call<int(float)>,
+                                               aa::copy_with<alloc>, aa::equal_to>>{},
+         test_type<Ts, false>{}),
+     ...);
+    (do_test(
+         std::type_identity<aa::basic_any_with<alloc, aa::default_any_soos, validate, aa::call<int(float)>,
+                                               aa::copy_with<alloc>, aa::equal_to>>{},
+         test_type<Ts, true>{}),
+     ...);
+  };
+  repeat_test_for(aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial,
+                                big_non_trivial>{});
+#endif
   // problems with emplaceing std::array(aggregate construct) because of construct_at
   constexpr auto Xy = [] {};
   // nomove nocopy construct
@@ -87,6 +204,8 @@ TEST(constructors) {
       return i * 2;
     }
   };
+  // TODO улучшить этот тест чекая всё что надо
+  // TODO отметить, что подобная оптимизация размера бинарника невозможна на виртуальных функциях
   boobl bval;
   aa::any_with<boo> l{std::in_place_type<aa::poly_ref<boo>>, bval};
   error_if(l.boo(15) != 30);
