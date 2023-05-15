@@ -4,9 +4,6 @@
 #include <type_traits>
 #include <utility>  // forward
 #include <cstring>  // memcpy
-#ifdef AA_HAS_CPP20
-#include <memory>   // construct_at/destroy_at
-#endif
 
 #include "common.hpp"
 
@@ -155,22 +152,18 @@ template <typename Needle, typename Haystack>
 AA_CONSTEVAL_CPP20 bool has_subsequence(Needle needle, Haystack haystack) {
   return find_subsequence(needle, haystack) != aa::npos;
 }
-#ifndef AA_HAS_CPP20
+
 template <typename T, typename... Args,
           typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
-constexpr T* construct_at(const T* location, Args&&... args) noexcept(noexcept(
+AA_ALWAYS_INLINE constexpr T* construct_at(const T* location, Args&&... args) noexcept(noexcept(
     ::new(const_cast<void*>(static_cast<const volatile void*>(location))) T(std::forward<Args>(args)...))) {
   return ::new (const_cast<void*>(static_cast<const volatile void*>(location)))
       T(std::forward<Args>(args)...);
 }
 template <typename T>
-constexpr void destroy_at(const T* location) noexcept {
+AA_ALWAYS_INLINE constexpr void destroy_at(const T* location) noexcept {
   location->~T();
 }
-#else
-using std::construct_at;
-using std::destroy_at;
-#endif
 
 template <typename T>
 using remove_cvref_t = std::remove_cv_t<std::remove_reference_t<T>>;
