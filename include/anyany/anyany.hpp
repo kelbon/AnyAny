@@ -220,7 +220,7 @@ struct copy_with {
  private:
   template<typename T>
   static AA_CONSTEVAL_CPP20 auto* select_copy_fn() {
-    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+    if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
       if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
                     noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::noop_copy_fn_empty_alloc;
@@ -242,7 +242,7 @@ struct copy_with {
         return &noexport::copy_fn<T, Alloc, SooS>;
     }
   }
-  using copy_fn_t = std::conditional_t<(std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>),
+  using copy_fn_t = std::conditional_t<(!noexport::copy_requires_alloc<Alloc>()),
                                        void* (*)(const void*, void*), void* (*)(const void*, void*, void*)>;
  public:
   struct value_type {
@@ -1159,7 +1159,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.alloc)) {
     if (!other.has_value())
       return;
-    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+    if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
     } else {
       value_ptr =
@@ -1275,7 +1275,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     if (!other.has_value())
       return;
-    if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+    if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr);
     } else {
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
@@ -1401,7 +1401,7 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
                         basic_any<Alloc, SooS, Methods...>> {
   basic_any<Alloc, SooS, Methods...> result(aa::allocator_arg, std::move(alloc));
   mate::set_vtable_ptr(result, mate::get_vtable_ptr(ref));
-  if constexpr (std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>) {
+  if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
     mate::get_value_ptr(result) =
         invoke<copy_with<Alloc, SooS>>(ref).copy_fn(mate::get_value_ptr(ref), mate::get_value_ptr(result));
   } else {

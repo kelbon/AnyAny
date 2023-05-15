@@ -240,6 +240,11 @@ void relocate_trivial(void* src, void* dest) noexcept {
   std::memcpy(dest, src, Sizeof);
 }
 
+template<typename Alloc>
+AA_CONSTEVAL_CPP20 bool copy_requires_alloc() {
+  return !(std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>);
+}
+
 // preconditions:
 //    * no object under 'dest'
 //    * atleast 'SooS' bytes under 'dest' and alignment == alignof(std::max_align_t)
