@@ -156,6 +156,9 @@ TEST(constructors) {
     a.validate();
     error_if(a(correct_float) != correct_val);
     auto copy = a;
+    swap(a, a);
+    a.validate();
+    error_if(a != copy);
     copy.validate();
     error_if(!copy.has_value());
     error_if(copy(correct_float) != correct_val);
@@ -191,10 +194,14 @@ TEST(constructors) {
   using test_types_pack =
       aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial, big_non_trivial>;
   repeat_test_for(test_types_pack{});
+  auto seed = std::random_device{}();
+  std::cout << "current random seed: " << seed << std::endl;
+  std::mt19937 gen{seed};
+  std::bernoulli_distribution dist(0.9);
   auto test_swap = [&]<typename Any>(std::type_identity<Any>, auto v1, auto v2) {
-    Any a = v1;
+    Any a = dist(gen) ? Any{v1} : Any{};
     auto a_copy = a;
-    Any b = v2;
+    Any b = dist(gen) ? Any{v2} : Any{};
     auto b_copy = b;
     auto id1 = a.type_descriptor();
     auto id2 = b.type_descriptor();
