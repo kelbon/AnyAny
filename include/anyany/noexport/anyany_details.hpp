@@ -9,6 +9,12 @@
 
 #include "file_begin.hpp"
 
+namespace aa {
+
+constexpr inline size_t npos = size_t(-1);
+
+}  // namespace aa
+
 namespace aa::noexport {
 
 template <typename T>
@@ -277,10 +283,10 @@ static void* copy_fn_empty_alloc(const void* src_raw, void* dest) {
   return copy_fn<T, Alloc, SooS>(src_raw, dest, std::addressof(a));
 }
 
-static void* noop_copy_fn(const void*, void* dest, void*) noexcept {
+inline void* noop_copy_fn(const void*, void* dest, void*) noexcept {
   return dest;
 }
-static void* noop_copy_fn_empty_alloc(const void* src_raw, void* dest) noexcept {
+inline void* noop_copy_fn_empty_alloc(const void* src_raw, void* dest) noexcept {
   return noop_copy_fn(src_raw, dest, nullptr);
 }
 

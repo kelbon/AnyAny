@@ -9,8 +9,6 @@ using erased_self_t = int;
 template <typename...>
 struct type_list {};
 
-constexpr inline size_t npos = size_t(-1);
-
 }  // namespace aa
 
 namespace aa::noexport {
