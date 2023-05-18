@@ -95,13 +95,40 @@ concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> &
     */
     ;
 
+template<typename T>
+concept simple_method = regular_method<T> || pseudomethod<T>;
+
+namespace noexport {
+
+template <typename... Methods>
+consteval bool all_methods_are_simple(type_list<Methods...>) {
+  return (simple_method<Methods> && ...);
+}
+
+}  // namespace noexport
+
+template<typename T>
+concept compound_method = (!regular_method<T> && !pseudomethod<T> && noexport::is_type_list<T>::value &&
+                           noexport::all_methods_are_simple(T{}));
+
 template <typename T>
-concept method = regular_method<T> || pseudomethod<T>;
+concept method = simple_method<T> || compound_method<T>;
+
 template <typename T>
 concept const_method = method<T> && is_const_method_v<T>;
-#define anyany_method_concept method
+
+// concept of type created by 'any_with'/'ref'/'cref'/... etc
+// and their public inheritors
+template<typename T>
+concept polymorphic = is_polymorphic<T>::value;
+
+#define anyany_method_concept simple_method
+#define anyany_method_or_interface_alias_concept method
+#define anyany_polymorphic_concept polymorphic
 #else
 #define anyany_method_concept typename
+#define anyany_method_or_interface_alias_concept typename
+#define anyany_polymorphic_concept typename
 #endif
 
 template <typename T, typename Method, typename = args_list<Method>>
@@ -1117,16 +1144,22 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using methods_list = ::aa::type_list<Methods...>;
 
  private:
-  template <typename... Methods1>
-  struct remove_utility_methods {
-    // only way to create basic_any without first 'destroy' method - aa::materialize
+  template<typename... Methods1>
+  struct types {
     using ptr = poly_ptr<Methods1...>;
     using const_ptr = const_poly_ptr<Methods1...>;
     using ref = poly_ref<Methods1...>;
     using const_ref = const_poly_ref<Methods1...>;
+    using stateful_ref = stateful::ref<Methods1...>;
+    using stateful_cref = stateful::cref<Methods1...>;
+    using interface = type_list<Methods1...>;
   };
+  // remove 'destroy' Method only if it was automatically added(not provided by user/created by 'materialize')
   template <typename... Methods1>
-  struct remove_utility_methods<destroy, Methods1...> : remove_utility_methods<Methods1...> {};
+  struct remove_utility_methods : types<Methods...> {};
+  template <typename... Methods1>
+  struct remove_utility_methods<destroy, Methods1...> : types<Methods1...> {};
+  
 
   using purified = remove_utility_methods<Methods...>;
 
@@ -1135,9 +1168,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using ref = typename purified::ref;
   using cptr = typename purified::const_ptr;
   using cref = typename purified::const_ref;
-
   using const_ptr = cptr;
   using const_ref = cref;
+  using stateful_ref = typename purified::stateful_ref;
+  using stateful_cref = typename purified::stateful_cref;
+  using interface = typename purified::interface;
+
   // aliases without 'destroy' for usage like any_with<a, b, c>::ref
   // but operator& return with 'destroy' method(implicitly converitble anyway)
   constexpr poly_ptr<Methods...> operator&() noexcept ANYANY_LIFETIMEBOUND {
@@ -1549,29 +1585,68 @@ struct any_cast_fn<T, anyany_poly_traits> {
 template <typename T, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits>
 constexpr inline any_cast_fn<T, Traits> any_cast = {};
 
+namespace noexport {
+
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
-using basic_any_with =
-    std::conditional_t<noexport::contains_v<destroy, Methods...>, basic_any<Alloc, SooS, Methods...>,
-                       basic_any<Alloc, SooS, destroy, Methods...>>;
+auto insert_into_basic_any(type_list<Methods...>) {
+  // if user provides 'destroy' Method, then use it
+  if constexpr (noexport::contains_v<destroy, Methods...>)
+    return basic_any<Alloc, SooS, Methods...>{};
+  else
+    return basic_any<Alloc, SooS, destroy, Methods...>{};
+}
+// if user provides 'destroy' as first Method, then i need to duplicate it
+// (so basic any do not removes it as utility Method)
+template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
+auto insert_into_basic_any(type_list<destroy, Methods...>) -> basic_any<Alloc, SooS, destroy, destroy, Methods...>;
+
+template <typename Alloc, size_t SooS, anyany_method_or_interface_alias_concept... Methods>
+auto flatten_into_basic_any(type_list<Methods...>) {
+  return insert_into_basic_any<Alloc, SooS>(flatten_types_t<Methods...>{});
+}
+
+template <template <typename...> typename Template, anyany_method_concept... Methods>
+auto get_interface_of(Template<Methods...>&&) -> type_list<Methods...>;
+
+template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
+auto get_interface_of(basic_any<Alloc, SooS, Methods...>&&) -> typename basic_any<Alloc, SooS, Methods...>::interface;
+
+}  // namespace noexport
+
+template <typename Alloc, size_t SooS, anyany_method_or_interface_alias_concept... Methods>
+using basic_any_with = decltype(noexport::flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}));
+
+template <anyany_method_or_interface_alias_concept... Methods>
+using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
 
 template <anyany_method_concept... Methods>
-using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
+using ptr = poly_ptr<Methods...>;
 
 template <anyany_method_concept... Methods>
 using cptr = const_poly_ptr<Methods...>;
 
 template <anyany_method_concept... Methods>
+using ref = poly_ref<Methods...>;
+ 
+template <anyany_method_concept... Methods>
 using cref = const_poly_ref<Methods...>;
 
-// just an alias for set of interface requirements, may be used later in 'insert_flatten_into'
-template<typename...MethodOrInterfaceAlias>
-using interface_alias = type_list<MethodOrInterfaceAlias...>;
 // Methods may be aa::interface_alias<...> or just anyany Methods
-// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>; 
+// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>;
 // example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
 // same as aa::any_with<next, is_done, aa::move, foo, bar>;
 template <template <typename...> typename Template, typename... Methods>
-using insert_flatten_into = typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
+using insert_flatten_into =
+    typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
+
+// just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
+template <anyany_method_or_interface_alias_concept... Methods>
+// uses 'insert_flatten_into' here, behaves as concept (concepts are equal if have equal basic requirements,
+// basic requirements here are simple Methods and order of them
+using interface_alias = insert_flatten_into<type_list, Methods...>;
+
+template<anyany_polymorphic_concept T>
+using interface_of = decltype(noexport::get_interface_of(std::declval<T>()));
 
 // enables any_cast, type_switch, visit_invoke etc
 // adds method 'type_descriptor' which returns descriptor of current dynamic type or

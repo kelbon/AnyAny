@@ -339,12 +339,11 @@ constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
   return (is_type_list<Ts>::value || ...);
 }
 template <typename... Types>
-auto flatten_types(aa::type_list<Types...>) {
-  using step = flatten_type_lists_one_layer<Types...>;
-  if constexpr (contains_second_layer_list(step{}))
-    return flatten_types(step{});
+auto flatten_types(aa::type_list<Types...> list) {
+  if constexpr (contains_second_layer_list(list))
+    return flatten_types(flatten_type_lists_one_layer<Types...>{});
   else
-    return step{};
+    return list;
 }
 template <typename... Ts>
 using flatten_types_t = decltype(flatten_types(aa::type_list<Ts...>{}));

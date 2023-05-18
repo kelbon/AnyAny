@@ -921,11 +921,59 @@ anyany_extern_method(a, (&self) requires((void)0)->void);
 anyany_extern_method(b, (const &self) requires(5)->int);
 anyany_extern_method(c, (self) requires(3.14)->float);
 
+template<template<typename...> typename Template>
+void anyany_interface_alias_tests() {
+#define AA_IA_TEST(...)                                                                          \
+  static_assert(std::is_same_v<aa::interface_of<aa::insert_flatten_into<Template, __VA_ARGS__>>, \
+                               aa::interface_alias<__VA_ARGS__>>)
+  static_assert(std::is_same_v<aa::interface_of<Template<>>, aa::interface_alias<>>);
+  AA_IA_TEST(aa::type_info);
+  AA_IA_TEST(aa::destroy);
+  AA_IA_TEST(aa::destroy, aa::destroy, aa::type_info);
+  AA_IA_TEST(aa::call<int()>, aa::equal_to, aa::type_info);
+#undef AA_AI_TEST
+
+  using a = aa::interface_alias<aa::destroy, aa::type_info>;
+  using b = aa::interface_alias<>;
+  using c = aa::interface_alias<a, b>;
+  using d = aa::interface_alias<a, b, aa::call<int()>>;
+  using e = aa::interface_alias<d, a, b, aa::call<int() noexcept>>;
+  AA_IA_TEST(a, b, c, d, e);
+  AA_IA_TEST(e, a, b);
+  AA_IA_TEST(e, aa::destroy, a, b);
+  AA_IA_TEST(aa::destroy, e, aa::copy_with<aa::unreachable_allocator>, aa::destroy, a, aa::type_info, b);
+  static_assert(std::is_same_v<aa::any_with<a, b, c>,
+                               aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
+                                             aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+  static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
+                               aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+#if __cplusplus >= 202002L
+  static_assert(aa::compound_method<a>);
+  static_assert(aa::compound_method<b>);
+  static_assert(aa::compound_method<c>);
+  static_assert(aa::compound_method<d>);
+  static_assert(aa::compound_method<e>);
+  static_assert(!aa::compound_method<aa::type_list<float>>);
+  static_assert(!aa::compound_method<aa::type_list<aa::destroy, aa::type_info, float>>);
+#endif
+}
 void anyany_concepts_test() {
+  anyany_interface_alias_tests<aa::any_with>();
+  anyany_interface_alias_tests<aa::poly_ptr>();
+  anyany_interface_alias_tests<aa::poly_ref>();
+  anyany_interface_alias_tests<aa::const_poly_ptr>();
+  anyany_interface_alias_tests<aa::const_poly_ref>();
+  anyany_interface_alias_tests<aa::ref>();
+  anyany_interface_alias_tests<aa::cref>();
+  anyany_interface_alias_tests<aa::ptr>();
+  anyany_interface_alias_tests<aa::cptr>();
+  anyany_interface_alias_tests<aa::stateful::ref>();
+  anyany_interface_alias_tests<aa::stateful::cref>();
 #if __cplusplus >= 202002L
   aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
   (void)compiles;
   static_assert(aa::method<empty_value_pseudomethod<int>>);
+  static_assert(aa::simple_method<empty_value_pseudomethod<int>>);
   static_assert(aa::pseudomethod<empty_value_pseudomethod<int>>);
   static_assert(!aa::regular_method<empty_value_pseudomethod<int>>);
   static_assert(aa::const_method<empty_value_pseudomethod<int>>);
