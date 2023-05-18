@@ -931,8 +931,6 @@ void anyany_interface_alias_tests() {
   AA_IA_TEST(aa::destroy);
   AA_IA_TEST(aa::destroy, aa::destroy, aa::type_info);
   AA_IA_TEST(aa::call<int()>, aa::equal_to, aa::type_info);
-#undef AA_AI_TEST
-
   using a = aa::interface_alias<aa::destroy, aa::type_info>;
   using b = aa::interface_alias<>;
   using c = aa::interface_alias<a, b>;
@@ -956,6 +954,7 @@ void anyany_interface_alias_tests() {
   static_assert(!aa::compound_method<aa::type_list<float>>);
   static_assert(!aa::compound_method<aa::type_list<aa::destroy, aa::type_info, float>>);
 #endif
+#undef AA_IA_TEST
 }
 void anyany_concepts_test() {
   anyany_interface_alias_tests<aa::any_with>();
