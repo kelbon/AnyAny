@@ -101,7 +101,7 @@ concept simple_method = regular_method<T> || pseudomethod<T>;
 namespace noexport {
 
 template <typename... Methods>
-consteval bool all_methods_are_simple(type_list<Methods...>) {
+consteval bool all_types_are_simple_methods(type_list<Methods...>) {
   return (simple_method<Methods> && ...);
 }
 
@@ -109,7 +109,7 @@ consteval bool all_methods_are_simple(type_list<Methods...>) {
 
 template<typename T>
 concept compound_method = (!regular_method<T> && !pseudomethod<T> && noexport::is_type_list<T>::value &&
-                           noexport::all_methods_are_simple(T{}));
+                           noexport::all_types_are_simple_methods(T{}));
 
 template <typename T>
 concept method = simple_method<T> || compound_method<T>;
