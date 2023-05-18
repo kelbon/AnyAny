@@ -95,13 +95,40 @@ concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> &
     */
     ;
 
+template<typename T>
+concept simple_method = regular_method<T> || pseudomethod<T>;
+
+namespace noexport {
+
+template <typename... Methods>
+consteval bool all_types_are_simple_methods(type_list<Methods...>) {
+  return (simple_method<Methods> && ...);
+}
+
+}  // namespace noexport
+
+template<typename T>
+concept compound_method = (!regular_method<T> && !pseudomethod<T> && noexport::is_type_list<T>::value &&
+                           noexport::all_types_are_simple_methods(T{}));
+
 template <typename T>
-concept method = regular_method<T> || pseudomethod<T>;
+concept method = simple_method<T> || compound_method<T>;
+
 template <typename T>
 concept const_method = method<T> && is_const_method_v<T>;
+
+// concept of type created by 'any_with'/'ref'/'cref'/... etc
+// and their public inheritors
+template<typename T>
+concept polymorphic = is_polymorphic<T>::value;
+
+#define anyany_simple_method_concept simple_method
 #define anyany_method_concept method
+#define anyany_polymorphic_concept polymorphic
 #else
+#define anyany_simple_method_concept typename
 #define anyany_method_concept typename
+#define anyany_polymorphic_concept typename
 #endif
 
 template <typename T, typename Method, typename = args_list<Method>>
@@ -144,7 +171,7 @@ AA_IS_VALID(is_any, typename T::base_any_type);
 template <typename T>
 using is_not_any = std::negation<is_any<T>>;
 
-template <typename X, anyany_method_concept... Methods>
+template <typename X, anyany_simple_method_concept... Methods>
 struct exist_for {
  private:
   template <typename T, typename Method>
@@ -290,7 +317,7 @@ struct hash {
 
 // ######################## VTABLE TYPE ########################
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...> {
  private:
   using base_t = noexport::tuple<typename method_traits<Methods>::type_erased_signature_type...>;
@@ -339,20 +366,20 @@ struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_sig
   }
 };
 
-template <size_t I, anyany_method_concept... Methods>
+template <size_t I, anyany_simple_method_concept... Methods>
 AA_ALWAYS_INLINE constexpr decltype(auto) get(vtable<Methods...>& v) noexcept {
   return noexport::get<I>(v);
 }
-template <size_t I, anyany_method_concept... Methods>
+template <size_t I, anyany_simple_method_concept... Methods>
 AA_ALWAYS_INLINE constexpr decltype(auto) get(const vtable<Methods...>& v) noexcept {
   return noexport::get<I>(v);
 }
 
 namespace noexport {
 
-template <anyany_method_concept... ToMethods>
+template <anyany_simple_method_concept... ToMethods>
 struct subtable_ptr_fn {
-  template <anyany_method_concept... FromMethods>
+  template <anyany_simple_method_concept... FromMethods>
   auto operator()(const vtable<FromMethods...>* ptr) const noexcept
       -> std::enable_if_t<noexport::has_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{}),
                           const vtable<ToMethods...>*> {
@@ -362,7 +389,7 @@ struct subtable_ptr_fn {
     const auto* new_ptr = std::addressof(get<Index>(*ptr));
     return reinterpret_cast<const vtable<ToMethods...>*>(new_ptr);
   }
-  template <anyany_method_concept... FromMethods>
+  template <anyany_simple_method_concept... FromMethods>
   auto operator()(vtable<FromMethods...>* ptr) const noexcept
       -> std::enable_if_t<noexport::has_subsequence(type_list<ToMethods...>{}, type_list<FromMethods...>{}),
                           vtable<ToMethods...>*> {
@@ -382,15 +409,15 @@ struct subtable_ptr_fn {
 // casts vtable to subvtable with smaller count of Methods if ToMethods are contigous subsequence of
 // FromMethods For example vtable<M1,M2,M3,M4>* can be converted to vtable<M2,M3>*, but not to vtable<M2,M4>*
 // precondition: vtable_ptr != nullptr
-template <anyany_method_concept... ToMethods>
+template <anyany_simple_method_concept... ToMethods>
 constexpr inline noexport::subtable_ptr_fn<ToMethods...> subtable_ptr = {};
 
 // must be never named explicitly, use addr_vtable_for
-template <typename T, anyany_method_concept... Methods>
+template <typename T, anyany_simple_method_concept... Methods>
 constexpr vtable<Methods...> vtable_for{&invoker_for<T, Methods>::value...};
 
 // always decays type
-template <typename T, anyany_method_concept... Methods>
+template <typename T, anyany_simple_method_concept... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>;
 
 // ######################## poly_ref / poly_ptr  ########################
@@ -452,11 +479,11 @@ auto get_plugin(...) -> Plugin;
 
 }  // namespace noexport
 
-template <typename Any, anyany_method_concept Method>
+template <typename Any, anyany_simple_method_concept Method>
 using plugin_t = decltype(noexport::get_plugin<plugin<Any, Method>>(0));
 
 // creates type from which you can inherit from to get sum of Methods plugins
-template <typename CRTP, anyany_method_concept... Methods>
+template <typename CRTP, anyany_simple_method_concept... Methods>
 using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
 
 namespace noexport {
@@ -493,14 +520,14 @@ struct vtable_view<Method> {
 }  // namespace noexport
 
 // non nullable non owner view to any type which satisfies Methods...
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...>, noexport::vtable_view<Methods...> {
  private:
   void* value_ptr = nullptr;
 
   using vtable_view_t = noexport::vtable_view<Methods...>;
   friend struct mate;
-  template<anyany_method_concept...>
+  template<anyany_simple_method_concept...>
   friend struct poly_ptr;
   // only for poly_ptr implementation
   constexpr poly_ref() noexcept = default;
@@ -538,14 +565,14 @@ struct poly_ref : construct_interface<poly_ref<Methods...>, Methods...>, noexpor
 
 // non nullable non owner view to any type which satisfies Methods...
 // Note: do not extends lifetime
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods...>, noexport::vtable_view<Methods...> {
  private:
   using vtable_view_t = noexport::vtable_view<Methods...>;
   const void* value_ptr = nullptr;
 
   friend struct mate;
-  template <anyany_method_concept...>
+  template <anyany_simple_method_concept...>
   friend struct const_poly_ptr;
   // only for const_poly_ptr implementation
   constexpr const_poly_ref() noexcept = default;
@@ -579,11 +606,11 @@ struct const_poly_ref : construct_interface<const_poly_ref<Methods...>, Methods.
   constexpr auto operator&() const noexcept;
 };
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 const_poly_ref(poly_ref<Methods...>) -> const_poly_ref<Methods...>;
 
 // non owning pointer-like type, behaves like pointer to mutable abstract base type
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -665,7 +692,7 @@ struct poly_ptr {
 };
 
 // non owning pointer-like type, behaves like pointer to CONST abstract base type
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct const_poly_ptr {
   using aa_polymorphic_tag = int;
 
@@ -757,17 +784,17 @@ struct const_poly_ptr {
   }
 };
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 const_poly_ptr(poly_ptr<Methods...>) -> const_poly_ptr<Methods...>;
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 constexpr auto poly_ref<Methods...>::operator&() const noexcept {
   poly_ptr<Methods...> result;
   mate::set_vtable_ptr(result, mate::get_vtable_ptr(*this));
   mate::get_value_ptr(result) = value_ptr;
   return result;
 }
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 constexpr auto const_poly_ref<Methods...>::operator&() const noexcept {
   const_poly_ptr<Methods...> result;
   mate::set_vtable_ptr(result, mate::get_vtable_ptr(*this));
@@ -791,7 +818,7 @@ namespace stateful {
 
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
@@ -806,7 +833,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 #pragma clang diagnostic pop
 #endif
   friend struct ::aa::mate;
-  template <anyany_method_concept...>
+  template <anyany_simple_method_concept...>
   friend struct cref;
 
   constexpr ref() noexcept = default;
@@ -864,7 +891,7 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 // stores vtable in the reference, so better cache locality.
 // for example it may be used as function arguments with 1-2 Methods
 // also can reference arrays and functions without decay
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
 struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
@@ -1008,7 +1035,7 @@ struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
 }  // namespace noexport
 
 // for cases, when you sure any has value (so UB if !has_value), compilers bad at optimizations(
-template <anyany_method_concept Method>
+template <anyany_simple_method_concept Method>
 constexpr inline noexport::invoke_fn<Method, args_list<Method>> invoke = {};
 
 // ######################## BASIC_ANY ########################
@@ -1117,16 +1144,22 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using methods_list = ::aa::type_list<Methods...>;
 
  private:
-  template <typename... Methods1>
-  struct remove_utility_methods {
-    // only way to create basic_any without first 'destroy' method - aa::materialize
+  template<typename... Methods1>
+  struct types {
     using ptr = poly_ptr<Methods1...>;
     using const_ptr = const_poly_ptr<Methods1...>;
     using ref = poly_ref<Methods1...>;
     using const_ref = const_poly_ref<Methods1...>;
+    using stateful_ref = stateful::ref<Methods1...>;
+    using stateful_cref = stateful::cref<Methods1...>;
+    using interface = type_list<Methods1...>;
   };
+  // remove 'destroy' Method only if it was automatically added(not provided by user/created by 'materialize')
   template <typename... Methods1>
-  struct remove_utility_methods<destroy, Methods1...> : remove_utility_methods<Methods1...> {};
+  struct remove_utility_methods : types<Methods...> {};
+  template <typename... Methods1>
+  struct remove_utility_methods<destroy, Methods1...> : types<Methods1...> {};
+  
 
   using purified = remove_utility_methods<Methods...>;
 
@@ -1135,9 +1168,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using ref = typename purified::ref;
   using cptr = typename purified::const_ptr;
   using cref = typename purified::const_ref;
-
   using const_ptr = cptr;
   using const_ref = cref;
+  using stateful_ref = typename purified::stateful_ref;
+  using stateful_cref = typename purified::stateful_cref;
+  using interface = typename purified::interface;
+
   // aliases without 'destroy' for usage like any_with<a, b, c>::ref
   // but operator& return with 'destroy' method(implicitly converitble anyway)
   constexpr poly_ptr<Methods...> operator&() noexcept ANYANY_LIFETIMEBOUND {
@@ -1293,10 +1329,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` is noexcept (invariant of small state)
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
-      if constexpr (basic_any<Alloc, SooS, OtherMethods...>::template has_method<move>)
-        invoke<move>(other)(other.value_ptr, value_ptr);
-      else
-        invoke<noexport::some_copy_method<OtherMethods...>>(other).move_fn(other.value_ptr, value_ptr);
+      other.get_move_fn()(other.value_ptr, value_ptr);
     } else {
       value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
@@ -1354,6 +1387,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
 
  private:
+  constexpr auto* get_move_fn() const noexcept {
+    if constexpr (has_method<move>)
+      return invoke<move>(*this);
+    else
+      return invoke<noexport::some_copy_method<Methods...>>(*this).move_fn;
+  }
   // precodition - has_value() == false
   void move_value_from(basic_any&& other) noexcept {
     if (!other.has_value())
@@ -1361,10 +1400,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // `move` is noexcept (invariant of small state)
     // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
     if (!other.memory_allocated()) {
-      if constexpr (has_method<move>)
-        invoke<move>(other)(other.value_ptr, value_ptr);
-      else
-        invoke<noexport::some_copy_method<Methods...>>(other).move_fn(other.value_ptr, value_ptr);
+      other.get_move_fn()(other.value_ptr, value_ptr);
     } else {
       value_ptr = std::exchange(other.value_ptr, other.data);
       size_allocated = other.size_allocated;
@@ -1549,29 +1585,68 @@ struct any_cast_fn<T, anyany_poly_traits> {
 template <typename T, AA_CONCEPT(poly_traits) Traits = anyany_poly_traits>
 constexpr inline any_cast_fn<T, Traits> any_cast = {};
 
+namespace noexport {
+
+template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
+auto insert_into_basic_any(type_list<Methods...>) {
+  // if user provides 'destroy' Method, then use it
+  if constexpr (noexport::contains_v<destroy, Methods...>)
+    return basic_any<Alloc, SooS, Methods...>{};
+  else
+    return basic_any<Alloc, SooS, destroy, Methods...>{};
+}
+// if user provides 'destroy' as first Method, then i need to duplicate it
+// (so basic any do not removes it as utility Method)
+template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
+auto insert_into_basic_any(type_list<destroy, Methods...>) -> basic_any<Alloc, SooS, destroy, destroy, Methods...>;
+
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
-using basic_any_with =
-    std::conditional_t<noexport::contains_v<destroy, Methods...>, basic_any<Alloc, SooS, Methods...>,
-                       basic_any<Alloc, SooS, destroy, Methods...>>;
+auto flatten_into_basic_any(type_list<Methods...>) {
+  return insert_into_basic_any<Alloc, SooS>(flatten_types_t<Methods...>{});
+}
+
+template <template <typename...> typename Template, anyany_simple_method_concept... Methods>
+auto get_interface_of(Template<Methods...>&&) -> type_list<Methods...>;
+
+template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
+auto get_interface_of(basic_any<Alloc, SooS, Methods...>&&) -> typename basic_any<Alloc, SooS, Methods...>::interface;
+
+}  // namespace noexport
+
+template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
+using basic_any_with = decltype(noexport::flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}));
 
 template <anyany_method_concept... Methods>
 using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
+using ptr = poly_ptr<Methods...>;
+
+template <anyany_simple_method_concept... Methods>
 using cptr = const_poly_ptr<Methods...>;
 
-template <anyany_method_concept... Methods>
+template <anyany_simple_method_concept... Methods>
+using ref = poly_ref<Methods...>;
+ 
+template <anyany_simple_method_concept... Methods>
 using cref = const_poly_ref<Methods...>;
 
-// just an alias for set of interface requirements, may be used later in 'insert_flatten_into'
-template<typename...MethodOrInterfaceAlias>
-using interface_alias = type_list<MethodOrInterfaceAlias...>;
 // Methods may be aa::interface_alias<...> or just anyany Methods
-// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>; 
+// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>;
 // example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
 // same as aa::any_with<next, is_done, aa::move, foo, bar>;
 template <template <typename...> typename Template, typename... Methods>
-using insert_flatten_into = typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
+using insert_flatten_into =
+    typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
+
+// just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
+template <anyany_method_concept... Methods>
+// uses 'insert_flatten_into' here, behaves as concept (concepts are equal if have equal basic requirements,
+// basic requirements here are simple Methods and order of them
+using interface_alias = insert_flatten_into<type_list, Methods...>;
+
+template<anyany_polymorphic_concept T>
+using interface_of = decltype(noexport::get_interface_of(std::declval<T>()));
 
 // enables any_cast, type_switch, visit_invoke etc
 // adds method 'type_descriptor' which returns descriptor of current dynamic type or
@@ -1826,4 +1901,6 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 }  // namespace std
 
 #include "noexport/file_end.hpp"
+#undef anyany_simple_method_concept
 #undef anyany_method_concept
+#undef anyany_polymorphic_concept

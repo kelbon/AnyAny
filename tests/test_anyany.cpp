@@ -156,6 +156,9 @@ TEST(constructors) {
     a.validate();
     error_if(a(correct_float) != correct_val);
     auto copy = a;
+    swap(a, a);
+    a.validate();
+    error_if(a != copy);
     copy.validate();
     error_if(!copy.has_value());
     error_if(copy(correct_float) != correct_val);
@@ -188,8 +191,45 @@ TEST(constructors) {
          test_type<Ts, true>{}),
      ...);
   };
-  repeat_test_for(aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial,
-                                big_non_trivial>{});
+  using test_types_pack =
+      aa::type_list<empty, empty_non_trivial, small_trivial, small_non_trivial, big_trivial, big_non_trivial>;
+  repeat_test_for(test_types_pack{});
+  auto seed = std::random_device{}();
+  std::cout << "current random seed: " << seed << std::endl;
+  std::mt19937 gen{seed};
+  std::bernoulli_distribution dist(0.9);
+  auto test_swap = [&]<typename Any>(std::type_identity<Any>, auto v1, auto v2) {
+    Any a = dist(gen) ? Any{v1} : Any{};
+    auto a_copy = a;
+    Any b = dist(gen) ? Any{v2} : Any{};
+    auto b_copy = b;
+    auto id1 = a.type_descriptor();
+    auto id2 = b.type_descriptor();
+    error_if(a != a_copy);
+    error_if(b != b_copy);
+    using std::swap;
+    swap(a, b);
+    error_if(a != b_copy);
+    error_if(b != a_copy);
+    error_if(id1 != b.type_descriptor());
+    error_if(id2 != a.type_descriptor());
+    swap(a, b);
+    error_if(a != a_copy);
+    error_if(b != b_copy);
+    error_if(id1 != a.type_descriptor());
+    error_if(id2 != b.type_descriptor());
+  };
+  auto do_test_swap_for_each_pair = [&]<typename T, typename... Ts>(aa::type_list<T, Ts...>) {
+    using tt1 = aa::any_with<aa::copy, aa::equal_to>;
+    (test_swap(std::type_identity<tt1>{}, T{}, Ts{}), ...);
+    using alloc = std::pmr::polymorphic_allocator<std::byte>;
+    using tt2 = aa::basic_any_with<alloc, aa::default_any_soos, aa::copy_with<alloc>, aa::equal_to>;
+    (test_swap(std::type_identity<tt2>{}, T{}, Ts{}), ...);
+  };
+  auto test_swap_for_each_pair = [&]<typename... Ts>(aa::type_list<Ts...>) {
+    (do_test_swap_for_each_pair(aa::type_list<Ts, Ts...>{}), ...);
+  };
+  test_swap_for_each_pair(test_types_pack{});
 #endif
   // problems with emplaceing std::array(aggregate construct) because of construct_at
   constexpr auto Xy = [] {};
@@ -881,11 +921,58 @@ anyany_extern_method(a, (&self) requires((void)0)->void);
 anyany_extern_method(b, (const &self) requires(5)->int);
 anyany_extern_method(c, (self) requires(3.14)->float);
 
+template<template<typename...> typename Template>
+void anyany_interface_alias_tests() {
+#define AA_IA_TEST(...)                                                                          \
+  static_assert(std::is_same_v<aa::interface_of<aa::insert_flatten_into<Template, __VA_ARGS__>>, \
+                               aa::interface_alias<__VA_ARGS__>>)
+  static_assert(std::is_same_v<aa::interface_of<Template<>>, aa::interface_alias<>>);
+  AA_IA_TEST(aa::type_info);
+  AA_IA_TEST(aa::destroy);
+  AA_IA_TEST(aa::destroy, aa::destroy, aa::type_info);
+  AA_IA_TEST(aa::call<int()>, aa::equal_to, aa::type_info);
+  using a = aa::interface_alias<aa::destroy, aa::type_info>;
+  using b = aa::interface_alias<>;
+  using c = aa::interface_alias<a, b>;
+  using d = aa::interface_alias<a, b, aa::call<int()>>;
+  using e = aa::interface_alias<d, a, b, aa::call<int() noexcept>>;
+  AA_IA_TEST(a, b, c, d, e);
+  AA_IA_TEST(e, a, b);
+  AA_IA_TEST(e, aa::destroy, a, b);
+  AA_IA_TEST(aa::destroy, e, aa::copy_with<aa::unreachable_allocator>, aa::destroy, a, aa::type_info, b);
+  static_assert(std::is_same_v<aa::any_with<a, b, c>,
+                               aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
+                                             aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+  static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
+                               aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+#if __cplusplus >= 202002L
+  static_assert(aa::compound_method<a>);
+  static_assert(aa::compound_method<b>);
+  static_assert(aa::compound_method<c>);
+  static_assert(aa::compound_method<d>);
+  static_assert(aa::compound_method<e>);
+  static_assert(!aa::compound_method<aa::type_list<float>>);
+  static_assert(!aa::compound_method<aa::type_list<aa::destroy, aa::type_info, float>>);
+#endif
+#undef AA_IA_TEST
+}
 void anyany_concepts_test() {
+  anyany_interface_alias_tests<aa::any_with>();
+  anyany_interface_alias_tests<aa::poly_ptr>();
+  anyany_interface_alias_tests<aa::poly_ref>();
+  anyany_interface_alias_tests<aa::const_poly_ptr>();
+  anyany_interface_alias_tests<aa::const_poly_ref>();
+  anyany_interface_alias_tests<aa::ref>();
+  anyany_interface_alias_tests<aa::cref>();
+  anyany_interface_alias_tests<aa::ptr>();
+  anyany_interface_alias_tests<aa::cptr>();
+  anyany_interface_alias_tests<aa::stateful::ref>();
+  anyany_interface_alias_tests<aa::stateful::cref>();
 #if __cplusplus >= 202002L
   aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
   (void)compiles;
   static_assert(aa::method<empty_value_pseudomethod<int>>);
+  static_assert(aa::simple_method<empty_value_pseudomethod<int>>);
   static_assert(aa::pseudomethod<empty_value_pseudomethod<int>>);
   static_assert(!aa::regular_method<empty_value_pseudomethod<int>>);
   static_assert(aa::const_method<empty_value_pseudomethod<int>>);
