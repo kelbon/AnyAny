@@ -7,7 +7,7 @@ namespace aa {
 using erased_self_t = int;
 
 template <typename...>
-struct type_list {};
+struct type_list;
 
 }  // namespace aa
 

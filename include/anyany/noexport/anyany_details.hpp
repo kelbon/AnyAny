@@ -11,7 +11,72 @@
 
 namespace aa {
 
+template<typename... Types>
+struct type_list {
+#ifdef AA_HAS_CPP20
+  template <typename... Types2>
+  consteval auto operator+(type_list<Types2...>) -> type_list<Types..., Types2...> {
+    return {};
+  }
+  template <template <typename> typename Pred>
+  static consteval auto filter() {
+    return (type_list<>{} + ... + std::conditional_t<Pred<Types>::value, type_list<Types>, type_list<>>{});
+  }
+  // 'Pred' is lambda like that []<typename>() consteval -> bool { ... }
+  template <typename Pred>
+  static consteval auto filter(Pred pred = Pred{}) {
+    return (type_list<>{} + ... +
+            std::conditional_t<pred.template operator()<Types>(), type_list<Types>, type_list<>>{});
+  }
+
+  static consteval auto remove_duplicates() {
+#if defined(_MSC_VER) && !defined(__clang__)
+    static_assert(
+        (![] {}),
+        "MSVC is not a compiler, do not use it. I cannot write this function without MSVC internal error");
+#else
+    constexpr auto contains_before = [](int index, const void* value) {
+      // nullptr here avoids empty array, which is ill-formed here
+      constexpr const void* descs[]{noexport::raw_descriptor<Types>..., nullptr};
+      while (--index >= 0)
+        if (descs[index] == value)
+          return true;
+      return false;
+    };
+    return [&]<size_t... Is>(std::index_sequence<Is...>) {
+      return (type_list<>{} + ... +
+              std::conditional_t<contains_before(Is, noexport::raw_descriptor<Types>), type_list<>,
+                                 type_list<Types>>{});
+    }
+    (std::index_sequence_for<Types...>{});
+#endif
+  }
+
+  static consteval size_t size() {
+    return sizeof...(Types);
+  }
+  static consteval bool empty() {
+    return size() == 0;
+  }
+#endif
+};
+
 constexpr inline size_t npos = size_t(-1);
+
+template<typename T>
+struct is_type_list : std::false_type {};
+template<typename... Types>
+struct is_type_list<type_list<Types...>> : std::true_type {};
+
+#ifdef AA_HAS_CPP20
+
+template<type_list Pack>
+using remove_duplicates_t = decltype(Pack.remove_duplicates());
+
+template<template<typename> typename Pred, type_list Pack>
+using filter_t = decltype(Pack.template filter<Pred>());
+
+#endif
 
 }  // namespace aa
 
@@ -158,6 +223,10 @@ template <typename Needle, typename Haystack>
 AA_CONSTEVAL_CPP20 bool has_subsequence(Needle needle, Haystack haystack) {
   return find_subsequence(needle, haystack) != aa::npos;
 }
+template<typename... Needle, typename... Haystack>
+AA_CONSTEVAL_CPP20 bool has_subset(type_list<Needle...>, type_list<Haystack...>) {
+  return (contains_v<Needle, Haystack...> && ...);
+}
 
 template <typename T, typename... Args,
           typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
@@ -189,10 +258,6 @@ auto inherit_without_duplicates(type_list<Head, Tail...>, type_list<Results...> 
   else
     return inherit_without_duplicates(type_list<Tail...>{}, type_list<Results..., Head>{});
 }
-
-template <typename... Ts>
-using inheritor_without_duplicates_t =
-    decltype(inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
 template <typename Any, typename Method>
 auto get_plugin(int) -> typename Method::template plugin<Any>;
@@ -283,13 +348,6 @@ static void* copy_fn_empty_alloc(const void* src_raw, void* dest) {
   return copy_fn<T, Alloc, SooS>(src_raw, dest, std::addressof(a));
 }
 
-inline void* noop_copy_fn(const void*, void* dest, void*) noexcept {
-  return dest;
-}
-inline void* noop_copy_fn_empty_alloc(const void* src_raw, void* dest) noexcept {
-  return noop_copy_fn(src_raw, dest, nullptr);
-}
-
 template <size_t Sizeof>
 static void* trivial_copy_small_fn(const void* src_raw, void* dest, void*) noexcept {
   std::memcpy(dest, src_raw, Sizeof);
@@ -329,30 +387,50 @@ template <typename... Types>
 using flatten_type_lists_one_layer =
     typename decltype((type_identity<aa::type_list<>>{} + ... + type_identity<Types>{}))::type;
 
-template <typename>
-struct is_type_list : std::false_type {};
-template <typename... Ts>
-struct is_type_list<aa::type_list<Ts...>> : std::true_type {};
-
 template <typename... Ts>
 constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
   return (is_type_list<Ts>::value || ...);
 }
+
+template <template <typename...> typename Template, typename... Types>
+auto insert_types(aa::type_list<Types...>) -> Template<Types...>;
+
+}  // namespace aa::noexport
+
+namespace aa {
+#ifdef AA_HAS_CPP20
+template <template <typename...> typename Template, type_list Pack>
+using insert_types_t = decltype(noexport::insert_types<Template>(Pack));
+#endif
+
 template <typename... Types>
-auto flatten_types(aa::type_list<Types...> list) {
-  if constexpr (contains_second_layer_list(list))
-    return flatten_types(flatten_type_lists_one_layer<Types...>{});
+AA_CONSTEVAL_CPP20 auto flatten_types(aa::type_list<Types...> list) {
+  if constexpr (noexport::contains_second_layer_list(list))
+    return flatten_types(noexport::flatten_type_lists_one_layer<Types...>{});
   else
     return list;
 }
+// accepts types and type lists, flattens all type lists in 'Ts' recursivelly into one type list
 template <typename... Ts>
 using flatten_types_t = decltype(flatten_types(aa::type_list<Ts...>{}));
 
-template <template <typename...> typename, typename>
-struct insert_types {};
+template <typename... Ts>
+using inheritor_without_duplicates_t =
+    decltype(noexport::inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
-template <template <typename...> typename Template, typename... Types>
-struct insert_types<Template, aa::type_list<Types...>> : type_identity<Template<Types...>> {};
+#ifdef AA_HAS_CPP20
 
-}  // namespace aa::noexport
+template <type_list Needle, type_list Haystack>
+constexpr inline bool has_subsequence_v = noexport::has_subsequence(Needle, Haystack);
+
+template <type_list Needle, type_list Haystack>
+constexpr inline bool has_subset_v = noexport::has_subset(Needle, Haystack);
+
+template <type_list Small, type_list Big>
+constexpr inline bool starts_with_v = noexport::starts_with(Small, Big);
+
+#endif
+
+}  // namespace aa
+
 #include "file_end.hpp"

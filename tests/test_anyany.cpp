@@ -956,6 +956,7 @@ void anyany_interface_alias_tests() {
 #endif
 #undef AA_IA_TEST
 }
+
 void anyany_concepts_test() {
   anyany_interface_alias_tests<aa::any_with>();
   anyany_interface_alias_tests<aa::poly_ptr>();

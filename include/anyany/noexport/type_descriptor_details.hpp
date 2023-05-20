@@ -47,10 +47,13 @@ constexpr const char* n() {
   return nullptr;
 #endif
 }
+// may be used on compile time for comparing types(used for 'remove_duplicates' from type list)
+template<typename T>
+constexpr const void* raw_descriptor = &raw_descriptor<T>;
 // do not use it explicitly, use aa::descriptor_v
 #ifdef AA_CANT_GET_TYPENAME
 template <typename T>
-constexpr const void* descriptor = &descriptor<T>;
+constexpr const void* descriptor = raw_descriptor<T>;
 #else
 template <typename T>
 constexpr const char* descriptor = n<T>();
