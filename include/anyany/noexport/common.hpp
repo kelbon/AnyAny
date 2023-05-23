@@ -6,8 +6,13 @@ namespace aa {
 // or when library tries to get signature by instanciating 'do_invoke' with this type
 using erased_self_t = int;
 
-template <typename...>
-struct type_list;
+template <typename... Types>
+struct type_list {
+  template <typename... Types2>
+  constexpr auto operator+(type_list<Types2...>) const -> type_list<Types..., Types2...> {
+    return {};
+  }
+};
 
 }  // namespace aa
 

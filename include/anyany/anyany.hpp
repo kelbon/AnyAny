@@ -74,24 +74,23 @@ concept empty_type = std::is_empty_v<T> && std::default_initializable<T>;
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
 concept pseudomethod =
-    noexport::empty_type<T> && noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
+    noexport::empty_type<T> &&
     requires {
       typename T::value_type;
-      // T::do_value<X>(),
+      // T{}.template do_value<X>(),
       // where 'do_value' is a
       // consteval function template and X
       // - some type for which 'do_value'
       // exist(not substitution failure)
-    } && std::is_trivially_copyable_v<typename T::value_type>;  // for guarantee that poly_ref(specialization
-                                                                // with 1 Method)/vtable is trivially copyable
+                       } &&
+                       (!std::is_reference_v<typename T::value_type> &&
+                        !std::is_function_v<typename T::value_type>);
 
 template <typename T>
-concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> && noexport::signature_is_function<T>
-    /* && requires { T::do_invoke<X>,}
-    where 'do_invoke' is a static addressable function template and X - some type for which 'do_invoke'
-    exist(not substitution failure)
-    */
-    ;
+concept regular_method = noexport::empty_type<T> &&
+                         (
+                             requires { requires std::is_function_v<typename T::signature_type>; } ||
+                             requires { T::template do_invoke<erased_self_t>; });
 
 template<typename T>
 concept simple_method = regular_method<T> || pseudomethod<T>;
@@ -343,10 +342,16 @@ struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_sig
     return noexport::get<noexport::number_of_first<Method, Methods...>>(*this)(std::forward<Args>(args)...);
   }
   template <typename Method>
-  AA_ALWAYS_INLINE constexpr result_t<Method> invoke() const
-      noexcept(std::is_nothrow_copy_constructible_v<result_t<Method>>) {
+  AA_ALWAYS_INLINE constexpr result_t<Method>& invoke() noexcept {
     static_assert(std::is_same_v<args_list<Method>, noexport::aa_pseudomethod_tag>);
+    static_assert(
+        std::is_same_v<decltype(noexport::get<noexport::number_of_first<Method, Methods...>>(*this)),
+                       result_t<Method>&>);
     return noexport::get<noexport::number_of_first<Method, Methods...>>(*this);
+  }
+  template <typename Method>
+  AA_ALWAYS_INLINE constexpr const result_t<Method>& invoke() const noexcept {
+    return const_cast<vtable<Methods...>*>(this)->template invoke<Method>();
   }
 };
 
@@ -487,9 +492,9 @@ struct vtable_view {
 };
 // specialization for one Method, containing vtable itself
 template <typename Method>
-struct vtable_view<Method> {
+struct vtable_view<aa::enable_if_t<std::is_trivially_copyable_v<vtable<Method>>, Method>> {
   using aa_polymorphic_tag = int;
-
+  // TODO чек что сюда попадает статик ассертами в тестах + что не попадает, когда нетривильный случай с псевдометодом кривым
  private:
   friend struct aa::mate;
   vtable<Method> vtable_value{};
@@ -1012,8 +1017,9 @@ struct invoke_fn<Method, type_list<Args...>> {
 
 template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
+    // TODO test with atomic in vtable
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
-  [[nodiscard]] constexpr result_t<Method> operator()(const T& value) const noexcept {
+  [[nodiscard]] constexpr const result_t<Method>& operator()(const T& value) const noexcept {
     assert(mate::get_vtable_ptr(value) != nullptr && "pseudomethod invoked on empty value!");
     return mate::get_vtable_ptr(value)->template invoke<Method>();
   }

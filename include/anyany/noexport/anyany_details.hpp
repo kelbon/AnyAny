@@ -11,81 +11,20 @@
 
 namespace aa {
 
-template<typename... Types>
-struct type_list {
-#ifdef AA_HAS_CPP20
-  template <typename... Types2>
-  consteval auto operator+(type_list<Types2...>) -> type_list<Types..., Types2...> {
-    return {};
-  }
-  template <template <typename> typename Pred>
-  static consteval auto filter() {
-    return (type_list<>{} + ... + std::conditional_t<Pred<Types>::value, type_list<Types>, type_list<>>{});
-  }
-  // 'Pred' is lambda like that []<typename>() consteval -> bool { ... }
-  template <typename Pred>
-  static consteval auto filter(Pred pred = Pred{}) {
-    return (type_list<>{} + ... +
-            std::conditional_t<pred.template operator()<Types>(), type_list<Types>, type_list<>>{});
-  }
-
-  static consteval auto remove_duplicates() {
-#if defined(_MSC_VER) && !defined(__clang__)
-    static_assert(
-        (![] {}),
-        "MSVC is not a compiler, do not use it. I cannot write this function without MSVC internal error");
-#else
-    constexpr auto contains_before = [](int index, const void* value) {
-      // nullptr here avoids empty array, which is ill-formed here
-      constexpr const void* descs[]{noexport::raw_descriptor<Types>..., nullptr};
-      while (--index >= 0)
-        if (descs[index] == value)
-          return true;
-      return false;
-    };
-    return [&]<size_t... Is>(std::index_sequence<Is...>) {
-      return (type_list<>{} + ... +
-              std::conditional_t<contains_before(Is, noexport::raw_descriptor<Types>), type_list<>,
-                                 type_list<Types>>{});
-    }
-    (std::index_sequence_for<Types...>{});
-#endif
-  }
-
-  static consteval size_t size() {
-    return sizeof...(Types);
-  }
-  static consteval bool empty() {
-    return size() == 0;
-  }
-#endif
-};
-
 constexpr inline size_t npos = size_t(-1);
 
-template<typename T>
+template <typename T>
 struct is_type_list : std::false_type {};
-template<typename... Types>
+
+template <typename... Types>
 struct is_type_list<type_list<Types...>> : std::true_type {};
-
-#ifdef AA_HAS_CPP20
-
-template<type_list Pack>
-using remove_duplicates_t = decltype(Pack.remove_duplicates());
-
-template<template<typename> typename Pred, type_list Pack>
-using filter_t = decltype(Pack.template filter<Pred>());
-
-#endif
 
 }  // namespace aa
 
 namespace aa::noexport {
 
-template <typename T>
-struct type_identity {
-  using type = T;
-};
+template <typename...>
+constexpr inline bool always_false = false;
 
 // this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
 template <typename T, size_t>
@@ -143,9 +82,6 @@ constexpr inline bool contains_v = number_of_first<T, Ts...> != npos;
 template <typename T>
 constexpr inline bool is_byte_like_v =
     std::is_same_v<std::byte, T> || std::is_same_v<char, T> || std::is_same_v<unsigned char, T>;
-
-template <typename>
-constexpr inline bool always_false = false;
 
 struct aa_pseudomethod_tag {};
 
@@ -261,12 +197,15 @@ auto inherit_without_duplicates(type_list<Head, Tail...>, type_list<Results...> 
 
 template <typename Any, typename Method>
 auto get_plugin(int) -> typename Method::template plugin<Any>;
-#if __cpp_explicit_this_parameter >= 202110L
 template <typename Any, typename Method>
 auto get_plugin(bool) -> typename Method::plugin;
-#endif
 template <typename, typename>
 auto get_plugin(...) -> void;
+
+template <typename T>
+struct type_identity {
+  using type = T;
+};
 
 template <typename Method>
 auto get_method_signature(int) -> type_identity<typename Method::signature_type>;
@@ -372,20 +311,15 @@ static void* trivial_copy_big_fn_empty_alloc(const void* src_raw, void* dest) {
   Alloc a{};
   return trivial_copy_big_fn<Sizeof, Alloc>(src_raw, dest, std::addressof(a));
 }
-
-template <typename... Ts, typename T>
-auto operator+(type_identity<aa::type_list<Ts...>>, type_identity<T>)
-    -> type_identity<aa::type_list<Ts..., T>>;
-template <typename... Ts, typename T>
-auto operator+(type_identity<T>, type_identity<aa::type_list<Ts...>>)
-    -> type_identity<aa::type_list<T, Ts...>>;
-template <typename... Ts1, typename... Ts2>
-auto operator+(type_identity<aa::type_list<Ts1...>>, type_identity<aa::type_list<Ts2...>>)
-    -> type_identity<aa::type_list<Ts1..., Ts2...>>;
+template <typename T>
+struct flatten_one : type_list<T> {};
+template <typename... Types>
+struct flatten_one<type_list<Types...>> : type_list<Types...> {};
 
 template <typename... Types>
-using flatten_type_lists_one_layer =
-    typename decltype((type_identity<aa::type_list<>>{} + ... + type_identity<Types>{}))::type;
+AA_CONSTEVAL_CPP20 auto flatten_type_lists_one_layer() {
+  return (aa::type_list<>{} + ... + flatten_one<Types>{});
+}
 
 template <typename... Ts>
 constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
@@ -395,18 +329,17 @@ constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
 template <template <typename...> typename Template, typename... Types>
 auto insert_types(aa::type_list<Types...>) -> Template<Types...>;
 
+template <typename, typename T>
+using enable_if_impl = T;
+
 }  // namespace aa::noexport
 
 namespace aa {
-#ifdef AA_HAS_CPP20
-template <template <typename...> typename Template, type_list Pack>
-using insert_types_t = decltype(noexport::insert_types<Template>(Pack));
-#endif
 
 template <typename... Types>
 AA_CONSTEVAL_CPP20 auto flatten_types(aa::type_list<Types...> list) {
   if constexpr (noexport::contains_second_layer_list(list))
-    return flatten_types(noexport::flatten_type_lists_one_layer<Types...>{});
+    return flatten_types(noexport::flatten_type_lists_one_layer<Types...>());
   else
     return list;
 }
@@ -418,18 +351,11 @@ template <typename... Ts>
 using inheritor_without_duplicates_t =
     decltype(noexport::inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
-#ifdef AA_HAS_CPP20
 
-template <type_list Needle, type_list Haystack>
-constexpr inline bool has_subsequence_v = noexport::has_subsequence(Needle, Haystack);
-
-template <type_list Needle, type_list Haystack>
-constexpr inline bool has_subset_v = noexport::has_subset(Needle, Haystack);
-
-template <type_list Small, type_list Big>
-constexpr inline bool starts_with_v = noexport::starts_with(Small, Big);
-
-#endif
+// behaves as non-dependent std::enable_if_t,
+// usefull in partial specializations of structs
+template <bool Cond, typename T = void>
+using enable_if_t = noexport::enable_if_impl<std::enable_if_t<Cond>, T>;
 
 }  // namespace aa
 
