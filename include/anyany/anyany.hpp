@@ -528,7 +528,7 @@ struct vtable_view {
 template <typename Method>
 struct vtable_view<aa::enable_if_t<std::is_trivially_copyable_v<vtable<Method>>, Method>> {
   using aa_polymorphic_tag = int;
-  // TODO чек что сюда попадает статик ассертами в тестах + что не попадает, когда нетривильный случай с псевдометодом кривым
+
  private:
   friend struct aa::mate;
   vtable<Method> vtable_value{};
