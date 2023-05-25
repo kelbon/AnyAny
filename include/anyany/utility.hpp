@@ -237,8 +237,9 @@ struct is_visit_method<visit2<T, U>> : std::true_type {};
 
 template <typename CRTP>
 using make_visit_overload_set =
-    insert_types_t<noexport::visit_overload_set,
-                   type_list<CRTP>{} + aa::filter_t<is_visit_method, interface_of<CRTP>{}>{}>;
+    aa::insert_flatten_into<noexport::visit_overload_set,
+                            decltype(aa::type_list<CRTP>{} +
+                                     interface_of<CRTP>::template filtered_by<is_visit_method>())>;
 
 template <typename T, typename... Ts>
 using visit_one_with_all_others = aa::interface_alias<visit2<T, Ts>...>;
@@ -270,7 +271,8 @@ struct full_visitor_interface {
 }  // namespace noexport
 
 template <type_list PossibleTypesFor1, type_list PossibleTypesFor2 = PossibleTypesFor1>
-  requires(!PossibleTypesFor1.empty() && !PossibleTypesFor2.empty())
+  requires(!std::is_same_v<decltype(PossibleTypesFor1), type_list<>> &&
+           !std::is_same_v<decltype(PossibleTypesFor2), type_list<>>)
 using visitor2_interface = decltype(noexport::visitor2_interface_impl(PossibleTypesFor1, PossibleTypesFor2));
 
 template <typename Any, typename T, typename U>

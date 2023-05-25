@@ -37,8 +37,11 @@ struct tuple_base {};
 
 template <size_t... Is, typename... Ts>
 struct tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
-  constexpr tuple_base() noexcept = default;
-  constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  constexpr tuple_base() = default;
+  constexpr tuple_base(Ts... args) : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  }
+  template <typename... Types>  // for supporting non movable types too
+  constexpr tuple_base(Types&&... args) : value_in_tuple<Ts, Is>{std::forward<Types>(args)}... {
   }
 };
 template <>
@@ -311,14 +314,11 @@ static void* trivial_copy_big_fn_empty_alloc(const void* src_raw, void* dest) {
   Alloc a{};
   return trivial_copy_big_fn<Sizeof, Alloc>(src_raw, dest, std::addressof(a));
 }
-template <typename T>
-struct flatten_one : type_list<T> {};
-template <typename... Types>
-struct flatten_one<type_list<Types...>> : type_list<Types...> {};
 
 template <typename... Types>
 AA_CONSTEVAL_CPP20 auto flatten_type_lists_one_layer() {
-  return (aa::type_list<>{} + ... + flatten_one<Types>{});
+  return (std::conditional_t<is_type_list<Types>::value, Types, type_list<Types>>{} + ... +
+          aa::type_list<>{});
 }
 
 template <typename... Ts>
@@ -331,6 +331,29 @@ auto insert_types(aa::type_list<Types...>) -> Template<Types...>;
 
 template <typename, typename T>
 using enable_if_impl = T;
+
+template <template <typename> typename Pred, typename... Types>
+AA_CONSTEVAL_CPP20 auto filter_types(type_list<Types...>) {
+  return (type_list<>{} + ... + std::conditional_t<Pred<Types>::value, type_list<Types>, type_list<>>{});
+}
+template <typename Pred, typename... Types>
+AA_CONSTEVAL_CPP20 auto filter_types(type_list<Types...>) {
+  return (type_list<>{} + ... +
+          std::conditional_t<Pred{}.template operator()<Types>(), type_list<Types>, type_list<>>{});
+}
+
+template <typename... Out>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<>, type_list<Out...>) -> type_list<Out...> {
+  return {};
+}
+
+template <typename Head, typename... Types, typename... Out>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<Head, Types...>, type_list<Out...>) {
+  if constexpr (contains_v<Head, Out...>)
+    return remove_duplicates(type_list<Types...>{}, type_list<Out...>{});
+  else
+    return remove_duplicates(type_list<Types...>{}, type_list<Out..., Head>{});
+}
 
 }  // namespace aa::noexport
 

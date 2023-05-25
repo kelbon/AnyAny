@@ -1004,17 +1004,17 @@ void anyany_concepts_test() {
   static_assert(aa::regular_method<visit<int>>);
   static_assert(!aa::pseudomethod<visit<int>>);
 #endif
-  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, a, b, c>,
-                               aa::any_with<a, b, c>>);
-  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, aa::type_list<a, b, c>>,
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, a, b, c>, aa::any_with<a, b, c>>);
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, aa::interface_alias<a, b, c>>,
                                aa::any_with<a, b, c>>);
   static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with>, aa::any_with<>>);
   static_assert(
-      std::is_same_v<aa::insert_flatten_into<aa::cref, aa::type_list<aa::type_list<aa::type_list<>>>>,
-                     aa::cref<>>);
-  static_assert(std::is_same_v<
-                aa::insert_flatten_into<aa::any_with, aa::type_list<>, aa::type_list<a, aa::type_list<b>, c>>,
-                aa::any_with<a, b, c>>);
+      std::is_same_v<
+          aa::insert_flatten_into<aa::cref, aa::interface_alias<aa::interface_alias<aa::interface_alias<>>>>,
+          aa::cref<>>);
+  static_assert(std::is_same_v<aa::insert_flatten_into<aa::any_with, aa::interface_alias<>,
+                                                       aa::interface_alias<a, aa::interface_alias<b>, c>>,
+                               aa::any_with<a, b, c>>);
 }
 
 template<typename T>
@@ -1023,8 +1023,7 @@ template<int I>
 anyany_pseudomethod(m2, requires(I)->int);
 
 TEST(subtable_ptr) {
-  aa::vtable<ebop<int>, aa::type_info, ebop<float>> tbl{
-      {}, aa::descriptor_v<int>, {}};
+  aa::vtable<ebop<int>, aa::type_info, ebop<float>> tbl{{}, aa::descriptor_v<int>, {}};
   error_if(aa::get<1>(*aa::subtable_ptr<ebop<int>, aa::type_info>(&tbl)) != aa::descriptor_v<int>);
   error_if(aa::get<0>(*aa::subtable_ptr<aa::type_info, ebop<float>>(&tbl)) != aa::descriptor_v<int>);
   aa::vtable<> tbl2{};
@@ -1080,12 +1079,100 @@ TEST(materialize) {
       aa::unreachable_allocator{}, std::integral_constant<size_t, aa::default_any_soos>{});
   return error_count;
 }
+namespace tmn {
+
+struct a {
+  template <typename X>
+  static void do_invoke(const X&) {
+  }
+};
+
+template<typename...>
+struct b {
+  template <typename X>
+  static void do_invoke(X) {
+  }
+};
+
+struct c {
+  using value_type = int;
+  constexpr int do_value() {
+    return 15;
+  }
+};
+
+template<typename>
+struct always_false : std::false_type {};
+template <typename>
+struct always_true : std::true_type {};
+
+template<typename>
+struct is_b_method : std::false_type {};
+
+template <typename... Types>
+struct is_b_method<tmn::b<Types...>> : std::true_type {};
+
+struct is_b {
+  template <typename X>
+  constexpr bool operator()() const {
+    return is_b_method<X>::value;
+  }
+};
+
+struct atomic_method {
+  using value_type = std::atomic<void*>;
+  template <typename T>
+  constexpr void* do_value() {
+    return nullptr;
+  }
+};
+
+}  // namespace tm
+void meta_test() {
+  using t0 = aa::interface_alias<>;
+  using t1 = aa::interface_alias<tmn::a, tmn::b<int>, tmn::b<void, void>, tmn::c, tmn::a, tmn::a>;
+  using t2 = aa::interface_alias<tmn::a, t0, t1, t0>;
+  using t3 = aa::interface_alias<t0, t0>;
+  using t4 = aa::interface_alias<aa::interface_alias<t0, t1>, tmn::a>;
+  static_assert(std::is_same_v<decltype(t0{}.append()), t0>);
+  static_assert(std::is_same_v<decltype(t0{}.append(aa::destroy{}, aa::move{})),
+                               aa::interface_alias<aa::destroy, aa::move>>);
+  static_assert(t2::equivalent_to(tmn::a{}, t1{}));
+  static_assert(t3::equivalent_to(t0{}));
+  static_assert(t4::subsumes(tmn::a{}));
+  static_assert(t4::subsumes(aa::interface_alias<t0, t1>{}));
+  static_assert(t4::subsumes(t4{}));
+  static_assert(t4::subsumes(t0{}));
+  static_assert(t4::subsumes(t1{}));
+  static_assert(!t4::subsumes(t2{}));
+  static_assert(!t0{}.subsumes(tmn::a{}));
+  static_assert(t0{}.subsumes(t0{}));
+  static_assert(std::is_same_v<decltype(t1::without_duplicates()),
+                               aa::interface_alias<tmn::a, tmn::b<int>, tmn::b<void, void>, tmn::c>>);
+  static_assert(std::is_same_v<decltype(t0::without_duplicates()), t0>);
+  static_assert(std::is_same_v<decltype(t4::filtered_by<tmn::always_false>()), aa::interface_alias<>>);
+  static_assert(std::is_same_v<decltype(t4::filtered_by<tmn::always_true>()), t4>);
+  static_assert(std::is_same_v<decltype(t1{}.filtered_by(tmn::is_b{})),
+                               aa::interface_alias<tmn::b<int>, tmn::b<void, void>>>);
+}
+TEST(runtime_reflection) {
+  int i = 0;
+  aa::stateful::cref<tmn::atomic_method> m = i;
+  void* x = aa::invoke<tmn::atomic_method>(m).load();
+  error_if(x != nullptr);
+  aa::mate::get_vtable_value(m).change<tmn::atomic_method>((void*)1);
+  x = aa::invoke<tmn::atomic_method>(m).load();
+  error_if(x != (void*)1);
+  return error_count;
+}
+
 int main() {
   std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile time checks
   anyany_concepts_test();
   any_cast_test();
   noallocate_test();
+  meta_test();
   aa::any_with<print, aa::copy, print> duplicator;
   duplicator = 5;
   aa::invoke<print>(duplicator);
@@ -1202,27 +1289,24 @@ int main() {
   aa::invoke<M2>(*fi3p, 11., 12);
   static_assert(
       0 == aa::noexport::find_subsequence(aa::type_list<int, double>{}, aa::type_list<int, double, float>{}));
-  static_assert(aa::npos ==
-                aa::noexport::find_subsequence(aa::type_list<int, double>{}, aa::type_list<double, float>{}));
+  static_assert(!aa::noexport::has_subsequence(aa::type_list<int, double>{}, aa::type_list<double, float>{}));
   static_assert(0 == aa::noexport::find_subsequence(aa::type_list<double>{}, aa::type_list<double, float>{}));
   static_assert(1 ==
                 aa::noexport::find_subsequence(aa::type_list<double>{}, aa::type_list<int, double, float>{}));
   static_assert(3 == aa::noexport::find_subsequence(
                          aa::type_list<double, int, char>{},
                          aa::type_list<char, double, int, double, int, char, bool, float>{}));
-  static_assert(aa::npos == aa::noexport::find_subsequence(aa::type_list<int, float>{}, aa::type_list<>{}));
+  static_assert(!aa::noexport::has_subsequence(aa::type_list<int, float>{}, aa::type_list<>{}));
   static_assert(0 == aa::noexport::find_subsequence(aa::type_list<>{}, aa::type_list<>{}));
   {
     // with plugin
     drawable0 v0;
     const drawable1 v1;
-#if __cplusplus >= 202002
     aa::vtable<aa::type_info, aa::copy, aa::type_info> tbl;
     tbl.change<aa::type_info>(aa::descriptor_v<int>);
     if (aa::noexport::get<0>(tbl) != aa::descriptor_v<int> ||
         aa::noexport::get<2>(tbl) != aa::descriptor_v<int>)
       return -10;
-#endif
     // create
     idrawable::ptr pp1 = &v0;
     idrawable::const_ptr pp2 = &v0;
@@ -1356,5 +1440,6 @@ int main() {
   srand(time(0));
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
-         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize();
+         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
+         TESTruntime_reflection();
 }

@@ -53,28 +53,9 @@ constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
 #ifdef AA_HAS_CPP20
 
-namespace noexport {
-
-// presented as function ptr in vtable
-// searches signature as
-//  * T::signature_type
-//  * or (if not present) as decltype(&T::do_invoke<erased_self_t>)
-//  * or, for pseudomethods, as T::value_type
-template <typename T>
-concept has_signature = requires { typename signature_t<T>; };
-
-template <typename T>
-concept signature_is_function = std::is_function_v<signature_t<T>>;
-
-template <typename T>
-concept empty_type = std::is_empty_v<T> && std::default_initializable<T>;
-
-}  // namespace noexport
-
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod =
-    noexport::empty_type<T> &&
+concept pseudomethod = std::is_empty_v<T> && std::default_initializable<T> &&
     requires {
       typename T::value_type;
       // T{}.template do_value<X>(),
@@ -87,7 +68,7 @@ concept pseudomethod =
                         !std::is_function_v<typename T::value_type>);
 
 template <typename T>
-concept regular_method = noexport::empty_type<T> &&
+concept regular_method = std::is_empty_v<T> && std::default_initializable<T> &&
                          (
                              requires { requires std::is_function_v<typename T::signature_type>; } ||
                              requires { T::template do_invoke<erased_self_t>; });
@@ -105,8 +86,7 @@ consteval bool all_types_are_simple_methods(type_list<Methods...>) {
 }  // namespace noexport
 
 template<typename T>
-concept compound_method = (!regular_method<T> && !pseudomethod<T> && is_type_list<T>::value &&
-                           noexport::all_types_are_simple_methods(T{}));
+concept compound_method = is_type_list<T>::value && noexport::all_types_are_simple_methods(T{});
 
 template <typename T>
 concept method = simple_method<T> || compound_method<T>;
@@ -121,12 +101,65 @@ concept polymorphic = is_polymorphic<std::remove_cvref_t<T>>::value;
 
 #define anyany_simple_method_concept simple_method
 #define anyany_method_concept method
-#define anyany_polymorphic_concept polymorphic
 #else
 #define anyany_simple_method_concept typename
 #define anyany_method_concept typename
-#define anyany_polymorphic_concept typename
 #endif
+
+template <template <typename...> typename Template, typename... Types>
+using insert_flatten_into = decltype(noexport::insert_types<Template>(flatten_types_t<Types...>{}));
+
+// just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
+// It is runtime concept
+template <anyany_simple_method_concept... Methods>
+struct runtime_concept : type_list<Methods...> {
+  using constraint_list = type_list<Methods...>;
+
+  static AA_CONSTEVAL_CPP20 constraint_list constraints() {
+    return constraint_list{};
+  }
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 auto append(Methods2...)
+      -> insert_flatten_into<runtime_concept, Methods..., Methods2...> {
+    return {};
+  }
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 bool equivalent_to(Methods2...) {
+    return std::is_same_v<constraint_list, insert_flatten_into<type_list, Methods2...>>;
+  }
+
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 bool subsumes(Methods2...) {
+    return noexport::has_subsequence(insert_flatten_into<type_list, Methods2...>{}, constraints());
+  }
+
+ private:
+  template <typename... Types>
+  using self_template = runtime_concept<Types...>;
+
+ public:
+  static AA_CONSTEVAL_CPP20 auto without_duplicates() {
+    auto methods = noexport::remove_duplicates(type_list<Methods...>{}, type_list<>{});
+    using result_type = decltype(noexport::insert_types<self_template>(methods));
+    return result_type{};
+  }
+  template <template <anyany_simple_method_concept> typename Pred>
+  static AA_CONSTEVAL_CPP20 auto filtered_by() {
+    auto filtered = noexport::filter_types<Pred>(type_list<Methods...>{});
+    using result_type = decltype(noexport::insert_types<self_template>(filtered));
+    return result_type{};
+  }
+  // 'Pred' is lambda like []<typename>() -> bool { ... }
+  template <typename Pred>
+  static AA_CONSTEVAL_CPP20 auto filtered_by(Pred p) {
+    auto filtered = noexport::filter_types<Pred>(type_list<Methods...>{});
+    using result_type = decltype(noexport::insert_types<self_template>(filtered));
+    return result_type{};
+  }
+};
+
+template<anyany_simple_method_concept... Methods>
+struct is_type_list<runtime_concept<Methods...>> : std::true_type {};
 
 template <typename T, typename Method, typename = args_list<Method>>
 struct invoker_for {};
@@ -153,7 +186,9 @@ template <typename T, typename Method>
 struct invoker_for<T, Method, noexport::aa_pseudomethod_tag> {
  private:
   struct value_getter {
-    AA_CONSTEVAL_CPP20 result_t<Method> operator&() const {
+    // Note: do not returns 'result_t<Method>' for supporting non movable types(like std::atomic)
+    // not consteval only because of MSVC bug
+    constexpr auto operator&() const {
       return Method{}.template do_value<T>();
     }
   };
@@ -312,30 +347,26 @@ struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_sig
   template <typename Method>
   static inline constexpr bool has_method = noexport::contains_v<Method, Methods...>;
 
-#ifdef AA_HAS_CPP20
  private:
+  template<bool Need>
   struct do_change_one {
-    template <typename T>
-    constexpr void operator()(const T& src, T& dest) {
-      dest = src;
-    }
     template <typename T, typename U>
-    constexpr void operator()(const T&, const U&) {
+    constexpr void operator()(const T& src, U& dest) {
+      if constexpr (Need)
+        dest = src;
     }
   };
-
+  template<anyany_simple_method_concept Method, size_t... Is, typename U>
+  constexpr void change_impl(std::index_sequence<Is...>, const U& new_value) {
+    (do_change_one<std::is_same_v<Method, Methods>>{}(new_value, noexport::get<Is>(*this)), ...);
+  }
  public:
   // sets new value to ALL values of 'Method' in this table
-  template <method Method>
-    requires(noexport::contains_v<Method, Methods...>)
-  constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
-      noexcept(new_value = new_value)) {
-    [&]<size_t... Is>(std::index_sequence<Is...>) {
-      (do_change_one{}(new_value, noexport::get<Is>(*this)), ...);
-    }
-    (std::index_sequence_for<Methods...>{});
+  template <anyany_simple_method_concept Method, typename U>
+  constexpr void change(const U& new_value) {
+    change_impl<Method>(std::index_sequence_for<Methods...>{}, new_value);
   }
-#endif
+
   template <typename Method, typename... Args>
   AA_ALWAYS_INLINE result_t<Method> invoke(Args&&... args) const {
     static_assert(has_method<Method>);
@@ -1598,13 +1629,13 @@ auto flatten_into_basic_any(type_list<Methods...>) {
 }
 
 template <template <typename...> typename Template, anyany_simple_method_concept... Methods>
-auto get_interface_of(const Template<Methods...>&) -> type_list<Methods...>;
+auto get_interface_of(const Template<Methods...>&) -> runtime_concept<Methods...>;
 // Do not uses 'typename any::interface', because it may be incomplete type at this point
 template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
-auto get_interface_of(const basic_any<Alloc, SooS, Methods...>&) -> type_list<Methods...>;
+auto get_interface_of(const basic_any<Alloc, SooS, Methods...>&) -> runtime_concept<Methods...>;
 // removes automatically added 'destroy' Method (only user-provided Methods are interface)
 template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
-auto get_interface_of(const basic_any<Alloc, SooS, destroy, Methods...>&) -> type_list<Methods...>;
+auto get_interface_of(const basic_any<Alloc, SooS, destroy, Methods...>&) -> runtime_concept<Methods...>;
 
 }  // namespace noexport
 
@@ -1625,19 +1656,11 @@ using ref = poly_ref<Methods...>;
  
 template <anyany_simple_method_concept... Methods>
 using cref = const_poly_ref<Methods...>;
-
-// Methods may be aa::interface_alias<...> or just anyany Methods
-// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>;
-// example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
-// same as aa::any_with<next, is_done, aa::move, foo, bar>;
-template <template <typename...> typename Template, typename... Methods>
-using insert_flatten_into = decltype(noexport::insert_types<Template>(flatten_types_t<Methods...>{}));
-
 // just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
 template <anyany_method_concept... Methods>
 // uses 'insert_flatten_into' here, behaves as concept (concepts are equal if have equal basic requirements,
 // basic requirements here are simple Methods and order of them
-using interface_alias = insert_flatten_into<type_list, Methods...>;
+using interface_alias = insert_flatten_into<runtime_concept, Methods...>;
 
 template<typename T>
 using interface_of = decltype(noexport::get_interface_of(std::declval<T>()));
@@ -1897,4 +1920,4 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 #include "noexport/file_end.hpp"
 #undef anyany_simple_method_concept
 #undef anyany_method_concept
-#undef anyany_polymorphic_concept
+

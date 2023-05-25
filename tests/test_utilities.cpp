@@ -115,29 +115,9 @@ TEST(visitors) {
   x4(c, a);
   return error_count;
 }
-TEST(meta) {
-#if !defined(_MSC_VER) || defined(__clang__)
-  static_assert(std::is_same_v<aa::remove_duplicates_t<aa::type_list<>{}>, aa::type_list<>>);
-  static_assert(std::is_same_v<aa::remove_duplicates_t<aa::type_list<int>{}>, aa::type_list<int>>);
-  static_assert(std::is_same_v<aa::remove_duplicates_t<aa::type_list<void, void, const void>{}>,
-                               aa::type_list<void, const void>>);
-  static_assert(
-      std::is_same_v<aa::remove_duplicates_t<aa::type_list<int, void, float, int, const int, void, void*>{}>,
-                     aa::type_list<int, void, float, const int, void*>>);
-#endif
-  constexpr auto is_integral = []<typename X>() { return std::integral<X>; };
-  static_assert(
-      std::is_same_v<decltype(aa::type_list<int, float, void>::filter(is_integral)), aa::type_list<int>>);
-  static_assert(std::is_same_v<decltype(aa::type_list<>::filter(is_integral)), aa::type_list<>>);
-  static_assert(std::is_same_v<decltype(aa::type_list<void, float, std::string, int, unsigned, void>::filter(
-                                   is_integral)),
-                               aa::type_list<int, unsigned>>);
-  static_assert(
-      std::is_same_v<decltype(aa::type_list<double, float, void>::filter(is_integral)), aa::type_list<>>);
-  return error_count;
-}
+
 int main() {
-  return TESTtype_switch() + TESTvariant_poly_traits() + TESTvisitors() + TESTmeta();
+  return TESTtype_switch() + TESTvariant_poly_traits() + TESTvisitors();
 }
 #else
 int main() {
