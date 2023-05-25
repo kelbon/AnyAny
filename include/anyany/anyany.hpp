@@ -479,7 +479,10 @@ struct mate {
   // stateful ref/cref
   template <typename Friend>
   AA_ALWAYS_INLINE static constexpr auto& get_vtable_value(Friend& friend_) noexcept {
-    return friend_.vtable_value;
+    if constexpr (has_field_poly_<Friend>::value)
+      return get_vtable_value(friend_.poly_);
+    else
+      return friend_.vtable_value;
   }
 
   template <typename Friend>
@@ -1048,9 +1051,9 @@ struct invoke_fn<Method, type_list<Args...>> {
 
 template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
-    // TODO test with atomic in vtable
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
-  [[nodiscard]] constexpr const result_t<Method>& operator()(const T& value) const noexcept {
+  [[nodiscard]] constexpr const result_t<Method>& operator()(
+      const T& value ANYANY_LIFETIMEBOUND) const noexcept {
     assert(mate::get_vtable_ptr(value) != nullptr && "pseudomethod invoked on empty value!");
     return mate::get_vtable_ptr(value)->template invoke<Method>();
   }

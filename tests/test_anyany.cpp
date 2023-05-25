@@ -776,6 +776,12 @@ TEST(ptr_behavior) {
   std::string s = "hello";
   int x = 10;
   aa::poly_ptr<print> ptr;
+  constexpr aa::poly_ptr<print> _p = nullptr;
+  // check right specialization selected for one method
+  (void)aa::mate::get_vtable_value(_p);
+  static_assert(aa::mate::get_vtable_ptr(_p) != nullptr);
+  constexpr aa::poly_ptr<print, print> _p2 = nullptr;
+  static_assert(aa::mate::get_vtable_ptr(_p2) == nullptr);
   error_if(ptr.raw() != nullptr);
   aa::poly_ptr<aa::type_info, print> ptr1 = &s;
   ptr1->print();
