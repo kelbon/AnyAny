@@ -31,7 +31,7 @@ TEST(type_switch) {
                            .default_(std::size_t(-1));
   error_if(switch_result != sizeof(int));
   std::string fifa;
-  aa::poly_ref<aa::type_info> rr = fifa;
+  aa::any_with<aa::type_info> rr = fifa;
   auto switch_result1 = aa::type_switch<std::size_t>(rr)
                             .case_<float>(visitor)
                             .case_<bool>(visitor)
@@ -63,8 +63,8 @@ struct C {};
 
 TEST(visitors) {
   aa::any_with<aa::visitor_interface<A, B, C>, aa::move> x;
-  static_assert(
-      std::is_same_v<decltype(x), aa::any_with<aa::visit1<A>, aa::visit1<B>, aa::visit1<C>, aa::move>>);
+  static_assert(std::is_same_v<decltype(x), aa::any_with<aa::visit1<A>, aa::visit1<B>, aa::visit1<C>,
+                                                         aa::visitor_interface_tag, aa::move>>);
   bool flag = false;
   std::string check_str = "check good";
   volatile auto check_ptr = &check_str;
@@ -109,7 +109,7 @@ TEST(visitors) {
   x3(c, b);
   x3(c, c);
   aa::any_with<aa::visitor2_interface<aa::type_list<A, B, C>{}, aa::type_list<A>{}>> x4 =
-      aa::matcher{[](auto&, A) {}, [](B, A) {}, [](C, A) {}};
+      aa::matcher{[](auto&, A) {}, [](B, A) {}, [](C, A) -> aa::noop { return {}; }};
   x4(a, a);
   x4(b, a);
   x4(c, a);

@@ -147,6 +147,31 @@ struct std_variant_poly_traits {
   }
 };
 
+// fake Method only for plugin
+struct visitor_interface_tag {
+  struct value_type {};
+  template <typename>
+  consteval value_type do_value() {
+    return {};
+  }
+  template <typename CRTP>
+  struct plugin {
+    constexpr void operator()(auto&& v1) const {
+      visit(std::forward<decltype(v1)>(v1));
+    }
+    constexpr void visit(auto&& v1) const {
+      anyany_adl_visit1(*static_cast<const CRTP*>(this), std::forward<decltype(v1)>(v1));
+    }
+    constexpr void operator()(auto&& v1, auto&& v2) const {
+      visit(std::forward<decltype(v1)>(v1), std::forward<decltype(v2)>(v2));
+    }
+    constexpr void visit(auto&& v1, auto&& v2) const {
+      anyany_adl_visit2(*static_cast<const CRTP*>(this), std::forward<decltype(v1)>(v1),
+                        std::forward<decltype(v2)>(v2));
+    }
+  };
+};
+
 // tag type, which noop functions returns(usefull for optimizing visit/call)
 struct noop {};
 
@@ -173,11 +198,18 @@ struct visit1 {
     else
       return &visit_fn<Self, T>;
   }
+
+  template <typename CRTP>
+  struct plugin {
+    friend constexpr void anyany_adl_visit1(const CRTP& visitor, T& v1) {
+      aa::invoke<visit1<T>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(v1));
+    }
+  };
 };
 
 // supports visit one argument
 template <typename... Ts>
-using visitor_interface = aa::interface_alias<visit1<Ts>...>;
+using visitor_interface = aa::interface_alias<visit1<Ts>..., visitor_interface_tag>;
 
 // Method for visiting 2 values
 // adds .visit(T&, U&) and operator()(T&, U&) overloads into interface
@@ -189,7 +221,8 @@ struct visit2 {
     (void)(*reinterpret_cast<const Visitor*>(vtor))(*reinterpret_cast<std::add_pointer_t<T1>>(visitable1),
                                                     *reinterpret_cast<std::add_pointer_t<U1>>(visitable2));
   }
-  static void noop_fn(void*, void*, void*);
+  static void noop_fn(void*, void*, void*) {
+  }
 
  public:
   using value_type = void (*)(void*, void*, void*);
@@ -202,71 +235,24 @@ struct visit2 {
     else
       return &visit_fn<Self, T, U>;
   }
+
+  template<typename CRTP>
+  struct plugin {
+    friend constexpr void anyany_adl_visit2(const CRTP& visitor, T& v1, U& v2) {
+      aa::invoke<visit2<T, U>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(v1),
+                                        std::addressof(v2));
+    }
+  };
 };
 
 namespace noexport {
-
-template <typename CRTP, typename>
-struct overload_for {};
-
-template <typename CRTP, typename T>
-struct overload_for<CRTP, visit1<T>> {
-  static constexpr void do_visit(const CRTP& visitor, T& value) {
-    aa::invoke<visit1<T>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(value));
-  }
-};
-template <typename CRTP, typename T, typename U>
-struct overload_for<CRTP, visit2<T, U>> {
-  static constexpr void do_visit(const CRTP& visitor, T& v1, U& v2) {
-    aa::invoke<visit2<T, U>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(v1),
-                                      std::addressof(v2));
-  }
-};
-
-template <typename CRTP, typename... Types>
-struct visit_overload_set : private inheritor_without_duplicates_t<overload_for<CRTP, Types>...> {
-  using overload_for<CRTP, Types>::do_visit...;
-};
-
-template <typename>
-struct is_visit_method : std::false_type {};
-template <typename T>
-struct is_visit_method<visit1<T>> : std::true_type {};
-template <typename T, typename U>
-struct is_visit_method<visit2<T, U>> : std::true_type {};
-
-template <typename CRTP>
-using make_visit_overload_set =
-    aa::insert_flatten_into<noexport::visit_overload_set,
-                            decltype(aa::type_list<CRTP>{} +
-                                     interface_of<CRTP>::template filtered_by<is_visit_method>())>;
 
 template <typename T, typename... Ts>
 using visit_one_with_all_others = aa::interface_alias<visit2<T, Ts>...>;
 
 template <typename... Ts1, typename... Ts2>
 auto visitor2_interface_impl(type_list<Ts1...>, type_list<Ts2...>)
-    -> aa::interface_alias<visit_one_with_all_others<Ts1, Ts2...>...>;
-
-// imitates behavior of overload set for all visit1/visit2 Methods in CRTP
-template <typename CRTP>
-struct full_visitor_interface {
-  // makes 'make_visit_overload_set' in the function, so it not causes internal compiler errors on ALL
-  // compilers, when trying to do so in CRTP context(when 'CRTP' type is not yet completed
-
-  constexpr void visit(auto& v1) const {
-    return make_visit_overload_set<CRTP>::do_visit(*static_cast<const CRTP*>(this), v1);
-  }
-  constexpr void visit(auto& v1, auto& v2) const {
-    return make_visit_overload_set<CRTP>::do_visit(*static_cast<const CRTP*>(this), v1, v2);
-  }
-  constexpr void operator()(auto& value) const {
-    return visit(value);
-  }
-  constexpr void operator()(auto& v1, auto& v2) const {
-    return visit(v1, v2);
-  }
-};
+    -> aa::interface_alias<visit_one_with_all_others<Ts1, Ts2...>..., visitor_interface_tag>;
 
 }  // namespace noexport
 
@@ -274,15 +260,6 @@ template <type_list PossibleTypesFor1, type_list PossibleTypesFor2 = PossibleTyp
   requires(!std::is_same_v<decltype(PossibleTypesFor1), type_list<>> &&
            !std::is_same_v<decltype(PossibleTypesFor2), type_list<>>)
 using visitor2_interface = decltype(noexport::visitor2_interface_impl(PossibleTypesFor1, PossibleTypesFor2));
-
-template <typename Any, typename T, typename U>
-struct plugin<Any, visit2<T, U>> {
-  using type = noexport::full_visitor_interface<Any>;
-};
-template <typename Any, typename T>
-struct plugin<Any, visit1<T>> {
-  using type = noexport::full_visitor_interface<Any>;
-};
 
 // for using with visit
 // usage example:
