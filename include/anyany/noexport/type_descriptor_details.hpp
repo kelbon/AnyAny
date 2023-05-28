@@ -47,6 +47,7 @@ constexpr const char* n() {
   return nullptr;
 #endif
 }
+
 // do not use it explicitly, use aa::descriptor_v
 #ifdef AA_CANT_GET_TYPENAME
 template <typename T>

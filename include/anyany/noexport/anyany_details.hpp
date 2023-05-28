@@ -13,14 +13,18 @@ namespace aa {
 
 constexpr inline size_t npos = size_t(-1);
 
+template <typename T>
+struct is_type_list : std::false_type {};
+
+template <typename... Types>
+struct is_type_list<type_list<Types...>> : std::true_type {};
+
 }  // namespace aa
 
 namespace aa::noexport {
 
-template <typename T>
-struct type_identity {
-  using type = T;
-};
+template <typename...>
+constexpr inline bool always_false = false;
 
 // this tuple exist only because i cant constexpr cast function pointer to void* for storing in vtable
 template <typename T, size_t>
@@ -33,8 +37,11 @@ struct tuple_base {};
 
 template <size_t... Is, typename... Ts>
 struct tuple_base<std::index_sequence<Is...>, Ts...> : value_in_tuple<Ts, Is>... {
-  constexpr tuple_base() noexcept = default;
-  constexpr tuple_base(Ts... args) noexcept : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  constexpr tuple_base() = default;
+  constexpr tuple_base(Ts... args) : value_in_tuple<Ts, Is>{static_cast<Ts&&>(args)}... {
+  }
+  template <typename... Types>  // for supporting non movable types too
+  constexpr tuple_base(Types&&... args) : value_in_tuple<Ts, Is>{std::forward<Types>(args)}... {
   }
 };
 template <>
@@ -78,9 +85,6 @@ constexpr inline bool contains_v = number_of_first<T, Ts...> != npos;
 template <typename T>
 constexpr inline bool is_byte_like_v =
     std::is_same_v<std::byte, T> || std::is_same_v<char, T> || std::is_same_v<unsigned char, T>;
-
-template <typename>
-constexpr inline bool always_false = false;
 
 struct aa_pseudomethod_tag {};
 
@@ -158,6 +162,10 @@ template <typename Needle, typename Haystack>
 AA_CONSTEVAL_CPP20 bool has_subsequence(Needle needle, Haystack haystack) {
   return find_subsequence(needle, haystack) != aa::npos;
 }
+template<typename... Needle, typename... Haystack>
+AA_CONSTEVAL_CPP20 bool has_subset(type_list<Needle...>, type_list<Haystack...>) {
+  return (contains_v<Needle, Haystack...> && ...);
+}
 
 template <typename T, typename... Args,
           typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
@@ -190,18 +198,17 @@ auto inherit_without_duplicates(type_list<Head, Tail...>, type_list<Results...> 
     return inherit_without_duplicates(type_list<Tail...>{}, type_list<Results..., Head>{});
 }
 
-template <typename... Ts>
-using inheritor_without_duplicates_t =
-    decltype(inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
-
 template <typename Any, typename Method>
 auto get_plugin(int) -> typename Method::template plugin<Any>;
-#if __cpp_explicit_this_parameter >= 202110L
 template <typename Any, typename Method>
 auto get_plugin(bool) -> typename Method::plugin;
-#endif
 template <typename, typename>
 auto get_plugin(...) -> void;
+
+template <typename T>
+struct type_identity {
+  using type = T;
+};
 
 template <typename Method>
 auto get_method_signature(int) -> type_identity<typename Method::signature_type>;
@@ -283,13 +290,6 @@ static void* copy_fn_empty_alloc(const void* src_raw, void* dest) {
   return copy_fn<T, Alloc, SooS>(src_raw, dest, std::addressof(a));
 }
 
-inline void* noop_copy_fn(const void*, void* dest, void*) noexcept {
-  return dest;
-}
-inline void* noop_copy_fn_empty_alloc(const void* src_raw, void* dest) noexcept {
-  return noop_copy_fn(src_raw, dest, nullptr);
-}
-
 template <size_t Sizeof>
 static void* trivial_copy_small_fn(const void* src_raw, void* dest, void*) noexcept {
   std::memcpy(dest, src_raw, Sizeof);
@@ -315,44 +315,71 @@ static void* trivial_copy_big_fn_empty_alloc(const void* src_raw, void* dest) {
   return trivial_copy_big_fn<Sizeof, Alloc>(src_raw, dest, std::addressof(a));
 }
 
-template <typename... Ts, typename T>
-auto operator+(type_identity<aa::type_list<Ts...>>, type_identity<T>)
-    -> type_identity<aa::type_list<Ts..., T>>;
-template <typename... Ts, typename T>
-auto operator+(type_identity<T>, type_identity<aa::type_list<Ts...>>)
-    -> type_identity<aa::type_list<T, Ts...>>;
-template <typename... Ts1, typename... Ts2>
-auto operator+(type_identity<aa::type_list<Ts1...>>, type_identity<aa::type_list<Ts2...>>)
-    -> type_identity<aa::type_list<Ts1..., Ts2...>>;
-
 template <typename... Types>
-using flatten_type_lists_one_layer =
-    typename decltype((type_identity<aa::type_list<>>{} + ... + type_identity<Types>{}))::type;
-
-template <typename>
-struct is_type_list : std::false_type {};
-template <typename... Ts>
-struct is_type_list<aa::type_list<Ts...>> : std::true_type {};
+AA_CONSTEVAL_CPP20 auto flatten_type_lists_one_layer() {
+  return (std::conditional_t<is_type_list<Types>::value, Types, type_list<Types>>{} + ... +
+          aa::type_list<>{});
+}
 
 template <typename... Ts>
 constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
   return (is_type_list<Ts>::value || ...);
 }
+
+template <template <typename...> typename Template, typename... Types>
+auto insert_types(aa::type_list<Types...>) -> Template<Types...>;
+
+template <typename, typename T>
+using enable_if_impl = T;
+
+template <template <typename> typename Pred, typename... Types>
+AA_CONSTEVAL_CPP20 auto filter_types(type_list<Types...>) {
+  return (type_list<>{} + ... + std::conditional_t<Pred<Types>::value, type_list<Types>, type_list<>>{});
+}
+template <typename Pred, typename... Types>
+AA_CONSTEVAL_CPP20 auto filter_types(type_list<Types...>) {
+  return (type_list<>{} + ... +
+          std::conditional_t<Pred{}.template operator()<Types>(), type_list<Types>, type_list<>>{});
+}
+
+template <typename... Out>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<>, type_list<Out...>) -> type_list<Out...> {
+  return {};
+}
+
+template <typename Head, typename... Types, typename... Out>
+AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<Head, Types...>, type_list<Out...>) {
+  if constexpr (contains_v<Head, Out...>)
+    return remove_duplicates(type_list<Types...>{}, type_list<Out...>{});
+  else
+    return remove_duplicates(type_list<Types...>{}, type_list<Out..., Head>{});
+}
+
+}  // namespace aa::noexport
+
+namespace aa {
+
 template <typename... Types>
-auto flatten_types(aa::type_list<Types...> list) {
-  if constexpr (contains_second_layer_list(list))
-    return flatten_types(flatten_type_lists_one_layer<Types...>{});
+AA_CONSTEVAL_CPP20 auto flatten_types(aa::type_list<Types...> list) {
+  if constexpr (noexport::contains_second_layer_list(list))
+    return flatten_types(noexport::flatten_type_lists_one_layer<Types...>());
   else
     return list;
 }
+// accepts types and type lists, flattens all type lists in 'Ts' recursivelly into one type list
 template <typename... Ts>
 using flatten_types_t = decltype(flatten_types(aa::type_list<Ts...>{}));
 
-template <template <typename...> typename, typename>
-struct insert_types {};
+template <typename... Ts>
+using inheritor_without_duplicates_t =
+    decltype(noexport::inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
-template <template <typename...> typename Template, typename... Types>
-struct insert_types<Template, aa::type_list<Types...>> : type_identity<Template<Types...>> {};
 
-}  // namespace aa::noexport
+// behaves as non-dependent std::enable_if_t,
+// usefull in partial specializations of structs
+template <bool Cond, typename T = void>
+using enable_if_t = noexport::enable_if_impl<std::enable_if_t<Cond>, T>;
+
+}  // namespace aa
+
 #include "file_end.hpp"

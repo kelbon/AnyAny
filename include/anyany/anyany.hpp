@@ -32,9 +32,7 @@ namespace aa {
 // if deducing this supported, typename Method::plugin
 // or returns 'void' which means Method has no plugin(not a error)
 template <typename Any, typename Method>
-struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {
-  using aa_not_specialized_tag = int;
-};
+struct plugin : noexport::type_identity<decltype(noexport::get_plugin<Any, Method>(0))> {};
 
 // ######################## compilt time information about Methods(Traits) ########################
 
@@ -55,45 +53,25 @@ constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
 #ifdef AA_HAS_CPP20
 
-namespace noexport {
-
-// presented as function ptr in vtable
-// searches signature as
-//  * T::signature_type
-//  * or (if not present) as decltype(&T::do_invoke<erased_self_t>)
-//  * or, for pseudomethods, as T::value_type
-template <typename T>
-concept has_signature = requires { typename signature_t<T>; };
-
-template <typename T>
-concept signature_is_function = std::is_function_v<signature_t<T>>;
-
-template <typename T>
-concept empty_type = std::is_empty_v<T>;
-
-}  // namespace noexport
-
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod =
-    noexport::empty_type<T> && noexport::has_signature<T> && (!noexport::signature_is_function<T>) &&
+concept pseudomethod = std::is_empty_v<T> && std::default_initializable<T> &&
     requires {
       typename T::value_type;
-      // T::do_value<X>(),
+      // T{}.template do_value<X>(),
       // where 'do_value' is a
-      // static consteval function template and X
+      // consteval function template and X
       // - some type for which 'do_value'
       // exist(not substitution failure)
-    } && std::is_trivially_copyable_v<typename T::value_type>;  // for guarantee that poly_ref(specialization
-                                                                // with 1 Method)/vtable is trivially copyable
+                       } &&
+                       (!std::is_reference_v<typename T::value_type> &&
+                        !std::is_function_v<typename T::value_type>);
 
 template <typename T>
-concept regular_method = noexport::empty_type<T> && noexport::has_signature<T> && noexport::signature_is_function<T>
-    /* && requires { T::do_invoke<X>,}
-    where 'do_invoke' is a static addressable function template and X - some type for which 'do_invoke'
-    exist(not substitution failure)
-    */
-    ;
+concept regular_method = std::is_empty_v<T> && std::default_initializable<T> &&
+                         (
+                             requires { requires std::is_function_v<typename T::signature_type>; } ||
+                             requires { T::template do_invoke<erased_self_t>; });
 
 template<typename T>
 concept simple_method = regular_method<T> || pseudomethod<T>;
@@ -108,8 +86,7 @@ consteval bool all_types_are_simple_methods(type_list<Methods...>) {
 }  // namespace noexport
 
 template<typename T>
-concept compound_method = (!regular_method<T> && !pseudomethod<T> && noexport::is_type_list<T>::value &&
-                           noexport::all_types_are_simple_methods(T{}));
+concept compound_method = is_type_list<T>::value && noexport::all_types_are_simple_methods(T{});
 
 template <typename T>
 concept method = simple_method<T> || compound_method<T>;
@@ -120,16 +97,69 @@ concept const_method = method<T> && is_const_method_v<T>;
 // concept of type created by 'any_with'/'ref'/'cref'/... etc
 // and their public inheritors
 template<typename T>
-concept polymorphic = is_polymorphic<T>::value;
+concept polymorphic = is_polymorphic<std::remove_cvref_t<T>>::value;
 
 #define anyany_simple_method_concept simple_method
 #define anyany_method_concept method
-#define anyany_polymorphic_concept polymorphic
 #else
 #define anyany_simple_method_concept typename
 #define anyany_method_concept typename
-#define anyany_polymorphic_concept typename
 #endif
+
+template <template <typename...> typename Template, typename... Types>
+using insert_flatten_into = decltype(noexport::insert_types<Template>(flatten_types_t<Types...>{}));
+
+// just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
+// It is runtime concept
+template <anyany_simple_method_concept... Methods>
+struct runtime_concept : type_list<Methods...> {
+  using constraint_list = type_list<Methods...>;
+
+  static AA_CONSTEVAL_CPP20 constraint_list constraints() {
+    return constraint_list{};
+  }
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 auto append(Methods2...)
+      -> insert_flatten_into<runtime_concept, Methods..., Methods2...> {
+    return {};
+  }
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 bool equivalent_to(Methods2...) {
+    return std::is_same_v<constraint_list, insert_flatten_into<type_list, Methods2...>>;
+  }
+
+  template <anyany_method_concept... Methods2>
+  static AA_CONSTEVAL_CPP20 bool subsumes(Methods2...) {
+    return noexport::has_subsequence(insert_flatten_into<type_list, Methods2...>{}, constraints());
+  }
+
+ private:
+  template <typename... Types>
+  using self_template = runtime_concept<Types...>;
+
+ public:
+  static AA_CONSTEVAL_CPP20 auto without_duplicates() {
+    auto methods = noexport::remove_duplicates(type_list<Methods...>{}, type_list<>{});
+    using result_type = decltype(noexport::insert_types<self_template>(methods));
+    return result_type{};
+  }
+  template <template <anyany_simple_method_concept> typename Pred>
+  static AA_CONSTEVAL_CPP20 auto filtered_by() {
+    auto filtered = noexport::filter_types<Pred>(type_list<Methods...>{});
+    using result_type = decltype(noexport::insert_types<self_template>(filtered));
+    return result_type{};
+  }
+  // 'Pred' is lambda like []<typename>() -> bool { ... }
+  template <typename Pred>
+  static AA_CONSTEVAL_CPP20 auto filtered_by(Pred p) {
+    auto filtered = noexport::filter_types<Pred>(type_list<Methods...>{});
+    using result_type = decltype(noexport::insert_types<self_template>(filtered));
+    return result_type{};
+  }
+};
+
+template<anyany_simple_method_concept... Methods>
+struct is_type_list<runtime_concept<Methods...>> : std::true_type {};
 
 template <typename T, typename Method, typename = args_list<Method>>
 struct invoker_for {};
@@ -156,8 +186,10 @@ template <typename T, typename Method>
 struct invoker_for<T, Method, noexport::aa_pseudomethod_tag> {
  private:
   struct value_getter {
-    AA_CONSTEVAL_CPP20 result_t<Method> operator&() const {
-      return Method::template do_value<T>();
+    // Note: do not returns 'result_t<Method>' for supporting non movable types(like std::atomic)
+    // not consteval only because of MSVC bug
+    constexpr auto operator&() const {
+      return Method{}.template do_value<T>();
     }
   };
 
@@ -177,12 +209,12 @@ struct exist_for {
   template <typename T, typename Method>
   static auto check_fn(int) -> decltype(Method::template do_invoke<T>, std::true_type{});
   template <typename T, typename Method>  // for pseudomethods, must be consteval fn
-  static auto check_fn(bool) -> decltype(Method::template do_value<T>(), std::true_type{});
+  static auto check_fn(bool) -> decltype(Method{}.template do_value<T>(), std::true_type{});
   template <typename, typename>
   static auto check_fn(...) -> std::false_type;
 
  public:
-  static constexpr inline bool value = (decltype(check_fn<X, Methods>(0))::value && ...);
+  static constexpr inline bool value = (decltype(check_fn<std::decay_t<X>, Methods>(0))::value && ...);
 };
 
 // ######################## BASIC METHODS for basic_any ########################
@@ -211,11 +243,6 @@ struct destroy {
 };
 
 struct move {
- private:
-  static void noop_fn(void*, void*) noexcept {
-  }
-
- public:
   using value_type = void (*)(void*, void*) noexcept;
   // invoked only for situatuion "move small from src to EMPTY dest" and only when type is nothrow move
   // constructible. Actually relocates
@@ -226,10 +253,7 @@ struct move {
     if constexpr (!noexport::is_fits_in_soo_buffer<T, static_cast<size_t>(-1)>)
       return nullptr;  // never called if value on heap
     // reduces count of functions as possible, because compiler cannot optimize them
-    if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
-                  std::is_trivially_destructible_v<T>)
-      return &noop_fn;
-    else if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>)
+    if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>)
       return &noexport::relocate_trivial<sizeof(T)>;
     else
       return &noexport::relocate<T>;
@@ -248,20 +272,14 @@ struct copy_with {
   template<typename T>
   static AA_CONSTEVAL_CPP20 auto* select_copy_fn() {
     if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
-      if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
-                    noexport::is_fits_in_soo_buffer<T, SooS>)
-        return &noexport::noop_copy_fn_empty_alloc;
-      else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
+      if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::trivial_copy_small_fn_empty_alloc<sizeof(T)>;
       else if constexpr (std::is_trivially_copyable_v<T>)
         return &noexport::trivial_copy_big_fn_empty_alloc<sizeof(T), Alloc>;
       else
         return &noexport::copy_fn_empty_alloc<T, Alloc, SooS>;
     } else {
-      if constexpr (std::is_empty_v<T> && std::is_trivially_copyable_v<T> &&
-                    noexport::is_fits_in_soo_buffer<T, SooS>)
-        return &noexport::noop_copy_fn;
-      else if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
+      if constexpr (std::is_trivially_copyable_v<T> && noexport::is_fits_in_soo_buffer<T, SooS>)
         return &noexport::trivial_copy_small_fn<sizeof(T)>;
       else if constexpr (std::is_trivially_copyable_v<T>)
         return &noexport::trivial_copy_big_fn<sizeof(T), Alloc>;
@@ -329,40 +347,42 @@ struct vtable : noexport::tuple<typename method_traits<Methods>::type_erased_sig
   template <typename Method>
   static inline constexpr bool has_method = noexport::contains_v<Method, Methods...>;
 
-#ifdef AA_HAS_CPP20
  private:
+  template<bool Need>
   struct do_change_one {
-    template <typename T>
-    constexpr void operator()(const T& src, T& dest) {
-      dest = src;
-    }
     template <typename T, typename U>
-    constexpr void operator()(const T&, const U&) {
+    constexpr void operator()(const T& src, U& dest) {
+      if constexpr (Need)
+        dest = src;
     }
   };
-
+  template<anyany_simple_method_concept Method, size_t... Is, typename U>
+  constexpr void change_impl(std::index_sequence<Is...>, const U& new_value) {
+    (do_change_one<std::is_same_v<Method, Methods>>{}(new_value, noexport::get<Is>(*this)), ...);
+  }
  public:
   // sets new value to ALL values of 'Method' in this table
-  template <method Method>
-    requires(noexport::contains_v<Method, Methods...>)
-  constexpr void change(typename method_traits<Method>::type_erased_signature_type new_value) noexcept(
-      noexcept(new_value = new_value)) {
-    [&]<size_t... Is>(std::index_sequence<Is...>) {
-      (do_change_one{}(new_value, noexport::get<Is>(*this)), ...);
-    }
-    (std::index_sequence_for<Methods...>{});
+  template <anyany_simple_method_concept Method, typename U>
+  constexpr void change(const U& new_value) {
+    change_impl<Method>(std::index_sequence_for<Methods...>{}, new_value);
   }
-#endif
+
   template <typename Method, typename... Args>
   AA_ALWAYS_INLINE result_t<Method> invoke(Args&&... args) const {
     static_assert(has_method<Method>);
     return noexport::get<noexport::number_of_first<Method, Methods...>>(*this)(std::forward<Args>(args)...);
   }
   template <typename Method>
-  AA_ALWAYS_INLINE constexpr result_t<Method> invoke() const
-      noexcept(std::is_nothrow_copy_constructible_v<result_t<Method>>) {
+  AA_ALWAYS_INLINE constexpr result_t<Method>& invoke() noexcept {
     static_assert(std::is_same_v<args_list<Method>, noexport::aa_pseudomethod_tag>);
+    static_assert(
+        std::is_same_v<decltype(noexport::get<noexport::number_of_first<Method, Methods...>>(*this)),
+                       result_t<Method>&>);
     return noexport::get<noexport::number_of_first<Method, Methods...>>(*this);
+  }
+  template <typename Method>
+  AA_ALWAYS_INLINE constexpr const result_t<Method>& invoke() const noexcept {
+    return const_cast<vtable<Methods...>*>(this)->template invoke<Method>();
   }
 };
 
@@ -459,7 +479,10 @@ struct mate {
   // stateful ref/cref
   template <typename Friend>
   AA_ALWAYS_INLINE static constexpr auto& get_vtable_value(Friend& friend_) noexcept {
-    return friend_.vtable_value;
+    if constexpr (has_field_poly_<Friend>::value)
+      return get_vtable_value(friend_.poly_);
+    else
+      return friend_.vtable_value;
   }
 
   template <typename Friend>
@@ -470,21 +493,21 @@ struct mate {
 
 namespace noexport {
 
-// if not specialized, then ::type searched,
-// if specialized by user, then type itself used
-template <typename Plugin, typename = typename Plugin::aa_not_specialized_tag>
-auto get_plugin(int) -> typename Plugin::type;
+// searches for ::type, 
+// if no ::type, then Plugin itself used
 template <typename Plugin>
-auto get_plugin(...) -> Plugin;
+auto select_plugin(int) -> typename Plugin::type;
+template <typename Plugin>
+auto select_plugin(...) -> Plugin;
 
 }  // namespace noexport
 
 template <typename Any, anyany_simple_method_concept Method>
-using plugin_t = decltype(noexport::get_plugin<plugin<Any, Method>>(0));
+using plugin_t = decltype(noexport::select_plugin<plugin<Any, Method>>(0));
 
 // creates type from which you can inherit from to get sum of Methods plugins
 template <typename CRTP, anyany_simple_method_concept... Methods>
-using construct_interface = noexport::inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
+using construct_interface = inheritor_without_duplicates_t<plugin_t<CRTP, Methods>...>;
 
 namespace noexport {
 
@@ -503,7 +526,7 @@ struct vtable_view {
 };
 // specialization for one Method, containing vtable itself
 template <typename Method>
-struct vtable_view<Method> {
+struct vtable_view<aa::enable_if_t<std::is_trivially_copyable_v<vtable<Method>>, Method>> {
   using aa_polymorphic_tag = int;
 
  private:
@@ -989,12 +1012,14 @@ struct invoke_fn<Method, type_list<Args...>> {
 
   template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
   result_t<Method> operator()(U&& any, Args... args) const {
+    assert(mate::get_vtable_ptr(any) != nullptr && "Method invoked on empty value!");
     return AA_VTABLE_CALL(any, vtable_ptr, args, ->);
   }
 
   template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
   result_t<Method> operator()(const U& any, Args... args) const {
     static_assert(is_const_method_v<Method>);
+    assert(mate::get_vtable_ptr(any) != nullptr && "Method invoked on empty value!");
     return AA_VTABLE_CALL(any, vtable_ptr, args, ->);
   }
 
@@ -1027,7 +1052,9 @@ struct invoke_fn<Method, type_list<Args...>> {
 template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
-  [[nodiscard]] constexpr result_t<Method> operator()(const T& value) const noexcept {
+  [[nodiscard]] constexpr const result_t<Method>& operator()(
+      const T& value ANYANY_LIFETIMEBOUND) const noexcept {
+    assert(mate::get_vtable_ptr(value) != nullptr && "pseudomethod invoked on empty value!");
     return mate::get_vtable_ptr(value)->template invoke<Method>();
   }
 };
@@ -1159,7 +1186,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   struct remove_utility_methods : types<Methods...> {};
   template <typename... Methods1>
   struct remove_utility_methods<destroy, Methods1...> : types<Methods1...> {};
-  
 
   using purified = remove_utility_methods<Methods...>;
 
@@ -1606,10 +1632,13 @@ auto flatten_into_basic_any(type_list<Methods...>) {
 }
 
 template <template <typename...> typename Template, anyany_simple_method_concept... Methods>
-auto get_interface_of(Template<Methods...>&&) -> type_list<Methods...>;
-
+auto get_interface_of(const Template<Methods...>&) -> runtime_concept<Methods...>;
+// Do not uses 'typename any::interface', because it may be incomplete type at this point
 template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
-auto get_interface_of(basic_any<Alloc, SooS, Methods...>&&) -> typename basic_any<Alloc, SooS, Methods...>::interface;
+auto get_interface_of(const basic_any<Alloc, SooS, Methods...>&) -> runtime_concept<Methods...>;
+// removes automatically added 'destroy' Method (only user-provided Methods are interface)
+template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
+auto get_interface_of(const basic_any<Alloc, SooS, destroy, Methods...>&) -> runtime_concept<Methods...>;
 
 }  // namespace noexport
 
@@ -1630,22 +1659,13 @@ using ref = poly_ref<Methods...>;
  
 template <anyany_simple_method_concept... Methods>
 using cref = const_poly_ref<Methods...>;
-
-// Methods may be aa::interface_alias<...> or just anyany Methods
-// using input_iterator_interface = aa::interface_alias<next, is_done, aa::move>;
-// example: insert_flatten_into<aa::any_with, input_iterator_interface, foo, bar>
-// same as aa::any_with<next, is_done, aa::move, foo, bar>;
-template <template <typename...> typename Template, typename... Methods>
-using insert_flatten_into =
-    typename noexport::insert_types<Template, noexport::flatten_types_t<Methods...>>::type;
-
 // just an alias for set of interface requirements, may be used later in 'any_with' / 'insert_flatten_into'
 template <anyany_method_concept... Methods>
 // uses 'insert_flatten_into' here, behaves as concept (concepts are equal if have equal basic requirements,
 // basic requirements here are simple Methods and order of them
-using interface_alias = insert_flatten_into<type_list, Methods...>;
+using interface_alias = insert_flatten_into<runtime_concept, Methods...>;
 
-template<anyany_polymorphic_concept T>
+template<typename T>
 using interface_of = decltype(noexport::get_interface_of(std::declval<T>()));
 
 // enables any_cast, type_switch, visit_invoke etc
@@ -1903,4 +1923,4 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 #include "noexport/file_end.hpp"
 #undef anyany_simple_method_concept
 #undef anyany_method_concept
-#undef anyany_polymorphic_concept
+

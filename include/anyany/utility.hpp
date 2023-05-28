@@ -1,15 +1,25 @@
 #pragma once
+/*
+  HEADER SYNOPSIS:
 
+  * type_switch<Result, Traits = anyany_poly_traits>
+  switch-like syntax for 
+  * std_variant_poly_traits
+  * visitor_interface<Types...> - any_with<visitor_interface<Types...>> will have .visit and operator() for each type in 'Types'
+  * visitor2_interface<type_list1, type_list2> - any_with<visitor2_interface<...>> will have .visit and operator() FOR EACH PAIR
+  of types from first type list(for first argument) and second (for second argument)
+  * matcher (overloaded for usage with visitors / std::visit etc)
+*/
 #include "anyany.hpp"
 
-#include <functional>  // std::invoke
 #include <optional>    // for type_switch
 #include <variant>     // only for std_variant_poly_traits
+#include <concepts>
 
 namespace aa::noexport {
 
-template <typename PolyPtr, typename ResultT = void, typename Traits = anyany_poly_traits>
-struct type_switch_impl {
+template <typename PolyPtr, typename ResultT, typename Traits>
+struct type_switch_fn {
  private:
   struct non_void {
     // no way to create it for user
@@ -18,27 +28,28 @@ struct type_switch_impl {
   using Result = std::conditional_t<std::is_void_v<ResultT>, non_void, ResultT>;
 
  public:
-  constexpr explicit type_switch_impl(PolyPtr value) noexcept : value(std::move(value)) {
+  constexpr explicit type_switch_fn(std::type_identity_t<PolyPtr>&& value) noexcept
+      : value(std::move(value)) {
     assert(value != nullptr);
   }
 
   template <typename T, typename Fn>
-  type_switch_impl& case_(Fn&& f) {
+  type_switch_fn& case_(Fn&& f) {
     if (result)
       return *this;
     if (auto* v = ::aa::any_cast<T, Traits>(value)) {
       if constexpr (std::is_void_v<ResultT>) {
-        std::invoke(std::forward<Fn>(f), *v);
+        std::forward<Fn>(f)(*v);
         result.emplace();
       } else {
-        result = std::invoke(std::forward<Fn>(f), *v);
+        result = std::forward<Fn>(f)(*v);
       }
     }
     return *this;
   }
   // If value is one of Ts... F invoked (invokes count <= 1)
   template <typename... Ts, typename Fn>
-  type_switch_impl& cases(Fn&& f) {
+  type_switch_fn& cases(Fn&& f) {
     struct assert_ : noexport::type_identity<Ts>... {
     } assert_unique_types;
     (void)assert_unique_types;
@@ -46,11 +57,10 @@ struct type_switch_impl {
     return *this;
   }
   // As a default, invoke the given callable within the root value.
-  template <typename Fn>
-  [[nodiscard]] Result default_(Fn&& f) {
+  [[nodiscard]] Result default_(std::invocable<decltype(*PolyPtr{})> auto&& f) {
     if (result)
       return std::move(*result);
-    return std::forward<Fn>(f)(*value);
+    return std::forward<decltype(f)>(f)(*value);
   }
   // As a default, return the given value.
   [[nodiscard]] Result default_(Result v) {
@@ -76,25 +86,25 @@ struct type_switch_impl {
 
 // ######################## ACTION type_switch for all polymorphic types ########################
 
-// Returns instance of type which
+namespace aa {
+
 // implements a switch-like dispatch statement for poly_ptr/const_poly_ptr
-// using any_cast.
-// Each `Case<T>` takes a callable to be invoked
-// if the root value is a <T>, the callable is invoked with any_cast<T>(ValueInSwitch)
+// Each `case_<T>` takes a callable to be invoked, if value is of type 'T'
 //
 // usage example:
-//  any_operation<Methods...> op = ...;
-//  ResultType result = type_switch<ResultType>(op)
-//    .Case<ConstantOp>([](ConstantOp op) { ... })
-//    .Default([](const_poly_ref<Methods...> ref) { ... });
-namespace aa {
-template <typename Result = void, typename Traits = anyany_poly_traits, typename... Methods>
-constexpr auto type_switch(poly_ref<Methods...> p) noexcept {
-  return noexport::type_switch_impl<poly_ptr<Methods...>, Result, Traits>{&p};
-}
-template <typename Result = void, typename Traits = anyany_poly_traits, typename... Methods>
-constexpr auto type_switch(const_poly_ref<Methods...> p) noexcept {
-  return noexport::type_switch_impl<const_poly_ptr<Methods...>, Result, Traits>{&p};
+//  using my_any = aa::any_with</* ... */>;
+//  my_any value = /* ... */;
+//  Result result = type_switch<Result>(value)
+//    .case_<A>([](A op) { ... })
+//    .cases<A, B, C, D>([](auto&&) { /* do smth */ }
+//    .default_([](aa::cref<Methods...> ref) { ... });
+template <typename Result = void, typename Traits = anyany_poly_traits>
+constexpr auto type_switch(polymorphic auto&& value) noexcept {
+  using ptr_t = decltype(&value);
+  if constexpr (std::is_pointer_v<ptr_t>)  // poly ptr case
+    return noexport::type_switch_fn<noexport::remove_cvref_t<decltype(value)>, Result, Traits>(value);
+  else  // any_with/poly_ref case
+    return noexport::type_switch_fn<ptr_t, Result, Traits>{&value};
 }
 
 // those traits may be used for visit many variants without O(n*m*...) instantiating.
@@ -136,5 +146,133 @@ struct std_variant_poly_traits {
     return std::visit([](auto&& v) { return static_cast<void*>(std::addressof(v)); }, v);
   }
 };
+
+// fake Method only for plugin
+struct visitor_interface_tag {
+  struct value_type {};
+  template <typename>
+  consteval value_type do_value() {
+    return {};
+  }
+  template <typename CRTP>
+  struct plugin {
+    constexpr void operator()(auto&& v1) const {
+      visit(std::forward<decltype(v1)>(v1));
+    }
+    constexpr void visit(auto&& v1) const {
+      anyany_adl_visit1(*static_cast<const CRTP*>(this), std::forward<decltype(v1)>(v1));
+    }
+    constexpr void operator()(auto&& v1, auto&& v2) const {
+      visit(std::forward<decltype(v1)>(v1), std::forward<decltype(v2)>(v2));
+    }
+    constexpr void visit(auto&& v1, auto&& v2) const {
+      anyany_adl_visit2(*static_cast<const CRTP*>(this), std::forward<decltype(v1)>(v1),
+                        std::forward<decltype(v2)>(v2));
+    }
+  };
+};
+
+// tag type, which noop functions returns(usefull for optimizing visit/call)
+struct noop {};
+
+// Method for visiting 'T'
+// adds .visit(T&) and operator()(T&) overloads into interface
+template <typename T>
+struct visit1 {
+ private:
+  template <typename Visitor, typename U>
+  static void visit_fn(void* vtor, void* visitable) {
+    (void)(*reinterpret_cast<const Visitor*>(vtor))(*reinterpret_cast<std::add_pointer_t<U>>(visitable));
+  }
+  static void noop_fn(void*, void*) {
+  }
+
+ public:
+  using value_type = void (*)(void*, void*);
+
+  template <typename Self>
+    requires(std::invocable<const Self, T&>)
+  static consteval value_type do_value() {
+    if constexpr (std::is_same_v<std::invoke_result_t<const Self&, T&>, aa::noop>)
+      return &noop_fn;
+    else
+      return &visit_fn<Self, T>;
+  }
+
+  template <typename CRTP>
+  struct plugin {
+    friend constexpr void anyany_adl_visit1(const CRTP& visitor, T& v1) {
+      aa::invoke<visit1<T>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(v1));
+    }
+  };
+};
+
+// supports visit one argument
+template <typename... Ts>
+using visitor_interface = aa::interface_alias<visit1<Ts>..., visitor_interface_tag>;
+
+// Method for visiting 2 values
+// adds .visit(T&, U&) and operator()(T&, U&) overloads into interface
+template <typename T, typename U>
+struct visit2 {
+ private:
+  template <typename Visitor, typename T1, typename U1>
+  static void visit_fn(void* vtor, void* visitable1, void* visitable2) {
+    (void)(*reinterpret_cast<const Visitor*>(vtor))(*reinterpret_cast<std::add_pointer_t<T1>>(visitable1),
+                                                    *reinterpret_cast<std::add_pointer_t<U1>>(visitable2));
+  }
+  static void noop_fn(void*, void*, void*) {
+  }
+
+ public:
+  using value_type = void (*)(void*, void*, void*);
+
+  template <typename Self>
+    requires(std::invocable<const Self, T&, U&>)
+  static consteval value_type do_value() {
+    if constexpr (std::is_same_v<std::invoke_result_t<const Self&, T&, U&>, aa::noop>)
+      return &noop_fn;
+    else
+      return &visit_fn<Self, T, U>;
+  }
+
+  template<typename CRTP>
+  struct plugin {
+    friend constexpr void anyany_adl_visit2(const CRTP& visitor, T& v1, U& v2) {
+      aa::invoke<visit2<T, U>>(visitor)(const_cast<void*>(mate::get_value_ptr(visitor)), std::addressof(v1),
+                                        std::addressof(v2));
+    }
+  };
+};
+
+namespace noexport {
+
+template <typename T, typename... Ts>
+using visit_one_with_all_others = aa::interface_alias<visit2<T, Ts>...>;
+
+template <typename... Ts1, typename... Ts2>
+auto visitor2_interface_impl(type_list<Ts1...>, type_list<Ts2...>)
+    -> aa::interface_alias<visit_one_with_all_others<Ts1, Ts2...>..., visitor_interface_tag>;
+
+}  // namespace noexport
+
+template <type_list PossibleTypesFor1, type_list PossibleTypesFor2 = PossibleTypesFor1>
+  requires(!std::is_same_v<decltype(PossibleTypesFor1), type_list<>> &&
+           !std::is_same_v<decltype(PossibleTypesFor2), type_list<>>)
+using visitor2_interface = decltype(noexport::visitor2_interface_impl(PossibleTypesFor1, PossibleTypesFor2));
+
+// for using with visit
+// usage example:
+// std::visit(aa::matcher{
+//  [](auto x, int) { ... },
+//  [](int, float)  { ... }
+// }, value);
+//
+template<typename... Foos>
+struct matcher : Foos... {
+  using Foos::operator()...;
+};
+template<typename... Foos>
+matcher(Foos...) -> matcher<Foos...>;
 
 }  // namespace aa
