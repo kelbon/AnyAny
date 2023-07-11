@@ -8,7 +8,7 @@
 #include <memory_resource>
 #include <random>
 #include <unordered_set>
-
+#define ANYANY_ASSUME_NO_DLLS
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 

@@ -8,6 +8,11 @@
 
 namespace aa::noexport {
 
+// do not use it explicitly, use aa::descriptor_v
+#ifdef AA_CANT_GET_TYPENAME
+template <typename T>
+constexpr const void* descriptor = &descriptor<T>;
+#else // use type name
 inline AA_CONSTEVAL_CPP20 bool starts_with(const char* part, const char* all) noexcept {
   for (; *part == *all && *part != '\0'; ++part, ++all)
     ;
@@ -48,11 +53,6 @@ constexpr const char* n() {
 #endif
 }
 
-// do not use it explicitly, use aa::descriptor_v
-#ifdef AA_CANT_GET_TYPENAME
-template <typename T>
-constexpr const void* descriptor = &descriptor<T>;
-#else
 template <typename T>
 constexpr const char* descriptor = n<T>();
 #endif
