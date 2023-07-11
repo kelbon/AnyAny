@@ -140,8 +140,6 @@ struct alignas(IsGoodAlign ? alignof(Base) : 64) test_type : Base {
   bool operator==(const test_type&) const = default;
 };
 
-// и ещё с другим аллокатором когда any...(не пустым)
-
 anyany_method(validate, (const& self) requires(self.validate()) -> void);
 #endif
 anyany_method(boo, (const& self, int i) requires(self.boo(i))->int);
@@ -1171,6 +1169,39 @@ TEST(runtime_reflection) {
   error_if(x != (void*)1);
   return error_count;
 }
+TEST(custom_unique_ptr) {
+  using any = aa::any_with<aa::equal_to>;
+  std::unique_ptr<any::interface> ptr;
+  std::unique_ptr<const any::interface> cptr;
+  using any2 = aa::any_with<print>;
+  std::unique_ptr<const any2::interface> ccp(new float(3.14));
+  ccp->print();
+  auto do_test = [&](auto& ptr) {
+    bool deleted = false;
+    struct x {
+      bool* _deleted;
+      int i;
+      ~x() {
+        if (_deleted)
+          *_deleted = true;
+      }
+      bool operator==(const x& other) const {
+        return i == other.i;
+      }
+    };
+    x value{nullptr, 1};
+    static_assert(aa::noexport::has_has_value<decltype(ptr.get())>::value);
+    ptr.reset(new x{&deleted, 1});
+    error_if(!ptr.get().has_value());
+    error_if(!ptr->operator==(*decltype(ptr.get())(&value)));
+    ptr.reset();
+    error_if(ptr.get().has_value());
+    error_if(!deleted);
+  };
+  do_test(ptr);
+  do_test(cptr);
+  return error_count;
+}
 
 int main() {
   std::cout << "C++ standard: " << __cplusplus << std::endl;
@@ -1447,5 +1478,5 @@ int main() {
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection();
+         TESTruntime_reflection() + TESTcustom_unique_ptr();
 }

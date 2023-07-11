@@ -355,6 +355,23 @@ AA_CONSTEVAL_CPP20 auto remove_duplicates(type_list<Head, Types...>, type_list<O
     return remove_duplicates(type_list<Types...>{}, type_list<Out..., Head>{});
 }
 
+// used in specialization std::default_delete for custom unique_ptr
+struct deallocate_with_delete {
+ private:
+  template <typename T>
+  static void delete_fn(const void* ptr) noexcept {
+    delete reinterpret_cast<std::add_pointer_t<const T>>(ptr);
+  }
+
+ public:
+  using value_type = void (*)(const void*) noexcept;
+
+  template <typename T>
+  static AA_CONSTEVAL_CPP20 value_type do_value() {
+    return &delete_fn<T>;
+  }
+};
+
 }  // namespace aa::noexport
 
 namespace aa {
