@@ -99,8 +99,8 @@ concept const_method = method<T> && is_const_method_v<T>;
 template<typename T>
 concept polymorphic = is_polymorphic<std::remove_cvref_t<T>>::value;
 
-#define anyany_simple_method_concept simple_method
-#define anyany_method_concept method
+#define anyany_simple_method_concept ::aa::simple_method
+#define anyany_method_concept ::aa::method
 #else
 #define anyany_simple_method_concept typename
 #define anyany_method_concept typename
@@ -1052,8 +1052,10 @@ struct invoke_fn<Method, type_list<Args...>> {
 template <typename Method>
 struct invoke_fn<Method, noexport::aa_pseudomethod_tag> {
   template <typename T, std::enable_if_t<is_polymorphic<T>::value, int> = 0>
-  [[nodiscard]] constexpr const result_t<Method>& operator()(
-      const T& value ANYANY_LIFETIMEBOUND) const noexcept {
+  [[nodiscard(
+      "invoke on pseudomethod returns value from vtable, even if it is function "
+      "pointer")]] constexpr const result_t<Method>&
+  operator()(const T& value ANYANY_LIFETIMEBOUND) const noexcept {
     assert(mate::get_vtable_ptr(value) != nullptr && "pseudomethod invoked on empty value!");
     return mate::get_vtable_ptr(value)->template invoke<Method>();
   }
@@ -1179,7 +1181,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     using const_ref = const_poly_ref<Methods1...>;
     using stateful_ref = stateful::ref<Methods1...>;
     using stateful_cref = stateful::cref<Methods1...>;
-    using interface = type_list<Methods1...>;
+    using interface = runtime_concept<Methods1...>;
   };
   // remove 'destroy' Method only if it was automatically added(not provided by user/created by 'materialize')
   template <typename... Methods1>
@@ -1721,8 +1723,8 @@ struct equal_to {
       const auto& left = *static_cast<const CRTP*>(this);
       const auto& right = *static_cast<const CRTP*>(std::addressof(r));
       if constexpr (noexport::has_has_value<CRTP>::value) {
-        if (!left.has_value())
-          return !right.has_value();
+        if (!left.has_value() || !right.has_value())
+          return left.has_value() == right.has_value();
       }
       auto [fn, desc] = invoke<equal_to>(left);
       auto [right_fn, right_desc] = invoke<equal_to>(right);
@@ -1869,6 +1871,28 @@ AA_CALL_IMPL(const, noexcept);
 }  // namespace aa
 
 namespace std {
+
+template<typename>
+struct default_delete;
+
+template <anyany_simple_method_concept... Methods>
+struct default_delete<::aa::runtime_concept<Methods...>> {
+  using pointer = ::aa::poly_ptr<::aa::noexport::deallocate_with_delete, Methods...>;
+  void operator()(pointer p) noexcept {
+    assert(!!p);
+    ::aa::invoke<::aa::noexport::deallocate_with_delete>(p)(p.raw());
+  }
+};
+
+template <anyany_simple_method_concept... Methods>
+struct default_delete<const ::aa::runtime_concept<Methods...>> {
+ public:
+  using pointer = ::aa::const_poly_ptr<::aa::noexport::deallocate_with_delete, Methods...>;
+  void operator()(pointer p) noexcept {
+    assert(!!p);
+    ::aa::invoke<::aa::noexport::deallocate_with_delete>(p)(p.raw());
+  }
+};
 
 template <typename Alloc, size_t SooS, typename... Methods>
 AA_IF_HAS_CPP20(requires(::aa::noexport::contains_v<::aa::hash, Methods...>))

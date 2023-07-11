@@ -28,6 +28,10 @@ Try set it manually (see anyany/CMakeLists.txt for example)
 #define AA_ALWAYS_INLINE inline
 #define AA_CANT_GET_TYPENAME
 #endif
+#ifdef ANYANY_ASSUME_NO_DLLS
+#undef AA_CANT_GET_TYPENAME
+#define AA_CANT_GET_TYPENAME
+#endif
 
 #ifdef AA_CANT_GET_TYPENAME
 #define AA_CONSTEXPR_TYPE_DESCRIPTOR
