@@ -162,7 +162,7 @@ template <typename Needle, typename Haystack>
 AA_CONSTEVAL_CPP20 bool has_subsequence(Needle needle, Haystack haystack) {
   return find_subsequence(needle, haystack) != aa::npos;
 }
-template<typename... Needle, typename... Haystack>
+template <typename... Needle, typename... Haystack>
 AA_CONSTEVAL_CPP20 bool has_subset(type_list<Needle...>, type_list<Haystack...>) {
   return (contains_v<Needle, Haystack...> && ...);
 }
@@ -240,13 +240,13 @@ void relocate(void* _src, void* _dest) noexcept {
 // used by 'move', 'copy_with' methods
 // to reduce count of functions from CountOfTypes to
 // CountOfDifferentSizeofs
-template<size_t Sizeof>
+template <size_t Sizeof>
 void relocate_trivial(void* src, void* dest) noexcept {
   // memcpy inlined and optimized by gcc/clang
   std::memcpy(dest, src, Sizeof);
 }
 
-template<typename Alloc>
+template <typename Alloc>
 AA_CONSTEVAL_CPP20 bool copy_requires_alloc() {
   return !(std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>);
 }
@@ -391,7 +391,6 @@ template <typename... Ts>
 using inheritor_without_duplicates_t =
     decltype(noexport::inherit_without_duplicates(type_list<Ts...>{}, type_list<>{}));
 
-
 // behaves as non-dependent std::enable_if_t,
 // usefull in partial specializations of structs
 template <bool Cond, typename T = void>
@@ -411,10 +410,6 @@ struct [[nodiscard("name it and set success points")]] scope_failure {
   // should be called where the 'fn' call is no longer needed
   constexpr void no_longer_needed() noexcept {
     failed = false;
-  }
-  constexpr void use_and_forget() noexcept(noexcept(fn())) {
-    failed = false;
-    (void)fn();
   }
 };
 template <typename T>

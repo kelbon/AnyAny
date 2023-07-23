@@ -18,8 +18,7 @@
 template <typename Alloc = std::allocator<char>>
 using any_movable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::move, aa::equal_to>;
 template <typename Alloc = std::allocator<char>>
-using any_copyable =
-    aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::equal_to>;
+using any_copyable = aa::basic_any_with<Alloc, aa::default_any_soos, aa::copy_with<Alloc>, aa::equal_to>;
 
 int leaked_resource_count = 0;
 
@@ -131,7 +130,7 @@ struct big_non_trivial {
   bool operator==(const big_non_trivial&) const = default;
 };
 
-template<typename Base, bool IsGoodAlign>
+template <typename Base, bool IsGoodAlign>
 struct alignas(IsGoodAlign ? alignof(Base) : 64) test_type : Base {
   using Base::validate;
   int operator()(float f) {
@@ -140,7 +139,7 @@ struct alignas(IsGoodAlign ? alignof(Base) : 64) test_type : Base {
   bool operator==(const test_type&) const = default;
 };
 
-anyany_method(validate, (const& self) requires(self.validate()) -> void);
+anyany_method(validate, (const& self) requires(self.validate())->void);
 #endif
 anyany_method(boo, (const& self, int i) requires(self.boo(i))->int);
 TEST(constructors) {
@@ -420,14 +419,14 @@ TEST(constructors) {
 }
 struct myresource : std::pmr::memory_resource {
   size_t allocations = 0;
-  void* do_allocate( std::size_t bytes, std::size_t alignment ) override {
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
     ++allocations;
     return new char[bytes];
   }
-  void do_deallocate( void* p, std::size_t bytes, std::size_t alignment ) override {
+  void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
     delete[] (char*)p;
   }
-  bool do_is_equal( const std::pmr::memory_resource& other ) const noexcept override {
+  bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
     return true;
   }
 };
@@ -438,7 +437,7 @@ TEST(strange_allocs) {
   any_t a(std::allocator_arg, &r);
   any_t hmm(std::allocator_arg, &r);
   hmm.emplace<std::list<int>>(10, 1);
-  error_if(r.allocations != 1); // only once when emplacing std::list
+  error_if(r.allocations != 1);  // only once when emplacing std::list
   r.allocations = 0;
   a.emplace<std::pmr::list<int>>(10, 1);
   // emplace list + atleast 10 nodes for list (uses_allocator construction)
@@ -952,14 +951,14 @@ struct Circle {
 
 anyany_pseudomethod(test_pseudomethod, requires(aa::descriptor_v<Self>)->aa::descriptor_t);
 struct empty_struct_t {};
-template<typename>
+template <typename>
 anyany_pseudomethod(empty_value_pseudomethod, requires(empty_struct_t{})->empty_struct_t);
 
 anyany_extern_method(a, (&self) requires((void)0)->void);
-anyany_extern_method(b, (const &self) requires(5)->int);
+anyany_extern_method(b, (const& self) requires(5)->int);
 anyany_extern_method(c, (self) requires(3.14)->float);
 
-template<template<typename...> typename Template>
+template <template <typename...> typename Template>
 void anyany_interface_alias_tests() {
 #define AA_IA_TEST(...)                                                                          \
   static_assert(std::is_same_v<aa::interface_of<aa::insert_flatten_into<Template, __VA_ARGS__>>, \
@@ -1055,9 +1054,9 @@ void anyany_concepts_test() {
                                aa::any_with<a, b, c>>);
 }
 
-template<typename T>
+template <typename T>
 using ebop = empty_value_pseudomethod<T>;
-template<int I>
+template <int I>
 anyany_pseudomethod(m2, requires(I)->int);
 
 TEST(subtable_ptr) {
@@ -1084,7 +1083,7 @@ TEST(subtable_ptr) {
   error_if(std::abs(p_end2 - p_end1) != sizeof(typename m2<2>::value_type));
   return error_count;
 }
-template<typename Alloc, size_t SooS>
+template <typename Alloc, size_t SooS>
 struct inserter {
   template <typename... Ts>
   using type = aa::basic_any<Alloc, SooS, Ts...>;
@@ -1125,7 +1124,7 @@ struct a {
   }
 };
 
-template<typename...>
+template <typename...>
 struct b {
   template <typename X>
   static void do_invoke(X) {
@@ -1139,12 +1138,12 @@ struct c {
   }
 };
 
-template<typename>
+template <typename>
 struct always_false : std::false_type {};
 template <typename>
 struct always_true : std::true_type {};
 
-template<typename>
+template <typename>
 struct is_b_method : std::false_type {};
 
 template <typename... Types>
@@ -1165,7 +1164,7 @@ struct atomic_method {
   }
 };
 
-}  // namespace tm
+}  // namespace tmn
 void meta_test() {
   using t0 = aa::interface_alias<>;
   using t1 = aa::interface_alias<tmn::a, tmn::b<int>, tmn::b<void, void>, tmn::c, tmn::a, tmn::a>;
