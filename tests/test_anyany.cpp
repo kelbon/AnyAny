@@ -418,7 +418,41 @@ TEST(constructors) {
   error_if(leaked_resource_count != 0);
   return error_count;
 }
-
+struct myresource : std::pmr::memory_resource {
+  size_t allocations = 0;
+  void* do_allocate( std::size_t bytes, std::size_t alignment ) override {
+    ++allocations;
+    return new char[bytes];
+  }
+  void do_deallocate( void* p, std::size_t bytes, std::size_t alignment ) override {
+    delete[] (char*)p;
+  }
+  bool do_is_equal( const std::pmr::memory_resource& other ) const noexcept override {
+    return true;
+  }
+};
+TEST(strange_allocs) {
+  using alloc = std::pmr::polymorphic_allocator<std::byte>;
+  using any_t = aa::basic_any_with<alloc, 8, aa::copy_with<alloc, 8>, aa::equal_to>;
+  myresource r;
+  any_t a(std::allocator_arg, &r);
+  any_t hmm(std::allocator_arg, &r);
+  hmm.emplace<std::list<int>>(10, 1);
+  error_if(r.allocations != 1); // only once when emplacing std::list
+  r.allocations = 0;
+  a.emplace<std::pmr::list<int>>(10, 1);
+  // emplace list + atleast 10 nodes for list (uses_allocator construction)
+  error_if(r.allocations < (1 + 10));
+  any_t a_copy = std::pmr::list<int>(10, 1);
+  error_if(a != a_copy);
+  std::pmr::monotonic_buffer_resource m(10000);
+  any_t b(std::allocator_arg, &m);
+  b.emplace<std::vector<int>>(10, 111);
+  error_if(b == a_copy);
+  b = std::move(a);
+  error_if(b != a_copy);
+  return error_count;
+}
 TEST(special_member_functions) {
   static_assert(!std::is_constructible_v<aa::any_with<aa::copy>, aa::poly_ref<aa::copy>>);
   // transmutate ctor
@@ -428,7 +462,7 @@ TEST(special_member_functions) {
     std::vector<decltype(x)> vec_anys;
     vec_anys.reserve(5);
     vec_anys.emplace_back(vec);
-    vec_anys.emplace_back(aa::allocator_arg, aa::default_allocator{}, vec);
+    vec_anys.emplace_back(std::allocator_arg, aa::default_allocator{}, vec);
     vec_anys.emplace_back(std::in_place_type<std::vector<int>>, vec);
     vec_anys.emplace_back(aa::force_stable_pointers, vec);
     vec_anys.emplace_back(aa::force_stable_pointers, std::in_place_type<std::vector<int>>, vec);
@@ -712,7 +746,7 @@ TEST(transmutate_ctors) {
     std::vector<decltype(x)> vec_anys;
     vec_anys.reserve(5);
     vec_anys.emplace_back(vec);
-    vec_anys.emplace_back(aa::allocator_arg, aa::default_allocator{}, vec);
+    vec_anys.emplace_back(std::allocator_arg, aa::default_allocator{}, vec);
     vec_anys.emplace_back(std::in_place_type<std::vector<int>>, vec);
     vec_anys.emplace_back(aa::force_stable_pointers, vec);
     vec_anys.emplace_back(aa::force_stable_pointers, std::in_place_type<std::vector<int>>, vec);
@@ -1478,5 +1512,5 @@ int main() {
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection() + TESTcustom_unique_ptr();
+         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs();
 }

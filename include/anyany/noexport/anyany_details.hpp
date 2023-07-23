@@ -397,6 +397,29 @@ using inheritor_without_duplicates_t =
 template <bool Cond, typename T = void>
 using enable_if_t = noexport::enable_if_impl<std::enable_if_t<Cond>, T>;
 
+template <typename Foo>
+struct [[nodiscard("name it and set success points")]] scope_failure {
+  Foo fn;
+  bool failed = true;
+
+  void operator=(scope_failure&&) = delete;
+
+  ~scope_failure() noexcept(noexcept(fn())) {
+    if (failed)
+      (void)fn();
+  }
+  // should be called where the 'fn' call is no longer needed
+  constexpr void no_longer_needed() noexcept {
+    failed = false;
+  }
+  constexpr void use_and_forget() noexcept(noexcept(fn())) {
+    failed = false;
+    (void)fn();
+  }
+};
+template <typename T>
+scope_failure(T&&) -> scope_failure<std::decay_t<T>>;
+
 }  // namespace aa
 
 #include "file_end.hpp"
