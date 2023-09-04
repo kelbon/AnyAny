@@ -9,6 +9,7 @@
 #include <random>
 #include <unordered_set>
 #define ANYANY_ASSUME_NO_DLLS
+#define ANYANY_DISABLE_CONCEPTS
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
@@ -982,7 +983,7 @@ void anyany_interface_alias_tests() {
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
   static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
                                aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
-#if __cplusplus >= 202002L
+#if !defined(ANYANY_DISABLE_CONCEPTS) && __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
   static_assert(aa::compound_method<c>);
@@ -1006,7 +1007,7 @@ void anyany_concepts_test() {
   anyany_interface_alias_tests<aa::cptr>();
   anyany_interface_alias_tests<aa::stateful::ref>();
   anyany_interface_alias_tests<aa::stateful::cref>();
-#if __cplusplus >= 202002L
+#if !defined(ANYANY_DISABLE_CONCEPTS) && __cplusplus >= 202002L
   aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
   (void)compiles;
   static_assert(aa::method<empty_value_pseudomethod<int>>);

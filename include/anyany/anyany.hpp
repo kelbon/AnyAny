@@ -52,7 +52,8 @@ using args_list = typename method_traits<Method>::args;
 template <typename Method>
 constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
-#ifdef AA_HAS_CPP20
+// disabling concepts may be usefull for forward declarations
+#if !defined(ANYANY_DISABLE_CONCEPTS) && defined(AA_HAS_CPP20)
 
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
