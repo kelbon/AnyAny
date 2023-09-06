@@ -52,8 +52,7 @@ using args_list = typename method_traits<Method>::args;
 template <typename Method>
 constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
-// disabling concepts may be usefull for forward declarations
-#if !defined(ANYANY_DISABLE_CONCEPTS) && defined(AA_HAS_CPP20)
+#ifdef AA_HAS_CPP20
 
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
@@ -101,12 +100,11 @@ concept const_method = method<T> && is_const_method_v<T>;
 template <typename T>
 concept polymorphic = is_polymorphic<std::remove_cvref_t<T>>::value;
 
-#define anyany_simple_method_concept ::aa::simple_method
-#define anyany_method_concept ::aa::method
-#else
-#define anyany_simple_method_concept typename
-#define anyany_method_concept typename
 #endif
+
+// concepts on struct declarations disabled for forward declaring Methods
+#define anyany_simple_method_concept typename  // aa::simple_method
+#define anyany_method_concept typename         // aa::method
 
 template <template <typename...> typename Template, typename... Types>
 using insert_flatten_into = decltype(noexport::insert_types<Template>(flatten_types_t<Types...>{}));
