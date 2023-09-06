@@ -9,7 +9,6 @@
 #include <random>
 #include <unordered_set>
 #define ANYANY_ASSUME_NO_DLLS
-#define ANYANY_DISABLE_CONCEPTS
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
@@ -983,7 +982,7 @@ void anyany_interface_alias_tests() {
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
   static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
                                aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
-#if !defined(ANYANY_DISABLE_CONCEPTS) && __cplusplus >= 202002L
+#if __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
   static_assert(aa::compound_method<c>);
@@ -1007,7 +1006,7 @@ void anyany_concepts_test() {
   anyany_interface_alias_tests<aa::cptr>();
   anyany_interface_alias_tests<aa::stateful::ref>();
   anyany_interface_alias_tests<aa::stateful::cref>();
-#if !defined(ANYANY_DISABLE_CONCEPTS) && __cplusplus >= 202002L
+#if __cplusplus >= 202002L
   aa::any_with<test_pseudomethod, test_pseudomethod> compiles;
   (void)compiles;
   static_assert(aa::method<empty_value_pseudomethod<int>>);
@@ -1236,8 +1235,21 @@ TEST(custom_unique_ptr) {
   do_test(cptr);
   return error_count;
 }
+struct forward_declared_method;
 
+void fwd_declare(aa::const_poly_ref<forward_declared_method>);
+
+struct forward_declared_method {
+  template <typename T>
+  static void do_invoke(const T& x) {
+  }
+};
+
+void fwd_declare(aa::const_poly_ref<forward_declared_method> ref) {
+  aa::invoke<forward_declared_method>(ref);
+}
 int main() {
+  fwd_declare(5);
   std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile time checks
   anyany_concepts_test();
