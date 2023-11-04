@@ -502,12 +502,12 @@ void noallocate_test() {
 #if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
 static_assert(
-    std::is_same_v<any_compare::ref, aa::poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ref, aa::poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ref,
-                   aa::const_poly_ref<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
-    std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+                   aa::const_poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ptr,
-                   aa::const_poly_ptr<aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
+                   aa::const_poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
 
 TEST(compare) {
@@ -981,7 +981,7 @@ void anyany_interface_alias_tests() {
                                aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
   static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
-                               aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+                               aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
 #if __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
