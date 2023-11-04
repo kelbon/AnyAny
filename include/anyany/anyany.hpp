@@ -1172,35 +1172,15 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using base_any_type = basic_any;
   using methods_list = ::aa::type_list<Methods...>;
 
- private:
-  template <typename... Methods1>
-  struct types {
-    using ptr = poly_ptr<Methods1...>;
-    using const_ptr = const_poly_ptr<Methods1...>;
-    using ref = poly_ref<Methods1...>;
-    using const_ref = const_poly_ref<Methods1...>;
-    using stateful_ref = stateful::ref<Methods1...>;
-    using stateful_cref = stateful::cref<Methods1...>;
-    using interface = runtime_concept<Methods1...>;
-  };
-  // remove 'destroy' Method only if it was automatically added(not provided by user/created by 'materialize')
-  template <typename... Methods1>
-  struct remove_utility_methods : types<Methods...> {};
-  template <typename... Methods1>
-  struct remove_utility_methods<destroy, Methods1...> : types<Methods1...> {};
-
-  using purified = remove_utility_methods<Methods...>;
-
- public:
-  using ptr = typename purified::ptr;
-  using ref = typename purified::ref;
-  using cptr = typename purified::const_ptr;
-  using cref = typename purified::const_ref;
+  using ptr = poly_ptr<Methods...>;
+  using ref = poly_ref<Methods...>;
+  using cptr = const_poly_ptr<Methods...>;
+  using cref = const_poly_ref<Methods...>;
   using const_ptr = cptr;
   using const_ref = cref;
-  using stateful_ref = typename purified::stateful_ref;
-  using stateful_cref = typename purified::stateful_cref;
-  using interface = typename purified::interface;
+  using stateful_ref = stateful::ref<Methods...>;
+  using stateful_cref = stateful::cref<Methods...>;
+  using interface = runtime_concept<Methods...>;
 
   // aliases without 'destroy' for usage like any_with<a, b, c>::ref
   // but operator& return with 'destroy' method(implicitly converitble anyway)

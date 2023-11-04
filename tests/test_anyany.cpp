@@ -981,7 +981,7 @@ void anyany_interface_alias_tests() {
                                aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
   static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
-                               aa::poly_ref<aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+                               aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
 #if __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
