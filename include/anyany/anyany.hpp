@@ -151,7 +151,7 @@ struct runtime_concept : type_list<Methods...> {
   }
   // 'Pred' is lambda like []<typename>() -> bool { ... }
   template <typename Pred>
-  static AA_CONSTEVAL_CPP20 auto filtered_by(Pred p) {
+  static AA_CONSTEVAL_CPP20 auto filtered_by(Pred) {
     auto filtered = noexport::filter_types<Pred>(type_list<Methods...>{});
     using result_type = decltype(noexport::insert_types<self_template>(filtered));
     return result_type{};
@@ -1865,9 +1865,6 @@ namespace std {
 
 template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
 struct uses_allocator<::aa::basic_any<Alloc, SooS, Methods...>, Alloc> : true_type {};
-
-template <typename>
-struct default_delete;
 
 template <anyany_simple_method_concept... Methods>
 struct default_delete<::aa::runtime_concept<Methods...>> {
