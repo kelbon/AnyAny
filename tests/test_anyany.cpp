@@ -1248,6 +1248,27 @@ struct forward_declared_method {
 void fwd_declare(aa::const_poly_ref<forward_declared_method> ref) {
   aa::invoke<forward_declared_method>(ref);
 }
+
+TEST(always_allocated_any) {
+  using aa_aa = aa::basic_any_with<aa::default_allocator, 0, aa::copy_with<aa::default_allocator, 0>>;
+  aa_aa x = 'c';
+  error_if(!x.is_stable_pointers());
+  error_if(x.sizeof_now() != sizeof(char));
+  error_if(!x.is_always_stable_pointers);
+  auto x_copy = x;
+  error_if(!x_copy.is_stable_pointers());
+  error_if(x_copy.sizeof_now() != sizeof(char));
+  error_if(!x_copy.is_always_stable_pointers);
+  auto y = std::move(x);
+  error_if(x.is_stable_pointers());
+  error_if(x.sizeof_now() != 0);
+  error_if(!x.is_always_stable_pointers);
+  error_if(!y.is_stable_pointers());
+  error_if(y.sizeof_now() != sizeof(char));
+  error_if(!y.is_always_stable_pointers);
+  return error_count;
+}
+
 int main() {
   fwd_declare(5);
   std::cout << "C++ standard: " << __cplusplus << std::endl;
@@ -1524,5 +1545,5 @@ int main() {
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs();
+         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() + TESTalways_allocated_any();
 }

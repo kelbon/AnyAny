@@ -1384,14 +1384,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // observe
 
-  enum : bool  {is_always_stable_pointers = SooS == 0 };
+  enum : bool { is_always_stable_pointers = SooS == 0 };
 
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   constexpr bool is_stable_pointers() const noexcept {
-    if constexpr (is_always_stable_pointers)
-      return true;
-    else
-      return memory_allocated();
+    return memory_allocated();
   }
 
   constexpr bool has_value() const noexcept {
@@ -1403,7 +1400,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
-    return memory_allocated() ? allocated_size() : SooS;
+    return memory_allocated() ? allocated_size() : SooS;//HMM
   }
 
  private:
