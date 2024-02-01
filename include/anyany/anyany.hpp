@@ -1384,15 +1384,16 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // observe
 
+  static AA_CONSTEVAL_CPP20 bool is_always_stable_pointers() noexcept {
+    return SooS == 0;
+  }
+
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   constexpr bool is_stable_pointers() const noexcept {
     if constexpr (is_always_stable_pointers())
       return true;
     else
       return memory_allocated();
-  }
-  static AA_CONSTEVAL_CPP20 bool is_always_stable_pointers() noexcept {
-    return SooS == 0;
   }
 
   constexpr bool has_value() const noexcept {
