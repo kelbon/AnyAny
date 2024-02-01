@@ -1099,15 +1099,24 @@ struct unreachable_allocator {
 // strong exception guarantee for all constructors and assignments,
 // emplace<T> - *this is empty if exception thrown
 // for alloc not all fancy pointers supported and construct / destroy not throught alloc
+// if SooS == 0, value is always allocated, is_stable_pointers() == true
 template <typename Alloc, size_t SooS, typename... Methods>
 struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
+   static AA_CONSTEVAL_CPP20 size_t soo_buffer_size() noexcept {
+    // needs atleast sizeof(std::size_t) in buffer(SooS)
+    // to store allocated size for passing it into deallocate(ptr, n)
+    static_assert(SooS == 0 || SooS >= sizeof(size_t),
+                  "basic_any requires SooS to be >= sizeof(size_t) or 0");
+    return SooS == 0 ? sizeof(size_t) : SooS;
+  }
+
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = data;
   union {
-    alignas(std::max_align_t) std::byte data[SooS];
+    alignas(std::max_align_t) std::byte data[soo_buffer_size()];
     size_t size_allocated;  // stored when value allocated
   };
 #if __clang__
@@ -1377,8 +1386,15 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   constexpr bool is_stable_pointers() const noexcept {
-    return memory_allocated();
+    if constexpr (is_always_stable_pointers())
+      return true;
+    else
+      return memory_allocated();
   }
+  static AA_CONSTEVAL_CPP20 bool is_always_stable_pointers() noexcept {
+    return SooS == 0;
+  }
+
   constexpr bool has_value() const noexcept {
     return vtable_ptr != nullptr;
   }
@@ -1431,9 +1447,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
   constexpr size_t allocated_size() const noexcept {
     assert(has_value() && memory_allocated());
-    // needs atleast sizeof(std::size_t) in buffer(SooS)
-    // to store allocated size for passing it into deallocate(ptr, n)
-    static_assert(SooS >= sizeof(std::size_t));
     // when allocates stores in size in unused buffer
     return size_allocated;
   }
