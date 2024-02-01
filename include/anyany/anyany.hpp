@@ -1384,13 +1384,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // observe
 
-  static constexpr bool is_always_stable_pointers() noexcept {
-    return SooS == 0;
-  }
+  enum : bool  {is_always_stable_pointers = SooS == 0 };
 
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   constexpr bool is_stable_pointers() const noexcept {
-    if constexpr (is_always_stable_pointers())
+    if constexpr (is_always_stable_pointers)
       return true;
     else
       return memory_allocated();
