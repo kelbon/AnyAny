@@ -1384,7 +1384,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // observe
 
-  static AA_CONSTEVAL_CPP20 bool is_always_stable_pointers() noexcept {
+  static constexpr bool is_always_stable_pointers() noexcept {
     return SooS == 0;
   }
 
