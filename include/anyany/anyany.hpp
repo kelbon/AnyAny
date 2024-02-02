@@ -1400,7 +1400,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
-    return memory_allocated() ? allocated_size() : SooS;//HMM
+    return memory_allocated() ? allocated_size() : SooS;
   }
 
  private:
@@ -1618,15 +1618,15 @@ template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
 auto insert_into_basic_any(type_list<Methods...>) {
   // if user provides 'destroy' Method, then use it
   if constexpr (noexport::contains_v<destroy, Methods...>)
-    return basic_any<Alloc, SooS, Methods...>{};
+    return noexport::type_identity<basic_any<Alloc, SooS, Methods...>>{};
   else
-    return basic_any<Alloc, SooS, destroy, Methods...>{};
+    return noexport::type_identity<basic_any<Alloc, SooS, destroy, Methods...>>{};
 }
 // if user provides 'destroy' as first Method, then i need to duplicate it
 // (so basic any do not removes it as utility Method)
 template <typename Alloc, size_t SooS, anyany_simple_method_concept... Methods>
 auto insert_into_basic_any(type_list<destroy, Methods...>)
-    -> basic_any<Alloc, SooS, destroy, destroy, Methods...>;
+    -> noexport::type_identity<basic_any<Alloc, SooS, destroy, destroy, Methods...>>;
 
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
 auto flatten_into_basic_any(type_list<Methods...>) {
@@ -1645,7 +1645,8 @@ auto get_interface_of(const basic_any<Alloc, SooS, destroy, Methods...>&) -> run
 }  // namespace noexport
 
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
-using basic_any_with = decltype(noexport::flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}));
+using basic_any_with =
+    typename decltype(noexport::flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}))::type;
 
 template <anyany_method_concept... Methods>
 using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;

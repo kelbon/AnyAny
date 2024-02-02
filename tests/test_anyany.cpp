@@ -1268,6 +1268,31 @@ TEST(always_allocated_any) {
   error_if(!y.is_always_stable_pointers);
   return error_count;
 }
+struct non_default_constructible_alloc : aa::default_allocator {
+  int x;
+  non_default_constructible_alloc() = delete;
+  non_default_constructible_alloc(int x) : x(x) {
+  }
+};
+struct non_default_constructible_alloc_empty : aa::default_allocator {
+  non_default_constructible_alloc_empty() = delete;
+  non_default_constructible_alloc_empty(int) {
+  }
+};
+
+TEST(non_default_constructible_allocs) {
+  using test_t = aa::basic_any_with<non_default_constructible_alloc, aa::default_any_soos, aa::move>;
+  test_t a(std::allocator_arg, non_default_constructible_alloc{5});
+  a = 5;
+  auto b = std::move(a);
+  (void)b.get_allocator();
+  using test_t2 = aa::basic_any_with<non_default_constructible_alloc_empty, aa::default_any_soos, aa::move>;
+  test_t2 a2(std::allocator_arg, non_default_constructible_alloc_empty{5});
+  a2 = 5;
+  auto b2 = std::move(a2);
+  (void)b2.get_allocator();
+  return 0;
+}
 
 int main() {
   fwd_declare(5);
@@ -1545,5 +1570,6 @@ int main() {
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() + TESTalways_allocated_any();
+         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() + TESTalways_allocated_any()
+         + TESTnon_default_constructible_allocs();
 }
