@@ -1570,6 +1570,6 @@ int main() {
   return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() + TESTalways_allocated_any()
-         + TESTnon_default_constructible_allocs();
+         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
+         TESTalways_allocated_any() + TESTnon_default_constructible_allocs();
 }
