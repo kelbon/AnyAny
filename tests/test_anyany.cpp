@@ -1294,6 +1294,20 @@ TEST(non_default_constructible_allocs) {
   return 0;
 }
 
+TEST(zero_sized_any) {
+  using test_t = aa::basic_any_with<aa::default_allocator, 0>;
+  test_t val = 5;
+  auto val2 = std::move(val);
+  error_if(!val2.is_stable_pointers());
+  error_if(!val2);
+  error_if(!!val);
+  std::swap(val, val2);
+  error_if(!val.is_stable_pointers());
+  error_if(!val);
+  error_if(!!val2);
+  return error_count;
+}
+
 int main() {
   fwd_declare(5);
   std::cout << "C++ standard: " << __cplusplus << std::endl;
@@ -1571,5 +1585,5 @@ int main() {
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
-         TESTalways_allocated_any() + TESTnon_default_constructible_allocs();
+         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any();
 }

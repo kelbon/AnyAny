@@ -1105,7 +1105,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   using aa_polymorphic_tag = int;
 
  private:
-   static AA_CONSTEVAL_CPP20 size_t soo_buffer_size() noexcept {
+  static AA_CONSTEVAL_CPP20 size_t soo_buffer_size() noexcept {
     // needs atleast sizeof(std::size_t) in buffer(SooS)
     // to store allocated size for passing it into deallocate(ptr, n)
     static_assert(SooS == 0 || SooS >= sizeof(size_t),
@@ -1174,7 +1174,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   template <typename Method>
   static constexpr bool has_method = noexport::contains_v<Method, Methods...>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>>;
-  static constexpr bool has_move = noexport::has_move<Methods...>;
+  static constexpr bool has_move = noexport::has_move<Methods...> || SooS == 0;
 
   static_assert(noexport::is_byte_like_v<typename alloc_traits::value_type>);
   static_assert(std::is_nothrow_copy_constructible_v<Alloc>, "C++ Standard requires it");
@@ -1384,6 +1384,10 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // observe
 
+  constexpr explicit operator bool() const noexcept {
+    return has_value();
+  }
+
   enum : bool { is_always_stable_pointers = SooS == 0 };
 
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
@@ -1411,27 +1415,32 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       return invoke<noexport::some_copy_method<Methods...>>(*this).move_fn;
   }
   // precodition - has_value() == false
-  template <bool MemoryMaybeReused = true, typename Other>
-  void move_value_from(Other& other) noexcept(MemoryMaybeReused) {
+  template <bool MemoryMaybeReused = true, typename... OtherMethods>
+  void move_value_from(basic_any<Alloc, SooS, OtherMethods...>& other) noexcept(MemoryMaybeReused) {
     if (!other.has_value())
       return;
-    // `move` is noexcept (invariant of small state)
-    // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
-    if (!other.memory_allocated()) {
-      other.get_move_fn()(other.value_ptr, value_ptr);
+    if constexpr (SooS == 0) {
+      value_ptr = std::exchange(other.value_ptr, other.data);
+      size_allocated = other.size_allocated;
     } else {
-      if constexpr (MemoryMaybeReused) {
-        value_ptr = std::exchange(other.value_ptr, other.data);
-        size_allocated = other.size_allocated;
-      } else {
-        value_ptr = alloc.allocate(other.size_allocated);
-        size_allocated = other.size_allocated;
-        scope_failure free_memory{[&] {
-          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
-          value_ptr = data;
-        }};
+      // `move` is noexcept (invariant of small state)
+      // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
+      if (!other.memory_allocated()) {
         other.get_move_fn()(other.value_ptr, value_ptr);
-        free_memory.no_longer_needed();
+      } else {
+        if constexpr (MemoryMaybeReused) {
+          value_ptr = std::exchange(other.value_ptr, other.data);
+          size_allocated = other.size_allocated;
+        } else {
+          value_ptr = alloc.allocate(other.size_allocated);
+          size_allocated = other.size_allocated;
+          scope_failure free_memory{[&] {
+            alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
+            value_ptr = data;
+          }};
+          other.get_move_fn()(other.value_ptr, value_ptr);
+          free_memory.no_longer_needed();
+        }
       }
     }
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
