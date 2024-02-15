@@ -1109,10 +1109,11 @@ TEST(materialize) {
     };
     error_if(std::any_of(begin(v), end(v), [&](auto& x) { return x != obj; }));
   };
-  test(aa::interface_alias<aa::destroy, aa::copy, aa::equal_to>{}, aa::default_allocator{},
+  test(aa::interface_alias<aa::destroy, aa::copy, aa::equal_to, aa::type_info_sizeof>{}, aa::default_allocator{},
        std::integral_constant<size_t, aa::default_any_soos>{});
   test(
-      aa::interface_alias<aa::equal_to, aa::destroy, aa::destroy, aa::copy_with<aa::unreachable_allocator>>{},
+      aa::interface_alias<aa::equal_to, aa::destroy, aa::destroy, aa::copy_with<aa::unreachable_allocator>, 
+      aa::type_info_sizeof>{},
       aa::unreachable_allocator{}, std::integral_constant<size_t, aa::default_any_soos>{});
   return error_count;
 }

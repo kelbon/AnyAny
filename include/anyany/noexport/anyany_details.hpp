@@ -167,13 +167,6 @@ AA_CONSTEVAL_CPP20 bool has_subset(type_list<Needle...>, type_list<Haystack...>)
   return (contains_v<Needle, Haystack...> && ...);
 }
 
-template <typename T, typename... Args,
-          typename = std::void_t<decltype(::new(std::declval<void*>()) T(std::declval<Args>()...))>>
-AA_ALWAYS_INLINE constexpr T* construct_at(const T* location, Args&&... args) noexcept(noexcept(
-    ::new(const_cast<void*>(static_cast<const volatile void*>(location))) T(std::forward<Args>(args)...))) {
-  return ::new (const_cast<void*>(static_cast<const volatile void*>(location)))
-      T(std::forward<Args>(args)...);
-}
 template <typename T>
 AA_ALWAYS_INLINE constexpr void destroy_at(const T* location) noexcept {
   location->~T();
@@ -230,10 +223,9 @@ constexpr inline bool is_fits_in_soo_buffer =
 
 // precondition !!src && !!dest
 template <typename T>
-void relocate(void* _src, void* _dest) noexcept {
-  T* src = reinterpret_cast<T*>(_src);
-  T* dest = reinterpret_cast<T*>(_dest);
-  noexport::construct_at(dest, std::move(*src));
+void relocate(void* _src, void* dest) noexcept {
+  T* src = static_cast<T*>(_src);
+  new (dest) T(std::move(*src));
   noexport::destroy_at(src);
 }
 // precondition: 'dest' do not contain object, so never overlaps with 'src'
@@ -246,73 +238,19 @@ void relocate_trivial(void* src, void* dest) noexcept {
   std::memcpy(dest, src, Sizeof);
 }
 
-template <typename Alloc>
-AA_CONSTEVAL_CPP20 bool copy_requires_alloc() {
-  return !(std::is_empty_v<Alloc> && std::is_default_constructible_v<Alloc>);
-}
-
 // preconditions:
 //    * no object under 'dest'
-//    * atleast 'SooS' bytes under 'dest' and alignment == alignof(std::max_align_t)
-//    * there are 'Alloc' object under 'alloc_' (void* here to make other copy funtions alloc independent)
-// postconditions:
-//    * returns pointer to created copy
-//    * if return != 'dest', then value was allocated by 'alloc' and allocation size storoed under
-//    'dest'(size_t)
-template <typename T, typename Alloc, size_t SooS>
-static void* copy_fn(const void* src_raw, void* dest, void* alloc_) {
-  static_assert(SooS >= sizeof(size_t));
-  Alloc& alloc = *reinterpret_cast<Alloc*>(alloc_);
+//    * atleast sizeof(T) bytes under 'dest' and good align
+//    * T object under 'src_raw'
+template <typename T>
+static void copy_fn(const void* src_raw, void* dest) {
   const T& src = *reinterpret_cast<const T*>(src_raw);
-  if constexpr (noexport::is_fits_in_soo_buffer<T, SooS>) {
-    return noexport::construct_at(reinterpret_cast<T*>(dest), src);
-  } else {
-    constexpr size_t allocation_size = sizeof(T);
-    // no fancy pointers supported
-    auto* ptr = alloc.allocate(allocation_size);
-    if constexpr (std::is_nothrow_copy_constructible_v<T>) {
-      noexport::construct_at(reinterpret_cast<T*>(ptr), src);
-    } else {
-      try {
-        noexport::construct_at(reinterpret_cast<T*>(ptr), src);
-      } catch (...) {
-        alloc.deallocate(ptr, allocation_size);
-        throw;
-      }
-    }
-    noexport::construct_at(reinterpret_cast<std::size_t*>(dest), allocation_size);
-    return ptr;
-  }
-}
-template <typename T, typename Alloc, size_t SooS>
-static void* copy_fn_empty_alloc(const void* src_raw, void* dest) {
-  Alloc a{};
-  return copy_fn<T, Alloc, SooS>(src_raw, dest, std::addressof(a));
+  new (dest) T(src);
 }
 
 template <size_t Sizeof>
-static void* trivial_copy_small_fn(const void* src_raw, void* dest, void*) noexcept {
+static void trivial_copy_fn(const void* src_raw, void* dest) noexcept {
   std::memcpy(dest, src_raw, Sizeof);
-  return dest;
-}
-template <size_t Sizeof>
-static void* trivial_copy_small_fn_empty_alloc(const void* src_raw, void* dest) {
-  return trivial_copy_small_fn<Sizeof>(src_raw, dest, nullptr);
-}
-
-template <size_t Sizeof, typename Alloc>
-static void* trivial_copy_big_fn(const void* src_raw, void* dest, void* alloc_) {
-  static_assert(is_byte_like_v<typename Alloc::value_type>);
-  Alloc& alloc = *reinterpret_cast<Alloc*>(alloc_);
-  void* result = alloc.allocate(Sizeof);
-  std::memcpy(result, src_raw, Sizeof);
-  noexport::construct_at(reinterpret_cast<size_t*>(dest), Sizeof);
-  return result;
-}
-template <size_t Sizeof, typename Alloc>
-static void* trivial_copy_big_fn_empty_alloc(const void* src_raw, void* dest) {
-  Alloc a{};
-  return trivial_copy_big_fn<Sizeof, Alloc>(src_raw, dest, std::addressof(a));
 }
 
 template <typename... Types>
@@ -371,6 +309,11 @@ struct deallocate_with_delete {
     return &delete_fn<T>;
   }
 };
+#if !__cpp_exceptions
+struct noop_guard {
+  constexpr void no_longer_needed() noexcept {}
+};
+#endif
 
 }  // namespace aa::noexport
 
