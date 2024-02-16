@@ -1247,7 +1247,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
     } else {
       *this = basic_any{std::forward<V>(val)};
     }
-    return *this;
   }
 
   // has strong exception guarantee
