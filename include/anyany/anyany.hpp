@@ -1549,7 +1549,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
     value_ptr = alloc.allocate(bytes);
     size_allocated = bytes;
   #if __cpp_exceptions
-    return scope_failure([this] { deallocate_memory(); });
+    return scope_failure{[this] { deallocate_memory(); }};
   #else
     return noexport::noop_guard{};
   #endif
