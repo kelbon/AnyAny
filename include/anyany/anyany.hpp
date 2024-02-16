@@ -1231,7 +1231,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
 
   void replace_with(basic_any&& other) noexcept(movable_alloc()) {
     if (this == std::addressof(other))
-      return *this;
+      return;
     move_assign<exception_guarantee::strong>(other);
   }
   template <typename V, typename Self = basic_any,
