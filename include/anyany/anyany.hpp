@@ -1084,19 +1084,24 @@ struct unreachable_allocator {
   }
 };
 
-// SooS == Small Object Optimization Size
-// strong exception guarantee for all constructors and assignments,
+// SooSize == Small Object Optimization Size
+// strong exception guarantee for all constructors, but not for assignments (use `replace_with` for it),
 // emplace<T> - *this is empty if exception thrown
 // if SooS == 0, value is always allocated, is_stable_pointers() == true
-template <typename Alloc, size_t SooS, typename... Methods>
-struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Methods...> {
+template <typename Alloc, size_t SooSize, typename... Methods>
+struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
+  // small object optimization buffer size
+  // SooS uses all padding it can (so no useless memory)
+  static constexpr size_t SooS = SooSize == 0 ? 0 : std::max(alignof(std::max_align_t), SooSize);
+
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = data;
   union {
-    alignas(std::max_align_t) std::byte data[SooS];
+    // if SooS == 0, then union degenerates to just `size_t`
+    alignas(SooS == 0 ? alignof(size_t) : alignof(std::max_align_t)) std::byte data[SooS];
     size_t size_allocated;  // stored when value allocated
   };
 #if __clang__
@@ -1111,27 +1116,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
   static inline constexpr bool any_is_small_for = noexport::is_fits_in_soo_buffer<T, SooS>;
-
-  // precondition: has_value() == false && !memory_allocated()
-  template <typename T, typename ForceAllocate = void, typename... Args>
-  void emplace_in_empty(Args&&... args) {
-    assert(!has_value() && !memory_allocated());
-    if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
-      alloc_traits::construct(alloc, reinterpret_cast<T*>(&data[0]), std::forward<Args>(args)...);
-    } else {
-      constexpr size_t allocation_size = sizeof(T);
-      if constexpr (std::is_nothrow_constructible_v<T, Args&&...>) {
-        value_ptr = alloc.allocate(allocation_size);
-        size_allocated = allocation_size;
-        alloc_traits::construct(alloc, reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
-      } else {
-        auto free_memory = allocate_guard(allocation_size);
-        alloc_traits::construct(alloc, reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
-        free_memory.no_longer_needed();
-      }
-    }
-    vtable_ptr = addr_vtable_for<T, Methods...>;
-  }
+  
+  enum struct exception_guarantee {
+    basic,  // if exception, then value in valid state
+    strong, // if exception, value unchanged
+  };
 
   using alloc_traits = std::allocator_traits<Alloc>;
   using alloc_pointer_type = typename alloc_traits::pointer;
@@ -1140,11 +1129,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   template <typename, size_t, typename...>
   friend struct basic_any;
 
- public:
   static AA_CONSTEVAL_CPP20 bool movable_alloc() noexcept {
     return alloc_traits::is_always_equal::value ||
            alloc_traits::propagate_on_container_move_assignment::value;
   }
+
+ public:
   template <typename Method>
   static constexpr bool has_method = noexport::contains_v<Method, Methods...>;
   static constexpr bool has_copy = has_method<copy_with<Alloc, SooS>>;
@@ -1202,13 +1192,33 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       AA_IF_HAS_CPP20(requires(has_move)) {
     if (this == std::addressof(other))
       return *this;
-    move_assign(other);
+    move_assign<exception_guarantee::basic>(other);
     return *this;
   }
-
+// TODO ??? operator= for const basic_any<other methods...>
   basic_any& operator=(const basic_any& other) ANYANY_LIFETIMEBOUND AA_IF_HAS_CPP20(requires(has_copy)) {
+    if (!other.has_value()) {
+      destroy_value();
+      return *this;
+    }
+    // both allocated or both do not allocated, because of value align (may be allocated because of align)
+    if (memory_allocated() == other.memory_allocated() && capacity() >= other.sizeof_now()) {
+      if (this == std::addressof(other))
+        return *this;
+      destroy_value();
+      // if exception thrown, *this is empty
+      invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
+      vtable_ptr = other.vtable_ptr;
+      return *this;
+    }
+    replace_with(other);
+    return *this;
+  }
+  // same as operator=, but with strong exception guarantee
+  // TODO tests
+  // TODO all overloads for replace_with
+  void replace_with(const basic_any& other) {
     basic_any value = other;
-    // TODO if memory allocated and other allocates memory, reuse it (destroy + copy) + change vtable
     if constexpr (!alloc_traits::is_always_equal::value &&
                   alloc_traits::propagate_on_container_copy_assignment::value) {
       if (alloc != other.alloc) {
@@ -1217,29 +1227,36 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       }
     }
     *this = std::move(value);
-    return *this;
   }
-  // TODO replace_with(const basic_any&)
 
-  // has strong exception guarantee
-  // you can use .emplace() without exception guarantees
-  // and without any requirements
+  void replace_with(basic_any&& other) noexcept(movable_alloc()) {
+    if (this == std::addressof(other))
+      return *this;
+    move_assign<exception_guarantee::strong>(other);
+  }
   template <typename V, typename Self = basic_any,
             std::enable_if_t<(std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>> &&
                               (Self::has_move || (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
                                                   any_is_small_for<std::decay_t<V>>))),
                              int> = 0>
-  basic_any& operator=(V&& val) ANYANY_LIFETIMEBOUND {
-    // TODO if already has enough memory allocated AND value requires allocation destroy + construct value on it
-    // + change vtable ofc
+  void replace_with(V&& val) {
     if constexpr (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
                   any_is_small_for<std::decay_t<V>>) {
-      reset(); // TODO change behavior (do not deallocate)
+      reset();
       emplace_in_empty<std::decay_t<V>>(std::forward<V>(val));
     } else {
-    // здесь вообще сам бог велел без изменений copy и прочего реюзать память
       *this = basic_any{std::forward<V>(val)};
     }
+    return *this;
+  }
+
+  // has strong exception guarantee
+  // you can use .emplace() without exception guarantees
+  // and without any requirements
+  template <typename V, std::enable_if_t<
+                        std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>>, int> = 0>
+  basic_any& operator=(V&& val) ANYANY_LIFETIMEBOUND {
+    emplace<std::decay_t<V>>(std::forward<V>(val));
     return *this;
   }
 
@@ -1250,17 +1267,26 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>)
       ANYANY_LIFETIMEBOUND {
-        // TODO reuse memory
-    reset();
-    emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
-    return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
+    destroy_value();
+    using U = std::decay_t<T>;
+    if (!memory_allocated())
+      goto do_emplace_in_empty;
+    if (size_allocated < sizeof(U)) {
+      deallocate_memory();
+      do_emplace_in_empty:
+      emplace_in_empty<U>(std::forward<Args>(args)...);
+      return *reinterpret_cast<U*>(value_ptr);
+    }
+    construct_value<U>(value_ptr, std::forward<Args>(args)...);
+    return *reinterpret_cast<U*>(value_ptr);
   }
+
   template <typename T, typename U, typename... Args,
             std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
           any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
-    return emplace<T, std::initializer_list<U>, Args...>(list, std::forward<Args>(args)...);
+    return emplace<T, std::initializer_list<U>, Args...>(std::move(list), std::forward<Args>(args)...);
   }
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
@@ -1295,7 +1321,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
             std::enable_if_t<(noexport::contains_v<copy_with<Alloc, SooS>, OtherMethods...> &&
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
-  basic_any(const basic_any<Alloc, SooS, OtherMethods...>& other)
+  basic_any(const basic_any<Alloc, SooSize, OtherMethods...>& other)
       : alloc(alloc_traits::select_on_container_copy_construction(other.get_allocator())) {
     copy_value_from(other);
   }
@@ -1303,7 +1329,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
             std::enable_if_t<(noexport::has_move<OtherMethods...> &&
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
-  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc()) {
+  basic_any(basic_any<Alloc, SooSize, OtherMethods...>&& other) noexcept(movable_alloc()) {
     move_value_from(other);
   }
 
@@ -1311,8 +1337,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
             std::enable_if_t<(noexport::has_move<OtherMethods...> &&
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
-  basic_any& operator=(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc()) {
-    move_assign(other);
+  basic_any& operator=(basic_any<Alloc, SooSize, OtherMethods...>&& other) noexcept(movable_alloc()) {
+    move_assign<exception_guarantee::basic>(other);
     return *this;
   }
 
@@ -1338,12 +1364,33 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       : basic_any(force_stable_pointers, std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
 
-  // postconditions : has_value() == false
+  // postconditions : has_value() == false and memory deallocated
   void reset() noexcept {
-    if (has_value())
-      destroy_value();
+    destroy_value();
     if (memory_allocated())
       deallocate_memory();
+  }
+
+  // destroys value, but not deallocate memory
+  // postcondtion: !has_value()
+  void destroy_value() noexcept {
+    if (!has_value())
+      return;
+    invoke<destroy> (*this)(value_ptr);
+    vtable_ptr = nullptr;
+    assert(!has_value());
+  }
+
+  // postcondition: !has_value() && capacity() >= bytes
+  // invoking 'replace_with_bytes' on empty value effectively == 'reserve'
+  void replace_with_bytes(size_t bytes) AA_IF_HAS_CPP20(requires(has_move && SooS != 0)) {
+    destroy_value();
+    if (capacity() >= bytes)
+      return;
+    auto* new_place = alloc.allocate(bytes);
+    deallocate_memory();
+    value_ptr = new_place;
+    size_allocated = bytes;
   }
 
   // observe
@@ -1360,7 +1407,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   [[nodiscard]] Alloc get_allocator() const noexcept {
     return alloc;
   }
-// TODO void reserve(size_t bytes);
 
   // returns true if poly_ptr/ref to this basic_any will not be invalidated after move
   constexpr bool is_stable_pointers() const noexcept {
@@ -1380,6 +1426,26 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
 
  private:
+  template<typename T, typename... Args>
+  constexpr void construct_value(void* place, Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>) {
+    static_assert(std::is_same_v<T, std::decay_t<T>>);
+    alloc_traits::construct(alloc, static_cast<T*>(place), std::forward<Args>(args)...);
+    vtable_ptr = addr_vtable_for<T, Methods...>;
+  }
+
+  // precondition: has_value() == false && !memory_allocated()
+  template <typename T, typename ForceAllocate = void, typename... Args>
+  void emplace_in_empty(Args&&... args) {
+    assert(!has_value() && !memory_allocated());
+    if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
+      construct_value<T>(+data, std::forward<Args>(args)...);
+    } else {
+      // ignore guard, because here dctor does this job
+      allocate_guard(sizeof(T)).no_longer_needed();
+      construct_value<T>(value_ptr, std::forward<Args>(args)...);
+    }
+  }
+
   // precondition: has_value()
   constexpr auto* get_move_fn() const noexcept {
     assert(has_value());
@@ -1392,44 +1458,48 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // precodition - has_value() == false, alloc is setted
   template<typename... OtherMethods>
-  void copy_value_from(const basic_any<Alloc, SooS, OtherMethods...>& other) {
+  void copy_value_from(const basic_any<Alloc, SooSize, OtherMethods...>& other) {
     assert(!has_value());
     if (!other.has_value())
       return;
-    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
-    if (!other.memory_allocated()) {
-      invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
-      return;
+    if (!other.memory_allocated())
+      goto do_copy_value;
+    if (memory_allocated() && size_allocated < other.size_allocated) {
+      deallocate_memory();
+      goto allocate;
     }
-    auto free_memory = allocate_guard(other.size_allocated);
+    if (!memory_allocated()) {
+      allocate:
+      allocate_guard(other.size_allocated).no_longer_needed();
+    }
+    do_copy_value:
+    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
     invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
-    free_memory.no_longer_needed();
   }
 
-  template<typename... OtherMethods>
-  void move_assign(basic_any<Alloc, SooS, OtherMethods...>& other) {
+  template<exception_guarantee G, typename... OtherMethods>
+  void move_assign(basic_any<Alloc, SooSize, OtherMethods...>& other) {
     if constexpr (alloc_traits::propagate_on_container_move_assignment::value) {
       if (alloc != other.alloc)
         alloc = std::move(other.alloc);
     } else if constexpr (!alloc_traits::is_always_equal::value) {
       // not propagatable alloc
       if (alloc != other.alloc && other.has_value() && other.memory_allocated())
-        return move_value_from_try_reuse_allocated<true>(other);
+        return move_value_from_try_reuse_allocated<G>(other);
     }
     reset();
     move_value_from(other);
   }
 
   // precondition: other.has_value() && other.memory_allocated()
-  template<bool StrongExceptionGuarantee, typename... OtherMethods>
-  void move_value_from_try_reuse_allocated(basic_any<Alloc, SooS, OtherMethods...>& other) {
+  template<exception_guarantee G, typename... OtherMethods>
+  void move_value_from_try_reuse_allocated(basic_any<Alloc, SooSize, OtherMethods...>& other) {
     assert(other.has_value() && other.memory_allocated());
-    if (!StrongExceptionGuarantee && memory_allocated() && size_allocated >= other.size_allocated) {
-      if (has_value())
-        destroy_value();
+    if (G != exception_guarantee::strong && memory_allocated() && size_allocated >= other.size_allocated) {
+      destroy_value();
       // if exception thrown here, all valid (but *this is empty)
       other.get_move_fn()(other.value_ptr, value_ptr);
-      vtable_ptr = subtable_ptr<Methods...>(other.value_ptr);
+      vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
       other.vtable_ptr = nullptr;
       // do not deallocate other's memory, it can be reused later
       return;
@@ -1443,18 +1513,18 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
 
   // precodition - has_value() == false, alloc is setted
   template <typename... OtherMethods>
-  void move_value_from(basic_any<Alloc, SooS, OtherMethods...>& other) noexcept {
+  void move_value_from(basic_any<Alloc, SooSize, OtherMethods...>& other) noexcept {
     assert(!has_value());
     if (!other.has_value())
       return;
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+    other.vtable_ptr = nullptr;
     if constexpr (SooS != 0) {
       // `move` is noexcept (invariant of fitting into SOO buffer)
       // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
       if (!other.memory_allocated())
-        return other.get_move_fn()(other.value_ptr, value_ptr);
+        return get_move_fn()(other.value_ptr, value_ptr);
     }
-    other.vtable_ptr = nullptr;
     value_ptr = std::exchange(other.value_ptr, other.data);
     size_allocated = other.size_allocated;
   }
@@ -1467,18 +1537,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     // when allocates stores in size in unused buffer
     return size_allocated;
   }
-  // precondition - has_value() == true
-  // postcondition - has_value() == false
-  constexpr void destroy_value() noexcept {
-    assert(has_value());
-    invoke<destroy> (*this)(value_ptr);
-    vtable_ptr = nullptr;
-    assert(!has_value());
-  }
+
   // precondition: !has_value() && memory_allocated()
   constexpr void deallocate_memory() noexcept {
     assert(!has_value() && memory_allocated());
-    alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
+    alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), size_allocated);
     value_ptr = data;
   }
   // precondition: !has_value() && !memory_allocated()
@@ -1511,12 +1574,12 @@ struct materialization_impl {
   template <typename Alloc, size_t SooS, typename... Methods>
   static basic_any<Alloc, SooS, Methods...> do_materialize(const_poly_ref<Methods...> ref, Alloc alloc)  {
     basic_any<Alloc, SooS, Methods...> result(std::allocator_arg, std::move(alloc));
-    result.vtable_ptr = mate::get_vtable_ptr(ref);
     // always allocate, because no guarantees about align
     const size_t size_of = invoke<type_info_sizeof>(ref);
     auto free_memory = result.allocate_guard(size_of);
     invoke<copy_with<Alloc, SooS>>(ref).copy_fn(mate::get_value_ptr(ref), mate::get_value_ptr(result));
     free_memory.no_longer_needed();
+    result.vtable_ptr = mate::get_vtable_ptr(ref);
     return result;
   }
 };
@@ -1527,7 +1590,7 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
                          noexport::contains_v<destroy, Methods...> && 
                          noexport::contains_v<type_info_sizeof, Methods...>),
                         basic_any<Alloc, SooS, Methods...>> {
-  return materialization_impl::do_materialize(ref, std::move(alloc));
+  return materialization_impl::do_materialize<Alloc, SooS>(ref, std::move(alloc));
 }
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
   template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \

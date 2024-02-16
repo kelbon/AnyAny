@@ -12,7 +12,7 @@
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
-#define error_if(Cond) error_count += static_cast<bool>((Cond))
+#define error_if(Cond) if (static_cast<bool>(Cond)) throw 1 //error_count += static_cast<bool>((Cond))
 #define TEST(NAME) size_t TEST##NAME(size_t error_count = 0)
 
 template <typename Alloc = std::allocator<char>>
@@ -496,8 +496,8 @@ void noallocate_test() {
 
   any_noallocate x = 5;
   auto y = std::move(x);
-  y = x;
-  auto z = y;
+  // y = x;
+  // auto z = y; not allocation is not detectable statically without copy_with<Alloc, SooS>
 }
 #if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
@@ -1112,9 +1112,9 @@ TEST(materialize) {
   test(aa::interface_alias<aa::destroy, aa::copy, aa::equal_to, aa::type_info_sizeof>{}, aa::default_allocator{},
        std::integral_constant<size_t, aa::default_any_soos>{});
   test(
-      aa::interface_alias<aa::equal_to, aa::destroy, aa::destroy, aa::copy_with<aa::unreachable_allocator>, 
+      aa::interface_alias<aa::equal_to, aa::destroy, aa::destroy, aa::copy_with<std::allocator<char>>, 
       aa::type_info_sizeof>{},
-      aa::unreachable_allocator{}, std::integral_constant<size_t, aa::default_any_soos>{});
+      std::allocator<char>{}, std::integral_constant<size_t, aa::default_any_soos>{});
   return error_count;
 }
 namespace tmn {
@@ -1582,9 +1582,24 @@ int main() {
   set.emplace(5);
   set.emplace(5.);
   srand(time(0));
-  return TESTconstructors() + TESTany_cast() + TESTany_cast2() + TESTinvoke() + TESTcompare() +
-         TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
-         TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
-         TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
-         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any();
+  size_t error_count = 0;
+  error_count += TESTconstructors();
+  error_count += TESTany_cast();
+  error_count += TESTany_cast2();
+  error_count += TESTinvoke();
+  error_count += TESTcompare();
+  error_count += TESTtype_descriptor_and_plugins_interaction();
+  error_count += TESTspecial_member_functions();
+  error_count += TESTptr_behavior();
+  error_count += TESTtransmutate_ctors();
+  error_count += TESTstateful();
+  error_count += TESTsubtable_ptr();
+  error_count += TESTmaterialize();
+  error_count += TESTruntime_reflection();
+  error_count += TESTcustom_unique_ptr();
+  error_count += TESTstrange_allocs();
+  error_count += TESTalways_allocated_any();
+  error_count += TESTnon_default_constructible_allocs();
+  error_count += TESTzero_sized_any();
+  return error_count;
 }
