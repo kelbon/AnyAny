@@ -1113,6 +1113,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
 #pragma clang diagnostic pop
 #endif
 
+  // invariants:
+  // value_ptr != nullptr: value_ptr == data => memory allocated
+  // memory allocated => if value exist, it is in allocated memory
+  // value exist => vtable_ptr != nullptr
+
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
   static inline constexpr bool any_is_small_for = noexport::is_fits_in_soo_buffer<T, SooS>;
@@ -1190,22 +1195,19 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
 
   basic_any& operator=(basic_any&& other) noexcept(movable_alloc()) ANYANY_LIFETIMEBOUND
       AA_IF_HAS_CPP20(requires(has_move)) {
-    if (this == std::addressof(other))
-      return *this;
-    move_assign<exception_guarantee::basic>(other);
+    if (this != std::addressof(other)) [[likely]]
+      move_assign<exception_guarantee::basic>(other);
     return *this;
   }
 // TODO ??? operator= for const basic_any<other methods...>
   basic_any& operator=(const basic_any& other) ANYANY_LIFETIMEBOUND AA_IF_HAS_CPP20(requires(has_copy)) {
-    if (!other.has_value()) {
-      destroy_value();
+    if (this == std::addressof(other)) [[unlikely]]
       return *this;
-    }
+    destroy_value();
+    if (!other.has_value())
+      return *this;
     // both allocated or both do not allocated, because of value align (may be allocated because of align)
     if (memory_allocated() == other.memory_allocated() && capacity() >= other.sizeof_now()) {
-      if (this == std::addressof(other))
-        return *this;
-      destroy_value();
       // if exception thrown, *this is empty
       invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
       vtable_ptr = other.vtable_ptr;
@@ -1276,7 +1278,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
       emplace_in_empty<U>(std::forward<Args>(args)...);
       return *reinterpret_cast<U*>(value_ptr);
     }
-    construct_value<U>(value_ptr, std::forward<Args>(args)...);
+    construct_value<U>(std::forward<Args>(args)...);
     return *reinterpret_cast<U*>(value_ptr);
   }
 
@@ -1387,7 +1389,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
     if (capacity() >= bytes)
       return;
     auto* new_place = alloc.allocate(bytes);
-    deallocate_memory();
+    if (memory_allocated())
+      deallocate_memory();
     value_ptr = new_place;
     size_allocated = bytes;
   }
@@ -1399,9 +1402,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   }
 
   constexpr size_t capacity() const noexcept {
-    if (memory_allocated())
-      return size_allocated;
-    return SooS;
+    return memory_allocated() ? size_allocated : SooS;
   }
   [[nodiscard]] Alloc get_allocator() const noexcept {
     return alloc;
@@ -1421,14 +1422,14 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
-    return memory_allocated() ? allocated_size() : SooS;
+    return memory_allocated() ? size_allocated : SooS;
   }
 
  private:
   template<typename T, typename... Args>
-  constexpr void construct_value(void* place, Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>) {
+  constexpr void construct_value(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>) {
     static_assert(std::is_same_v<T, std::decay_t<T>>);
-    alloc_traits::construct(alloc, static_cast<T*>(place), std::forward<Args>(args)...);
+    alloc_traits::construct(alloc, static_cast<T*>(value_ptr), std::forward<Args>(args)...);
     vtable_ptr = addr_vtable_for<T, Methods...>;
   }
 
@@ -1436,13 +1437,11 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   template <typename T, typename ForceAllocate = void, typename... Args>
   void emplace_in_empty(Args&&... args) {
     assert(!has_value() && !memory_allocated());
-    if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
-      construct_value<T>(+data, std::forward<Args>(args)...);
-    } else {
+    if constexpr (!any_is_small_for<T> || !std::is_void_v<ForceAllocate>) {
       // ignore guard, because here dctor does this job
       allocate_guard(sizeof(T)).no_longer_needed();
-      construct_value<T>(value_ptr, std::forward<Args>(args)...);
     }
+    construct_value<T>(std::forward<Args>(args)...);
   }
 
   // precondition: has_value()
@@ -1461,16 +1460,25 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
     assert(!has_value());
     if (!other.has_value())
       return;
-    if (!other.memory_allocated())
+    // TODO optimize
+    if (!memory_allocated() && !other.memory_allocated())
       goto do_copy_value;
-    if (memory_allocated() && size_allocated < other.size_allocated) {
+    if (memory_allocated() && other.memory_allocated()) {
+      if (size_allocated < other.size_allocated) {
+        deallocate_memory();
+        goto allocate;
+      }
+      goto do_copy_value;
+    }
+    if (memory_allocated() && !other.memory_allocated()) {
       deallocate_memory();
+      goto do_copy_value;
+    }
+    if (!memory_allocated() && other.memory_allocated()) {
       goto allocate;
     }
-    if (!memory_allocated()) {
-      allocate:
-      allocate_guard(other.size_allocated).no_longer_needed();
-    }
+    allocate:
+    allocate_guard(other.size_allocated).no_longer_needed();
     do_copy_value:
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
     invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
@@ -1530,11 +1538,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
 
   constexpr bool memory_allocated() const noexcept {
     return value_ptr != data;
-  }
-  constexpr size_t allocated_size() const noexcept {
-    assert(has_value() && memory_allocated());
-    // when allocates stores in size in unused buffer
-    return size_allocated;
   }
 
   // precondition: !has_value() && memory_allocated()
