@@ -1121,11 +1121,6 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
   static inline constexpr bool any_is_small_for = noexport::is_fits_in_soo_buffer<T, SooS>;
-  
-  enum struct exception_guarantee {
-    basic,  // if exception, then value in valid state
-    strong, // if exception, value unchanged
-  };
 
   using alloc_traits = std::allocator_traits<Alloc>;
   using alloc_pointer_type = typename alloc_traits::pointer;
@@ -1196,7 +1191,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   basic_any& operator=(basic_any&& other) noexcept(movable_alloc()) ANYANY_LIFETIMEBOUND
       AA_IF_HAS_CPP20(requires(has_move)) {
     if (this != std::addressof(other)) [[likely]]
-      move_assign<exception_guarantee::basic>(other);
+      move_assign(other);
     return *this;
   }
 // TODO ??? operator= for const basic_any<other methods...>
@@ -1234,7 +1229,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
   void replace_with(basic_any&& other) noexcept(movable_alloc()) {
     if (this == std::addressof(other))
       return;
-    move_assign<exception_guarantee::strong>(other);
+    move_assign(other);
   }
   template <typename V, typename Self = basic_any,
             std::enable_if_t<(std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>> &&
@@ -1339,7 +1334,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
   basic_any& operator=(basic_any<Alloc, SooSize, OtherMethods...>&& other) noexcept(movable_alloc()) {
-    move_assign<exception_guarantee::basic>(other);
+    move_assign(other);
     return *this;
   }
 
@@ -1484,44 +1479,37 @@ struct basic_any : construct_interface<basic_any<Alloc, SooSize, Methods...>, Me
     invoke<copy_with<Alloc, SooS>>(other).copy_fn(other.value_ptr, value_ptr);
   }
 
-  template<exception_guarantee G, typename... OtherMethods>
-  void move_assign(basic_any<Alloc, SooSize, OtherMethods...>& other) {
+  template<typename... OtherMethods>
+  void move_assign(basic_any<Alloc, SooSize, OtherMethods...>& other) noexcept(movable_alloc()) {
+    if constexpr (alloc_traits::is_always_equal::value ||
+                  alloc_traits::propagate_on_container_move_assignment::value) {
+      reset(); // deallocate with same alloc which allocate
+    }
     if constexpr (alloc_traits::propagate_on_container_move_assignment::value) {
       if (alloc != other.alloc)
         alloc = std::move(other.alloc);
     } else if constexpr (!alloc_traits::is_always_equal::value) {
       // not propagatable alloc
-      if (alloc != other.alloc && other.has_value() && other.memory_allocated())
-        return move_value_from_try_reuse_allocated<G>(other);
+      if (alloc != other.alloc) {
+        if (other.has_value() && other.memory_allocated() &&
+            memory_allocated() && size_allocated >= other.size_allocated) {
+          // reuse my allocated memory
+          destroy_value();
+          // if exception thrown, *this is empty
+          other.get_move_fn()(other.value_ptr, value_ptr);
+          vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+          other.vtable_ptr = nullptr;
+          return;
+        }
+      }
     }
-    reset();
     move_value_from(other);
   }
 
-  // precondition: other.has_value() && other.memory_allocated()
-  template<exception_guarantee G, typename... OtherMethods>
-  void move_value_from_try_reuse_allocated(basic_any<Alloc, SooSize, OtherMethods...>& other) {
-    assert(other.has_value() && other.memory_allocated());
-    if (G != exception_guarantee::strong && memory_allocated() && size_allocated >= other.size_allocated) {
-      destroy_value();
-      // if exception thrown here, all valid (but *this is empty)
-      other.get_move_fn()(other.value_ptr, value_ptr);
-      vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
-      other.vtable_ptr = nullptr;
-      // do not deallocate other's memory, it can be reused later
-      return;
-    }
-    reset();
-    auto free_memory = allocate_guard(other.size_allocated);
-    get_move_fn()(other.value_ptr, value_ptr);
-    free_memory.no_longer_needed();
-    return;
-  }
-
-  // precodition - has_value() == false, alloc is setted
+  // precodition - !has_value() && !memory_allocated(), alloc is setted
   template <typename... OtherMethods>
   void move_value_from(basic_any<Alloc, SooSize, OtherMethods...>& other) noexcept {
-    assert(!has_value());
+    assert(!has_value() && !memory_allocated());
     if (!other.has_value())
       return;
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);

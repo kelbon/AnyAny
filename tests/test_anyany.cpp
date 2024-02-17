@@ -11,7 +11,7 @@
 #define ANYANY_ASSUME_NO_DLLS
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
-
+// TODO return
 #define error_if(Cond) if (static_cast<bool>(Cond)) throw 1 //error_count += static_cast<bool>((Cond))
 #define TEST(NAME) size_t TEST##NAME(size_t error_count = 0)
 
