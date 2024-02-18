@@ -502,10 +502,12 @@ void noallocate_test() {
 #if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
 static_assert(
-    std::is_same_v<any_compare::ref, aa::poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ref,
+                   aa::poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ref,
                    aa::const_poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
-    std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ptr,
+                   aa::poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ptr,
                    aa::const_poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
@@ -980,8 +982,9 @@ void anyany_interface_alias_tests() {
   static_assert(std::is_same_v<aa::any_with<a, b, c>,
                                aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
-  static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
-                               aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+  static_assert(
+      std::is_same_v<aa::any_with<a, b, c>::ref,
+                     aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
 #if __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
@@ -1310,7 +1313,7 @@ TEST(zero_sized_any) {
 
 TEST(memory_reuse) {
   // create any
-  auto do_test = [&] (auto a) {
+  auto do_test = [&](auto a) {
     a.replace_with_bytes(200);
     error_if(a.capacity() < 200);
     auto expect = [&](auto x) {
@@ -1627,6 +1630,6 @@ int main() {
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
-         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any()
-         + TESTmemory_reuse();
+         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
+         TESTmemory_reuse();
 }
