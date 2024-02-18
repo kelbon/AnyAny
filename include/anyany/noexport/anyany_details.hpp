@@ -261,7 +261,6 @@ AA_CONSTEVAL_CPP20 bool copy_requires_alloc() {
 //    'dest'(size_t)
 template <typename T, typename Alloc, size_t SooS>
 static void* copy_fn(const void* src_raw, void* dest, void* alloc_) {
-  static_assert(SooS >= sizeof(size_t));
   Alloc& alloc = *reinterpret_cast<Alloc*>(alloc_);
   const T& src = *reinterpret_cast<const T*>(src_raw);
   if constexpr (noexport::is_fits_in_soo_buffer<T, SooS>) {
