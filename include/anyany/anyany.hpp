@@ -17,13 +17,26 @@
 #include <cassert>    // assert
 #include <exception>  // for any_cast(std::exception)
 #include <utility>    // std::exchange
-#include <memory>
 
 #include "type_descriptor.hpp"
 
 #include "noexport/anyany_details.hpp"
 
 #include "noexport/file_begin.hpp"
+
+// this attribute not supported correctly on clang (windows) and on msvc
+// its literaly hell
+// and EVEN with [[msvc::no_unique_address]] msvc does not work!
+// https://github.com/microsoft/STL/issues/4411
+#ifdef __has_cpp_attribute
+#if __has_cpp_attribute(no_unique_address)
+#define ANYANY_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#elif __has_cpp_attribute(msvc::no_unique_address)
+#define ANYANY_NO_UNIQUE_ADDRESS msvc::no_unique_address
+#else
+#define ANYANY_NO_UNIQUE_ADDRESS
+#endif
+#endif
 
 namespace aa {
 
@@ -56,17 +69,14 @@ constexpr inline bool is_const_method_v = method_traits<Method>::is_const;
 
 // pseudomethod is just a value, which is stored in vtable
 template <typename T>
-concept pseudomethod = std::is_empty_v<T> && std::default_initializable<T> &&
-                       requires {
-                         typename T::value_type;
-                         // T{}.template do_value<X>(),
-                         // where 'do_value' is a
-                         // consteval function template and X
-                         // - some type for which 'do_value'
-                         // exist(not substitution failure)
-                       } &&
-                       (!std::is_reference_v<typename T::value_type> &&
-                        !std::is_function_v<typename T::value_type>);
+concept pseudomethod = std::is_empty_v<T> && std::default_initializable<T> && requires {
+  typename T::value_type;
+  // T{}.template do_value<X>(),
+  // where 'do_value' is a
+  // consteval function template and X
+  // - some type for which 'do_value'
+  // exist(not substitution failure)
+} && (!std::is_reference_v<typename T::value_type> && !std::is_function_v<typename T::value_type>);
 
 template <typename T>
 concept regular_method = std::is_empty_v<T> && std::default_initializable<T> &&
@@ -262,10 +272,10 @@ constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 
 using default_allocator = std::allocator<std::byte>;
 
-//  enables copy/copy assgin/move/move assign for any_with
-//  enables 'materialize' for references
-template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
-struct copy_with {
+namespace noexport {
+
+template <typename Alloc, size_t SooS>
+struct copy_method {
  private:
   template <typename T>
   static AA_CONSTEVAL_CPP20 auto* select_copy_fn() {
@@ -302,13 +312,13 @@ struct copy_with {
   }
 };
 
-using copy = copy_with<>;
+}  // namespace noexport
 
 namespace noexport {
 
 auto get_any_copy_method(type_list<>) -> void;
 template <typename A, size_t N, typename... Tail>
-auto get_any_copy_method(type_list<copy_with<A, N>, Tail...>) -> copy_with<A, N>;
+auto get_any_copy_method(type_list<copy_method<A, N>, Tail...>) -> copy_method<A, N>;
 template <typename Head, typename... Tail>
 auto get_any_copy_method(type_list<Head, Tail...>) {
   return get_any_copy_method(type_list<Tail...>{});
@@ -322,6 +332,13 @@ constexpr inline bool has_move =
     !std::is_void_v<some_copy_method<Methods...>> || contains_v<move, Methods...>;
 
 }  // namespace noexport
+
+//  enables copy/copy assgin/move/move assign for any_with
+//  enables 'materialize' for references
+template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
+using copy_with = noexport::copy_method<noexport::rebind_to_byte_t<Alloc>, noexport::soo_buffer_size(SooS)>;
+
+using copy = copy_with<>;
 
 // enables std::hash specialization for polymorphic value and reference
 struct hash {
@@ -849,14 +866,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 
  private:
   void* value_ptr;
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] vtable<Methods...> vtable_value;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
+  ANYANY_NO_UNIQUE_ADDRESS vtable<Methods...> vtable_value;
+
   friend struct ::aa::mate;
   template <anyany_simple_method_concept...>
   friend struct cref;
@@ -922,14 +933,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
 
  private:
   const void* value_ptr;
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] vtable<Methods...> vtable_value;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
+  ANYANY_NO_UNIQUE_ADDRESS vtable<Methods...> vtable_value;
+
   friend struct ::aa::mate;
   constexpr cref() noexcept = default;
 
@@ -1095,43 +1100,26 @@ struct unreachable_allocator {
   }
 };
 
+// dont use it directly, instead use any_with / basic_any_with
 // SooS == Small Object Optimization Size
-// strong exception guarantee for all constructors and assignments,
+// strong exception guarantee for constructors and copy/move assignments
 // emplace<T> - *this is empty if exception thrown
-// for alloc not all fancy pointers supported and construct / destroy not throught alloc
 // if SooS == 0, value is always allocated, is_stable_pointers() == true
 template <typename Alloc, size_t SooS, typename... Methods>
 struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Methods...> {
   using aa_polymorphic_tag = int;
 
  private:
-  static AA_CONSTEVAL_CPP20 size_t soo_buffer_size() noexcept {
-    // needs atleast sizeof(std::size_t) in buffer(SooS)
-    // to store allocated size for passing it into deallocate(ptr, n)
-    static_assert(SooS == 0 || SooS >= sizeof(size_t),
-                  "basic_any requires SooS to be >= sizeof(size_t) or 0");
-    return SooS == 0 ? sizeof(size_t) : SooS;
-  }
+  static_assert(SooS == 0 || SooS >= sizeof(size_t));
 
   const vtable<Methods...>* vtable_ptr = nullptr;
   void* value_ptr = data;
   union {
-    alignas(std::max_align_t) std::byte data[soo_buffer_size()];
+    // if SooS == 0, then union degenerates to just `size_t`
+    alignas(SooS == 0 ? alignof(size_t) : alignof(std::max_align_t)) std::byte data[SooS];
     size_t size_allocated;  // stored when value allocated
   };
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] Alloc alloc;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
-
-  // invariant of basic_any - it is always in one of those states:
-  // empty - has_value() == false, memory_allocated == false
-  // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
-  // big   - has_value() == true, memory_allocated == true,
+  ANYANY_NO_UNIQUE_ADDRESS Alloc alloc;
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -1139,24 +1127,24 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // precondition: has_value() == false
   template <typename T, typename ForceAllocate = void, typename... Args>
   void emplace_in_empty(Args&&... args) {
+    static_assert(std::is_same_v<T, std::decay_t<T>>);
     if constexpr (any_is_small_for<T> && std::is_void_v<ForceAllocate>) {
-      alloc_traits::construct(alloc, reinterpret_cast<T*>(&data[0]), std::forward<Args>(args)...);
+      construct_value<T>(std::forward<Args>(args)...);
     } else {
       constexpr size_t allocation_size = sizeof(T);
       value_ptr = alloc.allocate(allocation_size);
       size_allocated = allocation_size;
       if constexpr (std::is_nothrow_constructible_v<T, Args&&...>) {
-        alloc_traits::construct(alloc, reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
+        construct_value<T>(std::forward<Args>(args)...);
       } else {
         scope_failure free_memory{[&] {
           alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), allocation_size);
           value_ptr = data;
         }};
-        alloc_traits::construct(alloc, reinterpret_cast<T*>(value_ptr), std::forward<Args>(args)...);
+        construct_value<T>(std::forward<Args>(args)...);
         free_memory.no_longer_needed();
       }
     }
-    vtable_ptr = addr_vtable_for<T, Methods...>;
   }
 
   using alloc_traits = std::allocator_traits<Alloc>;
@@ -1202,8 +1190,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr basic_any() = default;
 
   AA_IF_HAS_CPP20(constexpr) ~basic_any() {
-    if (has_value())
-      destroy_value();
+    reset();
   }
 
   // basic_any copy/move stuff
@@ -1231,20 +1218,34 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   }
   basic_any& operator=(basic_any&& other) noexcept(movable_alloc()) ANYANY_LIFETIMEBOUND
       AA_IF_HAS_CPP20(requires(has_move)) {
-    // nocheck about this == &other
-    // because after move assign other by C++ standard in unspecified(valid) state
-    reset();
+    if (this == std::addressof(other)) [[unlikely]]
+      return *this;
     if constexpr (alloc_traits::is_always_equal::value) {
+      reset();
       move_value_from(other);
     } else if constexpr (alloc_traits::propagate_on_container_move_assignment::value) {
+      reset();
       if (alloc != other.alloc)
         alloc = std::move(other.alloc);
       move_value_from(other);
     } else {  // not propagatable alloc
-      if (alloc != other.alloc)
+      destroy_value();
+      if (alloc != other.alloc) {
+        if (other.has_value() && other.memory_allocated() && memory_allocated() &&
+            size_allocated >= other.size_allocated) {
+          // reuse allocated memory
+          // if exception thrown here, *this is empty
+          other.get_move_fn()(other.value_ptr, value_ptr);
+          vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
+          return *this;
+        }
+        if (memory_allocated())
+          deallocate_memory();
         move_value_from<false>(other);
-      else
+      } else {
+        reset();
         move_value_from(other);
+      }
     }
     return *this;
   }
@@ -1261,68 +1262,61 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     *this = std::move(value);
     return *this;
   }
-  // has strong exception guarantee
-  // you can use .emplace() without exception guarantees
-  // and without any requirements
-  template <typename V, typename Self = basic_any,
-            std::enable_if_t<(std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>> &&
-                              (Self::has_move || (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
-                                                  any_is_small_for<std::decay_t<V>>))),
-                             int> = 0>
-  basic_any& operator=(V&& val) ANYANY_LIFETIMEBOUND {
-    if constexpr (std::is_nothrow_constructible_v<std::decay_t<V>, V&&> &&
-                  any_is_small_for<std::decay_t<V>>) {
-      reset();
-      emplace_in_empty<std::decay_t<V>>(std::forward<V>(val));
-    } else {
-      *this = basic_any{std::forward<V>(val)};
-    }
-    return *this;
+  // * if exception thrown, *this is empty
+  //   for exception guarantee use move assign lik e'any = any_t(val)'
+  // * disables implicit creating any in any, like any = other_any,
+  // if you really need this, use .emplace
+  // * returns reference to emplaced value (not *this!)
+  // for cases like any1 = any2 = 5; (any1 = int is better then any1 = any)
+  template <typename V,
+            std::enable_if_t<std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>>, int> = 0>
+  std::decay_t<V>& operator=(V&& val) ANYANY_LIFETIMEBOUND {
+    return emplace<V>(std::forward<V>(val));
   }
 
   // making from any other type
 
-  // postconditions : has_value() == true, *this is empty if exception thrown
+  // postcondition: has_value() == true, *this is empty if exception thrown
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>)
-      ANYANY_LIFETIMEBOUND {
-    reset();
-    emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
-    return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
+      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...> &&
+      any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
+    // decay T, so less function instantiated (emplace<int | int& | const int|> same fn)
+    return emplace_decayed<std::decay_t<T>>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args,
             std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(std::initializer_list<U> list, Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
-          any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
-    reset();
-    emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
-    return *reinterpret_cast<std::decay_t<T>*>(value_ptr);
+      std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...> &&
+      any_is_small_for<std::decay_t<T>>) ANYANY_LIFETIMEBOUND {
+    return emplace<std::decay_t<T>, std::initializer_list<U>, Args...>(std::move(list),
+                                                                       std::forward<Args>(args)...);
   }
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
-  basic_any(std::in_place_type_t<T>, Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
+  basic_any(std::in_place_type_t<T>,
+            Args&&... args) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...> &&
+                                     any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args,
             std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   basic_any(std::in_place_type_t<T>, std::initializer_list<U> list, Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...>&&
-          any_is_small_for<std::decay_t<T>>) {
+      std::is_nothrow_constructible_v<std::decay_t<T>, std::initializer_list<U>, Args&&...> &&
+      any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>>(list, std::forward<Args>(args)...);
   }
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
-  basic_any(T&& value) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
+  basic_any(T&& value) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T&&> &&
+                                any_is_small_for<std::decay_t<T>>)
       : basic_any(std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
   constexpr basic_any(std::allocator_arg_t, Alloc alloc) noexcept : alloc(std::move(alloc)) {
   }
   template <typename T, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
-  basic_any(std::allocator_arg_t, Alloc alloc, T&& value) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
+  basic_any(std::allocator_arg_t, Alloc alloc,
+            T&& value) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T&&> &&
+                                any_is_small_for<std::decay_t<T>>)
       : alloc(std::move(alloc)) {
     emplace_in_empty<std::decay_t<T>>(std::forward<T>(value));
   }
@@ -1340,9 +1334,10 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr);
     } else {
-      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
+      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr,
+                                                                std::addressof(alloc));
     }
-    vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
+    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
   }
   template <typename... OtherMethods,
             std::enable_if_t<(noexport::has_move<OtherMethods...> &&
@@ -1355,31 +1350,56 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   // force allocate versions
 
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
-  basic_any(force_stable_pointers_t, std::in_place_type_t<T>, Args&&... args) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...>&& any_is_small_for<std::decay_t<T>>) {
+  basic_any(force_stable_pointers_t, std::in_place_type_t<T>,
+            Args&&... args) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...> &&
+                                     any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>, force_stable_pointers_t>(std::forward<Args>(args)...);
   }
   template <typename T, typename U, typename... Args,
             std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   basic_any(force_stable_pointers_t, std::in_place_type_t<T>, std::initializer_list<U> list,
             Args&&... args) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>,
-                                                                     std::initializer_list<U>, Args&&...>&&
-                                         any_is_small_for<std::decay_t<T>>) {
+                                                                     std::initializer_list<U>, Args&&...> &&
+                                     any_is_small_for<std::decay_t<T>>) {
     emplace_in_empty<std::decay_t<T>, force_stable_pointers_t>(list, std::forward<Args>(args)...);
   }
   template <typename T,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<T>, exist_for<T, Methods...>>, int> = 0>
-  basic_any(force_stable_pointers_t, T&& value) noexcept(
-      std::is_nothrow_constructible_v<std::decay_t<T>, T&&>&& any_is_small_for<std::decay_t<T>>)
+  basic_any(force_stable_pointers_t,
+            T&& value) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T&&> &&
+                                any_is_small_for<std::decay_t<T>>)
       : basic_any(force_stable_pointers, std::in_place_type<std::decay_t<T>>, std::forward<T>(value)) {
   }
 
-  // postconditions : has_value() == false
+  // postcondition : !has_value()
+  // also deallocates memory
   void reset() noexcept {
+    destroy_value();
+    if (memory_allocated())
+      deallocate_memory();
+  }
+  // postcondition : !has_value()
+  // do not deallocates memory
+  void destroy_value() noexcept {
     if (!has_value())
       return;
-    destroy_value();
+    invoke<destroy> (*this)(value_ptr);
     vtable_ptr = nullptr;
+  }
+
+  // postcondition: capacity() >= bytes
+  void replace_with_bytes(size_t bytes) {
+    destroy_value();
+    if (capacity() >= bytes)
+      return;
+    auto* new_place = alloc.allocate(bytes);
+    if (memory_allocated())
+      deallocate_memory();
+    value_ptr = new_place;
+    size_allocated = bytes;
+  }
+  constexpr size_t capacity() const noexcept {
+    return memory_allocated() ? size_allocated : SooS;
   }
 
   // observe
@@ -1404,7 +1424,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr size_t sizeof_now() const noexcept {
     if (!has_value())
       return 0;
-    return memory_allocated() ? allocated_size() : SooS;
+    return memory_allocated() ? size_allocated : SooS;
   }
 
  private:
@@ -1414,9 +1434,37 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     else
       return invoke<noexport::some_copy_method<Methods...>>(*this).move_fn;
   }
-  // precodition - has_value() == false
+
+  // postcondition: has_value() == true, *this is empty if exception thrown
+  template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
+  T& emplace_decayed(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...> &&
+                                              any_is_small_for<T>) {
+    static_assert(std::is_same_v<T, std::decay_t<T>>);
+    destroy_value();
+    if (!memory_allocated())
+      goto do_emplace_in_empty;
+    if (size_allocated < sizeof(T)) {
+      deallocate_memory();
+    do_emplace_in_empty:
+      emplace_in_empty<T>(std::forward<Args>(args)...);
+    } else {
+      construct_value<T>(std::forward<Args>(args)...);
+    }
+    return *reinterpret_cast<T*>(value_ptr);
+  }
+
+  // postcondition: has_value()
+  template <typename T, typename... Args>
+  constexpr void construct_value(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args&&...>) {
+    static_assert(std::is_same_v<T, std::decay_t<T>>);
+    alloc_traits::construct(alloc, static_cast<T*>(value_ptr), std::forward<Args>(args)...);
+    vtable_ptr = addr_vtable_for<T, Methods...>;
+  }
+
+  // precodition: !has_value() && !memory_allocated()
   template <bool MemoryMaybeReused = true, typename... OtherMethods>
   void move_value_from(basic_any<Alloc, SooS, OtherMethods...>& other) noexcept(MemoryMaybeReused) {
+    assert(!has_value() && !memory_allocated());
     if (!other.has_value())
       return;
     if constexpr (SooS == 0) {
@@ -1450,18 +1498,12 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   constexpr bool memory_allocated() const noexcept {
     return value_ptr != data;
   }
-  constexpr size_t allocated_size() const noexcept {
-    assert(has_value() && memory_allocated());
-    // when allocates stores in size in unused buffer
-    return size_allocated;
-  }
-  // precondition - has_value() == true
-  void destroy_value() noexcept {
-    invoke<destroy> (*this)(value_ptr);
-    if (memory_allocated()) {
-      alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), allocated_size());
-      value_ptr = data;
-    }
+
+  // preconditions: !has_value() && memory_allocated()
+  void deallocate_memory() noexcept {
+    assert(!has_value() && memory_allocated());
+    alloc_traits::deallocate(alloc, reinterpret_cast<alloc_pointer_type>(value_ptr), size_allocated);
+    value_ptr = data;
   }
 };
 
@@ -1486,7 +1528,7 @@ auto materialize(const_poly_ref<Methods...> ref, Alloc alloc = Alloc{})
 #define AA_DECLARE_MATERIALIZE(TEMPLATE, TRANSFORM)                                                  \
   template <typename Alloc = default_allocator, size_t SooS = default_any_soos, typename... Methods> \
   AA_ALWAYS_INLINE auto materialize(const TEMPLATE<Methods...>& value, Alloc alloc = Alloc{})        \
-      ->decltype(materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc))) {                \
+      -> decltype(materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc))) {               \
     return materialize<Alloc, SooS, Methods...>(TRANSFORM, std::move(alloc));                        \
   }
 AA_DECLARE_MATERIALIZE(poly_ref, const_poly_ref(value))
@@ -1517,7 +1559,7 @@ struct any_cast_fn {
     return reinterpret_cast<result_type>(Traits{}.to_address(val));
   }
 };
-
+// TODO disable
 // may be throwed when casting not Any* / poly_ptr
 struct bad_cast : std::exception {
   const char* what() const noexcept override {
@@ -1557,9 +1599,9 @@ struct any_cast_fn<T, anyany_poly_traits> {
   const X* operator()(const U* ptr) const noexcept {
     return any_cast_impl(static_cast<const typename U::base_any_type*>(ptr));
   }
-
+#if __cpp_exceptions
   template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
-  decltype(auto) operator()(U&& any) const {
+  decltype(auto) operator()(U && any) const {
     auto* ptr = (*this)(std::addressof(any));
     if (!ptr)
       throw aa::bad_cast{};
@@ -1576,6 +1618,13 @@ struct any_cast_fn<T, anyany_poly_traits> {
     else
       return noexport::remove_cvref_t<T>(*ptr);  // copy value
   }
+#else
+  template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
+  decltype(auto) operator()(U && any) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
 
   template <typename... Methods>
   const X* operator()(const_poly_ptr<Methods...> p) const noexcept {
@@ -1589,6 +1638,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
       return nullptr;
     return reinterpret_cast<X*>(p.raw());
   }
+#if __cpp_exceptions
   template <typename... Methods>
   std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
                      std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
@@ -1598,6 +1648,16 @@ struct any_cast_fn<T, anyany_poly_traits> {
       throw aa::bad_cast{};
     return *ptr;
   }
+#else
+  template <typename... Methods>
+  std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
+                     std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
+  operator()(poly_ref<Methods...> p) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
+#if __cpp_exceptions
   // clang-format off
   template <typename... Methods>
   std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>>
@@ -1608,6 +1668,15 @@ struct any_cast_fn<T, anyany_poly_traits> {
       throw aa::bad_cast{};
     return *ptr;
   }
+#else
+  template <typename... Methods>
+  std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>> operator()(
+      const_poly_ref<Methods...> p) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
+
   template <typename... Methods>
   decltype(auto) operator()(const stateful::ref<Methods...>& r) const {
     return (*this)(r.get_view());
@@ -1642,6 +1711,10 @@ auto flatten_into_basic_any(type_list<Methods...>) {
   return insert_into_basic_any<Alloc, SooS>(flatten_types_t<Methods...>{});
 }
 
+template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
+using flatten_into_basic_any_t =
+    typename decltype(flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}))::type;
+
 template <template <typename...> typename Template, anyany_simple_method_concept... Methods>
 auto get_interface_of(const Template<Methods...>&) -> runtime_concept<Methods...>;
 // Do not uses 'typename any::interface', because it may be incomplete type at this point
@@ -1654,8 +1727,8 @@ auto get_interface_of(const basic_any<Alloc, SooS, destroy, Methods...>&) -> run
 }  // namespace noexport
 
 template <typename Alloc, size_t SooS, anyany_method_concept... Methods>
-using basic_any_with =
-    typename decltype(noexport::flatten_into_basic_any<Alloc, SooS>(type_list<Methods...>{}))::type;
+using basic_any_with = noexport::flatten_into_basic_any_t<noexport::rebind_to_byte_t<Alloc>,
+                                                          noexport::soo_buffer_size(SooS), Methods...>;
 
 template <anyany_method_concept... Methods>
 using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
@@ -1783,7 +1856,6 @@ struct spaceship {
     std::partial_ordering operator<=>(const plugin<CRTP>& r) const {
       const auto& left = *static_cast<const CRTP*>(this);
       const auto& right = *static_cast<const CRTP*>(std::addressof(r));
-      // TODO? ordering on descrictors of they are not equal?
       if constexpr (noexport::has_has_value<CRTP>::value) {
         if (!left.has_value())
           return right.has_value() ? std::partial_ordering::unordered : std::partial_ordering::equivalent;
@@ -1957,3 +2029,4 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 #include "noexport/file_end.hpp"
 #undef anyany_simple_method_concept
 #undef anyany_method_concept
+#undef ANYANY_NO_UNIQUE_ADDRESS

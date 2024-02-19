@@ -479,6 +479,15 @@ TEST(special_member_functions) {
     error_if(m.has_value());
     if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
       auto vec_copy = vec_anys;
+      // copy ctor with less methods
+      aa::basic_any_with<std::pmr::polymorphic_allocator<std::byte>, 0,
+                         aa::copy_with<std::pmr::polymorphic_allocator<std::byte>, 0>, aa::equal_to,
+                         aa::type_info>
+          a = std::string("hello");
+      aa::basic_any_with<std::pmr::polymorphic_allocator<std::byte>, 0,
+                         aa::copy_with<std::pmr::polymorphic_allocator<std::byte>, 0>, aa::equal_to>
+          b = a;
+      error_if(b != decltype(b)(a));
       error_if(vec_copy != vec_anys);
     }
   };
@@ -502,10 +511,12 @@ void noallocate_test() {
 #if __cplusplus >= 202002L
 using any_compare = aa::any_with<aa::copy, aa::equal_to, aa::spaceship, aa::move>;
 static_assert(
-    std::is_same_v<any_compare::ref, aa::poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ref,
+                   aa::poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ref,
                    aa::const_poly_ref<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
-    std::is_same_v<any_compare::ptr, aa::poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
+    std::is_same_v<any_compare::ptr,
+                   aa::poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>> &&
     std::is_same_v<any_compare::const_ptr,
                    aa::const_poly_ptr<aa::destroy, aa::copy, aa::equal_to, aa::spaceship, aa::move>>);
 using any_equal = aa::any_with<aa::equal_to, aa::equal_to, aa::spaceship, aa::spaceship, aa::move>;
@@ -980,8 +991,9 @@ void anyany_interface_alias_tests() {
   static_assert(std::is_same_v<aa::any_with<a, b, c>,
                                aa::basic_any<aa::default_allocator, aa::default_any_soos, aa::destroy,
                                              aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
-  static_assert(std::is_same_v<aa::any_with<a, b, c>::ref,
-                               aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
+  static_assert(
+      std::is_same_v<aa::any_with<a, b, c>::ref,
+                     aa::poly_ref<aa::destroy, aa::destroy, aa::type_info, aa::destroy, aa::type_info>>);
 #if __cplusplus >= 202002L
   static_assert(aa::compound_method<a>);
   static_assert(aa::compound_method<b>);
@@ -1308,7 +1320,53 @@ TEST(zero_sized_any) {
   return error_count;
 }
 
+TEST(memory_reuse) {
+  // create any
+  auto do_test = [&](auto a) {
+    a.replace_with_bytes(200);
+    error_if(a.capacity() < 200);
+    auto expect = [&](auto x) {
+      auto* e = aa::any_cast<decltype(x)>(&a);
+      error_if((!e || *e != x));
+    };
+    a = 5;
+    expect(5);
+    void* data = (&a).raw();
+    error_if(data != (&a).raw());
+    error_if(!aa::any_cast<int>(&a));
+    a = std::string("hello world");
+    expect(std::string("hello world"));
+    error_if(data != (&a).raw());
+    a = 0;
+    expect(0);
+    error_if(data != (&a).raw());
+    a = std::vector<std::string>{};
+    expect(std::vector<std::string>{});
+    error_if(data != (&a).raw());
+    a = std::array<char, 200>{};
+    error_if(data != (&a).raw());
+    expect(std::array<char, 200>{});
+    a = 5;
+    expect(5);
+    error_if(a.capacity() < 200);
+    error_if(data != (&a).raw());
+  };
+  using ti = aa::type_info;
+  do_test(aa::any_with<ti>{});
+  do_test(aa::basic_any_with<aa::default_allocator, 0, ti>{});
+  do_test(aa::basic_any_with<std::pmr::polymorphic_allocator<char>, 0, ti>{});
+  do_test(aa::basic_any_with<aa::default_allocator, 16, ti>{});
+  do_test(aa::basic_any_with<std::pmr::polymorphic_allocator<char>, 16, ti>{});
+  do_test(aa::basic_any_with<aa::default_allocator, 3, ti>{});
+  do_test(aa::basic_any_with<std::pmr::polymorphic_allocator<char>, 3, ti>{});
+  return error_count;
+}
+
 int main() {
+#ifndef _MSC_VER
+  static_assert((sizeof(aa::basic_any_with<aa::default_allocator, 0>)) ==
+                (sizeof(void*) * 2 + sizeof(size_t)));
+#endif
   fwd_declare(5);
   std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile time checks
@@ -1585,5 +1643,6 @@ int main() {
          TESTtype_descriptor_and_plugins_interaction() + TESTspecial_member_functions() + TESTptr_behavior() +
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
-         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any();
+         TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
+         TESTmemory_reuse();
 }
