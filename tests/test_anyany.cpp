@@ -479,6 +479,15 @@ TEST(special_member_functions) {
     error_if(m.has_value());
     if constexpr (__cplusplus >= 202002L && std::is_copy_constructible_v<decltype(x)>) {
       auto vec_copy = vec_anys;
+      // copy ctor with less methods
+      aa::basic_any_with<std::pmr::polymorphic_allocator<std::byte>, 0,
+                         aa::copy_with<std::pmr::polymorphic_allocator<std::byte>, 0>, aa::equal_to,
+                         aa::type_info>
+          a = std::string("hello");
+      aa::basic_any_with<std::pmr::polymorphic_allocator<std::byte>, 0,
+                         aa::copy_with<std::pmr::polymorphic_allocator<std::byte>, 0>, aa::equal_to>
+          b = a;
+      error_if(b != decltype(b)(a));
       error_if(vec_copy != vec_anys);
     }
   };
@@ -1354,6 +1363,10 @@ TEST(memory_reuse) {
 }
 
 int main() {
+#ifndef _MSC_VER
+  static_assert((sizeof(aa::basic_any_with<aa::default_allocator, 0>)) ==
+                (sizeof(void*) * 2 + sizeof(size_t)));
+#endif
   fwd_declare(5);
   std::cout << "C++ standard: " << __cplusplus << std::endl;
   // compile time checks

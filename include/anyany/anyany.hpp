@@ -24,6 +24,20 @@
 
 #include "noexport/file_begin.hpp"
 
+// this attribute not supported correctly on clang (windows) and on msvc
+// its literaly hell
+// and EVEN with [[msvc::no_unique_address]] msvc does not work!
+// https://github.com/microsoft/STL/issues/4411
+#ifdef __has_cpp_attribute
+#if __has_cpp_attribute(no_unique_address)
+#define ANYANY_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#elif __has_cpp_attribute(msvc::no_unique_address)
+#define ANYANY_NO_UNIQUE_ADDRESS msvc::no_unique_address
+#else
+#define ANYANY_NO_UNIQUE_ADDRESS
+#endif
+#endif
+
 namespace aa {
 
 // May be specialized for your Method or even for Any with some properties.
@@ -852,14 +866,8 @@ struct ref : construct_interface<::aa::stateful::ref<Methods...>, Methods...> {
 
  private:
   void* value_ptr;
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] vtable<Methods...> vtable_value;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
+  ANYANY_NO_UNIQUE_ADDRESS vtable<Methods...> vtable_value;
+
   friend struct ::aa::mate;
   template <anyany_simple_method_concept...>
   friend struct cref;
@@ -925,14 +933,8 @@ struct cref : construct_interface<::aa::stateful::cref<Methods...>, Methods...> 
 
  private:
   const void* value_ptr;
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] vtable<Methods...> vtable_value;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
+  ANYANY_NO_UNIQUE_ADDRESS vtable<Methods...> vtable_value;
+
   friend struct ::aa::mate;
   constexpr cref() noexcept = default;
 
@@ -1117,19 +1119,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     alignas(SooS == 0 ? alignof(size_t) : alignof(std::max_align_t)) std::byte data[SooS];
     size_t size_allocated;  // stored when value allocated
   };
-#if __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-attributes"
-#endif
-  [[no_unique_address]] Alloc alloc;
-#if __clang__
-#pragma clang diagnostic pop
-#endif
-
-  // invariant of basic_any - it is always in one of those states:
-  // empty - has_value() == false, memory_allocated == false
-  // small - has_value() == true, memory_allocated == false, MOVE IS NOEXCEPT
-  // big   - has_value() == true, memory_allocated == true,
+  ANYANY_NO_UNIQUE_ADDRESS Alloc alloc;
 
   // guarantees that small is nothrow movable(for noexcept move ctor/assign)
   template <typename T>
@@ -1344,7 +1334,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     if constexpr (!noexport::copy_requires_alloc<Alloc>()) {
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr);
     } else {
-      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr, alloc);
+      value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr,
+                                                                std::addressof(alloc));
     }
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
   }
@@ -1568,7 +1559,7 @@ struct any_cast_fn {
     return reinterpret_cast<result_type>(Traits{}.to_address(val));
   }
 };
-
+// TODO disable
 // may be throwed when casting not Any* / poly_ptr
 struct bad_cast : std::exception {
   const char* what() const noexcept override {
@@ -1608,7 +1599,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
   const X* operator()(const U* ptr) const noexcept {
     return any_cast_impl(static_cast<const typename U::base_any_type*>(ptr));
   }
-
+#if __cpp_exceptions
   template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
   decltype(auto) operator()(U && any) const {
     auto* ptr = (*this)(std::addressof(any));
@@ -1627,6 +1618,13 @@ struct any_cast_fn<T, anyany_poly_traits> {
     else
       return noexport::remove_cvref_t<T>(*ptr);  // copy value
   }
+#else
+  template <typename U, std::enable_if_t<is_any<U>::value, int> = 0>
+  decltype(auto) operator()(U && any) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
 
   template <typename... Methods>
   const X* operator()(const_poly_ptr<Methods...> p) const noexcept {
@@ -1640,6 +1638,7 @@ struct any_cast_fn<T, anyany_poly_traits> {
       return nullptr;
     return reinterpret_cast<X*>(p.raw());
   }
+#if __cpp_exceptions
   template <typename... Methods>
   std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
                      std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
@@ -1649,6 +1648,16 @@ struct any_cast_fn<T, anyany_poly_traits> {
       throw aa::bad_cast{};
     return *ptr;
   }
+#else
+  template <typename... Methods>
+  std::conditional_t<std::is_rvalue_reference_v<T>, noexport::remove_cvref_t<T>,
+                     std::conditional_t<std::is_reference_v<T>, T, std::remove_cv_t<T>>>
+  operator()(poly_ref<Methods...> p) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
+#if __cpp_exceptions
   // clang-format off
   template <typename... Methods>
   std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>>
@@ -1659,6 +1668,15 @@ struct any_cast_fn<T, anyany_poly_traits> {
       throw aa::bad_cast{};
     return *ptr;
   }
+#else
+  template <typename... Methods>
+  std::conditional_t<std::is_reference_v<T>, const X&, std::remove_cv_t<T>> operator()(
+      const_poly_ref<Methods...> p) const {
+    static_assert(
+        ![] {}, "exceptions disabled, use nothrow version");
+  }
+#endif
+
   template <typename... Methods>
   decltype(auto) operator()(const stateful::ref<Methods...>& r) const {
     return (*this)(r.get_view());
@@ -2011,3 +2029,4 @@ struct hash<::aa::const_poly_ptr<Methods...>> {
 #include "noexport/file_end.hpp"
 #undef anyany_simple_method_concept
 #undef anyany_method_concept
+#undef ANYANY_NO_UNIQUE_ADDRESS
