@@ -3,12 +3,9 @@ project(anyany LANGUAGES CXX)
 
 option(AA_ENABLE_TESTING "enables testing" OFF)
 
-file(GLOB ${PROJECT_NAME}_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/anyany/*.hpp")
-file(GLOB ${PROJECT_NAME}_NOEXPORT_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/anyany/noexport/*.hpp")
-
 ### anyanylib ###
 
-add_library(anyanylib INTERFACE "${${PROJECT_NAME}_HEADERS}" "${${PROJECT_NAME}_NOEXPORT_HEADERS}")
+add_library(anyanylib INTERFACE)
 
 target_include_directories(anyanylib INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
@@ -17,11 +14,6 @@ set_target_properties(${PROJECT_NAME}lib PROPERTIES
 	LINKER_LANGUAGE CXX
 	CMAKE_CXX_STANDARD_REQUIRED ON
 	CXX_STANDARD 17)
-
-### visual ###
-
-source_group(Details FILES ${${PROJECT_NAME}_NOEXPORT_HEADERS})
-source_group(Include FILES ${${PROJECT_NAME}_HEADERS})
 
 ### tests ###
 
