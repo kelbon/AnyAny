@@ -187,7 +187,9 @@ template <typename... Ts>
 struct AA_MSVC_EBO inheritor_of : Ts... {};
 
 template <typename... Results>
-auto inherit_without_duplicates(type_list<>, type_list<Results...>) -> inheritor_of<Results...>;
+auto inherit_without_duplicates(type_list<>, type_list<Results...>) -> inheritor_of<Results...> {
+  throw;
+}
 
 template <typename Head, typename... Tail, typename... Results>
 auto inherit_without_duplicates(type_list<Head, Tail...>, type_list<Results...> l) {
@@ -212,12 +214,18 @@ struct type_identity {
 };
 
 template <typename Method>
-auto get_method_signature(int) -> type_identity<typename Method::signature_type>;
+auto get_method_signature(int) -> type_identity<typename Method::signature_type> {
+  throw;
+}
 template <typename Method>
 auto get_method_signature(bool)
-    -> type_identity<std::remove_pointer_t<decltype(&Method::template do_invoke<erased_self_t>)>>;
+    -> type_identity<std::remove_pointer_t<decltype(&Method::template do_invoke<erased_self_t>)>> {
+  throw;
+}
 template <typename Method>
-auto get_method_signature(...) -> type_identity<typename Method::value_type>;
+auto get_method_signature(...) -> type_identity<typename Method::value_type> {
+  throw;
+}
 
 template <typename Method>
 using signature_t = typename decltype(get_method_signature<Method>(0))::type;
@@ -327,7 +335,9 @@ constexpr bool contains_second_layer_list(aa::type_list<Ts...>) {
 }
 
 template <template <typename...> typename Template, typename... Types>
-auto insert_types(aa::type_list<Types...>) -> Template<Types...>;
+auto insert_types(aa::type_list<Types...>) -> Template<Types...> {
+  throw;
+}
 
 template <typename, typename T>
 using enable_if_impl = T;
