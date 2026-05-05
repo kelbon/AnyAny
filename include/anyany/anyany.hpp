@@ -737,8 +737,10 @@ struct poly_ptr {
     assert(has_value());
     return poly_;
   }
-  constexpr const poly_ref<Methods...>* operator->() const noexcept {
-    return std::addressof(poly_);
+  constexpr poly_ref<Methods...>* operator->() const noexcept {
+    // const cast to allow invoke non-const methods on non-const pointer
+    // (we know, that `poly_` itself should not be changed by calling user plugin Methods)
+    return const_cast<poly_ref<Methods...>*>(std::addressof(poly_));
   }
   // returns descriptor for void if *this == nullptr
   template <typename Ref = poly_ref<Methods...>>
