@@ -536,6 +536,8 @@ TEST(compare) {
   any_equal v4 = 3.14f;
   error_if(v4 != any_equal{3.14f});
   error_if(any_equal{3.14f} != v4);
+  any_compare v_empty;
+  error_if((v1 <=> v_empty) != std::partial_ordering::unordered);
   return error_count;
 }
 #else

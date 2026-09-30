@@ -165,6 +165,14 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   ASSERT(x3bef == x3);
   ASSERT(x4bef == x4);
   ASSERT(x5bef == x5);
+  {
+    auto sz2 = x2.size();
+    x2.erase(x2.begin(), x2.begin() + 2);
+    ASSERT(x2.size() == sz2 - 2);
+    auto sz3 = x3.size();
+    x3.erase(x3.begin(), x3.end());
+    ASSERT(x3.empty());
+  }
   for (int i = 0; i < 2; ++i) {
     x2.pop_back();
     x3.pop_back();

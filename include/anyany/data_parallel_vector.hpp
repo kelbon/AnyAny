@@ -438,7 +438,7 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
     assert(!empty());
     return *--end();
   }
-  constexpr reference back() const noexcept {
+  constexpr const_reference back() const noexcept {
     assert(!empty());
     return *--end();
   }
@@ -582,7 +582,9 @@ struct data_parallel_impl<T, Alloc, std::index_sequence<Is...>> {
   }
   constexpr iterator erase(const_iterator b, const_iterator e) {
     auto last_it = std::apply(
-        [&](auto&... conts) { return (conts.erase(std::get<Is>(b.iters), std::get<Is>(e.iters)), ...); },
+        [&](auto&... conts) {
+          return (conts.erase(conts.begin() + b.index, conts.begin() + e.index), ...);
+        },
         parts);
     return iter_from_last_iter(last_it);
   }
