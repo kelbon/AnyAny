@@ -1908,6 +1908,8 @@ struct spaceship {
       if constexpr (noexport::has_has_value<CRTP>::value) {
         if (!left.has_value())
           return right.has_value() ? std::partial_ordering::unordered : std::partial_ordering::equivalent;
+        if (!right.has_value())
+          return std::partial_ordering::unordered;
       }
       auto [fn, desc] = invoke<spaceship>(left);
       auto [right_fn, right_desc] = invoke<spaceship>(right);

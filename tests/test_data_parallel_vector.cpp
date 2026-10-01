@@ -1,4 +1,4 @@
-#if __cplusplus >= 202002L 
+#if __cplusplus >= 202002L
 #include <string>
 #include <iostream>
 #include <set>
@@ -69,9 +69,7 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   tt t3(50);
   ASSERT(t3.size() == 50 && !t3.empty());
   tt t4(it, sent, a);
-  auto cmp_foo = [](auto&& x, auto&& y) {
-    return x == y;
-  };
+  auto cmp_foo = [](auto&& x, auto&& y) { return x == y; };
   ASSERT(std::equal(t4.begin(), t4.end(), it, sent, cmp_foo));
   tt t5(it, sent);
   ASSERT(std::equal(t5.begin(), t5.end(), it, sent, cmp_foo));
@@ -165,6 +163,16 @@ void test_data_parallel(Alloc a, auto it, auto sent) {
   ASSERT(x3bef == x3);
   ASSERT(x4bef == x4);
   ASSERT(x5bef == x5);
+  {
+    auto x2copy = x2;
+    auto x3copy = x3;
+    auto sz2 = x2copy.size();
+    x2copy.erase(x2copy.begin(), x2copy.begin() + 2);
+    ASSERT(x2copy.size() == sz2 - 2);
+    auto sz3 = x3copy.size();
+    x3copy.erase(x3copy.begin(), x3copy.end());
+    ASSERT(x3copy.empty());
+  }
   for (int i = 0; i < 2; ++i) {
     x2.pop_back();
     x3.pop_back();
@@ -287,8 +295,8 @@ void algo_test() {
   std::ranges::sort(test_dpvec);
   ASSERT(std::ranges::equal(test_dpvec.cbegin(), test_dpvec.cend(), vec.begin(), vec.end()));
   aa::data_parallel_vector<field_4> move_into_me(std::make_move_iterator(vec.begin()),
-                                               std::make_move_iterator(vec.end()));
-  ASSERT(vec.front().s.empty()); // moved out
+                                                 std::make_move_iterator(vec.end()));
+  ASSERT(vec.front().s.empty());  // moved out
 }
 #undef ASSERT
 
@@ -346,5 +354,6 @@ int main() {
   std::cout << "end test\n";
 }
 #else
-int main() {}
+int main() {
+}
 #endif
