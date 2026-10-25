@@ -8,6 +8,9 @@
 #include <memory_resource>
 #include <random>
 #include <unordered_set>
+#if __cplusplus >= 202002L && __has_include(<span>)
+#include <span>
+#endif
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
@@ -1407,6 +1410,109 @@ struct counting_resource : std::pmr::memory_resource {
   }
 };
 
+// method argument type may be incomplete when any type is instantiated
+struct incomplete_arg;
+struct holds_fn_with_incomplete_arg {
+  aa::any_with<aa::call<int(incomplete_arg, int)>> f;
+};
+struct incomplete_arg {
+  int x;
+};
+
+struct marked_trivial_arg {
+  int a, b;
+};
+template <>
+struct aa::pass_by_value<marked_trivial_arg> : std::true_type {};
+
+template <typename Sig>
+using erased_sig = typename aa::method_traits<aa::call<Sig>>::type_erased_signature_type;
+static_assert(std::is_same_v<erased_sig<void(int, double*)>, void (*)(void*, int, double*)>);
+static_assert(std::is_same_v<erased_sig<void(std::string_view)>, void (*)(void*, std::string_view)>);
+static_assert(std::is_same_v<erased_sig<void(marked_trivial_arg)>, void (*)(void*, marked_trivial_arg)>);
+static_assert(std::is_same_v<erased_sig<void(std::string, int&)>, void (*)(void*, std::string&&, int&)>);
+static_assert(std::is_same_v<erased_sig<void(incomplete_arg)>, void (*)(void*, incomplete_arg&&)>);
+#if __cplusplus >= 202002L && __has_include(<span>)
+static_assert(std::is_same_v<erased_sig<void(std::span<const int>)>, void (*)(void*, std::span<const int>)>);
+#endif
+
+TEST(erased_args) {
+  holds_fn_with_incomplete_arg h;
+  h.f = [](incomplete_arg a, int b) { return a.x + b; };
+  error_if(h.f(incomplete_arg{1}, 2) != 3);
+  // scalars passed by value, other by reference
+  aa::any_with<aa::call<int(int, const std::string&, std::string)>> f =
+      [](int a, const std::string& b, std::string c) { return a + int(b.size() + c.size()); };
+  error_if(f(1, std::string(10, 'x'), std::string(100, 'y')) != 111);
+  aa::any_with<aa::call<size_t(std::string_view, marked_trivial_arg)>> g =
+      [](std::string_view v, marked_trivial_arg m) { return v.size() + size_t(m.a + m.b); };
+  error_if(g("abc", marked_trivial_arg{1, 2}) != 6);
+  return error_count;
+}
+
+TEST(any_tags) {
+  // vtable in the object
+  using fn_t = aa::basic_any_with_tags<aa::tags<aa::inline_vtable>, aa::default_allocator, 0,
+                                       aa::call<int(int)>, aa::type_info>;
+  static_assert(sizeof(fn_t) ==
+                sizeof(aa::vtable<aa::destroy, aa::call<int(int)>, aa::type_info>) + 2 * sizeof(void*));
+  fn_t f;
+  error_if(f.has_value());
+  int base = 10;
+  f = [base](int x) { return base + x; };
+  error_if(!f.has_value() || f(5) != 15);
+  fn_t g = std::move(f);
+  error_if(f.has_value() || !g.has_value() || g(1) != 11);
+  f = std::move(g);
+  error_if(g.has_value() || f(2) != 12);
+  error_if(aa::any_cast<int>(&f) != nullptr);
+  aa::poly_ptr<aa::call<int(int)>> p = &f;
+  error_if(p == nullptr || (*p)(3) != 13);
+  f.reset();
+  error_if(f.has_value());
+  // 'aa::copy' works with tags, tags combine, tagged user allocator
+  using any_t =
+      aa::any_with_tags<aa::tags<aa::inline_vtable, aa::fast_move_assign>, aa::copy, aa::call<int()>>;
+  any_t a = [] { return 7; };
+  any_t b = a;
+  error_if(a() != 7 || b() != 7);
+  b = any_t([s = std::string(100, 'x')] { return int(s.size()); });
+  error_if(b() != 100);
+  using pmr_any =
+      aa::basic_any_with<aa::tagged_alloc<std::pmr::polymorphic_allocator<std::byte>, aa::inline_vtable>, 0,
+                         aa::call<int()>>;
+  counting_resource r;
+  {
+    pmr_any x(std::allocator_arg, std::pmr::polymorphic_allocator<std::byte>(&r), [] { return 3; });
+    error_if(x() != 3 || r.allocs != 1);
+  }
+  error_if(r.deallocs != 1);
+  return error_count;
+}
+
+TEST(functions) {
+  static_assert(sizeof(aa::move_only_fn<int(int)>) == 64);
+  static_assert(sizeof(aa::copyable_fn<int(int) const>) == 64);
+  aa::move_only_fn<std::string(std::string) noexcept> f =
+      [p = std::string("prefix ")](std::string s) noexcept { return p + s; };
+  error_if(f("x") != "prefix x");
+  auto f2 = std::move(f);
+  error_if(f.has_value() || f2("y") != "prefix y");
+  // big callable is allocated
+  std::array<char, 100> big{};
+  big[99] = 'z';
+  aa::copyable_fn<char(int) const> c = [big](int i) { return big[size_t(i)]; };
+  aa::copyable_fn<char(int) const> c2 = c;
+  error_if(c(99) != 'z' || c2(99) != 'z');
+  int counter = 0;
+  auto inc = [&counter](int d) { counter += d; };
+  aa::fn_ref<void(int)> r = inc;
+  r(2);
+  r(3);
+  error_if(counter != 5);
+  return error_count;
+}
+
 TEST(stateful_allocs_on_move) {
   using alloc_t = std::pmr::polymorphic_allocator<std::byte>;
   counting_resource r1, r2;
@@ -1737,6 +1843,6 @@ int main() {
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
          TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
-         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTassign_from_owned_value() +
-         TESTdescriptors_of_lambdas();
+         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTerased_args() + TESTany_tags() +
+         TESTfunctions() + TESTassign_from_owned_value() + TESTdescriptors_of_lambdas();
 }
