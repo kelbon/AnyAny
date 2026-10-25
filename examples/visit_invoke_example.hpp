@@ -45,7 +45,7 @@ constexpr inline auto ship_ship = [](const spaceship& a, const spaceship& b) {
 };
 
 // Create multidispacter
-constexpr inline auto space_objects_collision =
+inline const auto space_objects_collision =
     aa::make_visit_invoke<std::string>(ship_asteroid, ship_star, star_star, ship_ship);
 // return type can be dedacted if all functions have same return type
 
@@ -73,7 +73,7 @@ struct C {};
 template <int Res, typename... Ts>
 constexpr inline auto foo = [](Ts... args) { return Res; };
 
-constexpr inline auto wow_what = aa::make_visit_invoke<int>(
+inline const auto wow_what = aa::make_visit_invoke<int>(
     foo<0, B>, foo<1, A, B, C>, foo<2, A, C, B>, foo<3, C, B, A>, foo<4, C, A, B>, foo<5, C>, foo<6, A, B>);
 
 void use_multidispatch() {
