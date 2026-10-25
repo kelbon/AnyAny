@@ -8,7 +8,6 @@
 #include <memory_resource>
 #include <random>
 #include <unordered_set>
-#define ANYANY_ASSUME_NO_DLLS
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
@@ -1379,6 +1378,16 @@ struct inplace_tester {
 
 static_assert(!std::is_move_constructible_v<inplace_tester>);
 
+// type names are not unique (e.g. gcc gives same name to different lambdas in one function)
+TEST(descriptors_of_lambdas) {
+  auto l1 = [] { return 1; };
+  auto l2 = [] { return 2; };
+  error_if(aa::descriptor_v<decltype(l1)> == aa::descriptor_v<decltype(l2)>);
+  aa::any_with<aa::type_info> a = l1;
+  error_if(aa::any_cast<decltype(l2)>(&a) != nullptr);
+  return error_count;
+}
+
 // counts allocations and deallocations made through it
 struct counting_resource : std::pmr::memory_resource {
   int allocs = 0;
@@ -1728,5 +1737,6 @@ int main() {
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
          TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
-         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTassign_from_owned_value();
+         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTassign_from_owned_value() +
+         TESTdescriptors_of_lambdas();
 }

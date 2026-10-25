@@ -26,14 +26,20 @@ Try set it manually (see anyany/CMakeLists.txt for example)
 #else
 #define AA_UNREACHABLE (void)0
 #define AA_ALWAYS_INLINE inline
-#define AA_CANT_GET_TYPENAME
 #endif
-#ifdef ANYANY_ASSUME_NO_DLLS
-#undef AA_CANT_GET_TYPENAME
-#define AA_CANT_GET_TYPENAME
+// By default type descriptor is an address of variable template, it is unique for each type.
+// But address is unique only inside one module: it differs between DLLs on windows (and between shared
+// libraries with hidden visibility), so value created in one module is not any_cast'able in other
+// (any_cast returns nullptr, type is never confused).
+// Type names are same for one type in all modules, but not always unique (e.g. gcc gives same name to
+// different lambdas in one function, then any_cast to other type succeeds).
+// ANYANY_TYPE_DESCRIPTOR_BY_NAME enables descriptors by type names (if compiler supports it)
+// ANYANY_ASSUME_NO_DLLS is deprecated, descriptors by address are default now
+#if defined(ANYANY_TYPE_DESCRIPTOR_BY_NAME) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+#define AA_TYPE_DESCRIPTOR_BY_NAME
 #endif
 
-#ifdef AA_CANT_GET_TYPENAME
+#ifndef AA_TYPE_DESCRIPTOR_BY_NAME
 #define AA_CONSTEXPR_TYPE_DESCRIPTOR
 #else
 #define AA_CONSTEXPR_TYPE_DESCRIPTOR constexpr

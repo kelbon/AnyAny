@@ -641,7 +641,7 @@ auto star_star = [](star a, star b) -> std::string { ... }
 auto ship_ship = [](spaceship a, spaceship b) -> std::string { ... }
 
 // Create multidispacter
-constexpr inline auto collision = aa::make_visit_invoke<std::string>(
+inline const auto collision = aa::make_visit_invoke<std::string>(
   ship_asteroid,
   ship_star,
   star_star,
