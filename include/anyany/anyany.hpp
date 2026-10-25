@@ -1265,31 +1265,34 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       AA_IF_HAS_CPP20(requires(has_move)) {
     if (this == std::addressof(other)) [[unlikely]]
       return *this;
+    // 'other' may be owned by current value (like 'cur = std::move(cur->next)'),
+    // so value is taken from it before current value destroyed
+    basic_any tmp(std::move(other));
     if constexpr (alloc_traits::is_always_equal::value) {
       reset();
-      move_value_from(other);
+      move_value_from(tmp);
     } else if constexpr (alloc_traits::propagate_on_container_move_assignment::value) {
       reset();
-      if (alloc != other.alloc)
-        alloc = std::move(other.alloc);
-      move_value_from(other);
+      if (alloc != tmp.alloc)
+        alloc = std::move(tmp.alloc);
+      move_value_from(tmp);
     } else {  // not propagatable alloc
       destroy_value();
-      if (alloc != other.alloc) {
-        if (other.has_value() && other.memory_allocated() && memory_allocated() &&
-            size_allocated >= other.size_allocated) {
+      if (alloc != tmp.alloc) {
+        if (tmp.has_value() && tmp.memory_allocated() && memory_allocated() &&
+            size_allocated >= tmp.size_allocated) {
           // reuse allocated memory
           // if exception thrown here, *this is empty
-          other.get_move_fn()(other.value_ptr, value_ptr);
-          vtable_ptr = std::exchange(other.vtable_ptr, nullptr);
+          tmp.get_move_fn()(tmp.value_ptr, value_ptr);
+          vtable_ptr = std::exchange(tmp.vtable_ptr, nullptr);
           return *this;
         }
         if (memory_allocated())
           deallocate_memory();
-        move_value_from<false>(other);
+        move_value_from<false>(tmp);
       } else {
         reset();
-        move_value_from(other);
+        move_value_from(tmp);
       }
     }
     return *this;
@@ -1307,8 +1310,9 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     *this = std::move(value);
     return *this;
   }
-  // * if exception thrown, *this is empty
+  // * if exception thrown while emplacing, *this is empty
   //   for exception guarantee use move assign lik e'any = any_t(val)'
+  // * 'val' may refer to current value (like 'any = *any_cast<T>(&any)')
   // * disables implicit creating any in any, like any = other_any,
   // if you really need this, use .emplace
   // * returns reference to emplaced value (not *this!)
@@ -1316,12 +1320,15 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   template <typename V,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>>, int> = 0>
   std::decay_t<V>& operator=(V&& val) ANYANY_LIFETIMEBOUND {
-    return emplace<V>(std::forward<V>(val));
+    // 'val' may refer to current value, so copy created before current value destroyed
+    std::decay_t<V> value(std::forward<V>(val));
+    return emplace<V>(std::move(value));
   }
 
   // making from any other type
 
   // postcondition: has_value() == true, *this is empty if exception thrown
+  // precondition: 'args' do not refer to current value (it is destroyed before creating new one)
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...> &&
@@ -1395,7 +1402,8 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
             std::enable_if_t<(noexport::has_move<OtherMethods...> &&
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
-  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc()) {
+  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc())
+      : alloc(std::move(other.alloc)) {
     move_value_from(other);
   }
 
@@ -1519,28 +1527,28 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     assert(!has_value() && !memory_allocated());
     if (!other.has_value())
       return;
-    if constexpr (SooS == 0) {
-      value_ptr = std::exchange(other.value_ptr, other.data);
-      size_allocated = other.size_allocated;
-    } else {
+    bool other_small = false;
+    if constexpr (SooS != 0) {
+      other_small = !other.memory_allocated();
       // `move` is noexcept (invariant of small state)
       // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
-      if (!other.memory_allocated()) {
+      if (other_small)
         other.get_move_fn()(other.value_ptr, value_ptr);
+    }
+    if (!other_small) {
+      if constexpr (MemoryMaybeReused) {
+        value_ptr = std::exchange(other.value_ptr, other.data);
+        size_allocated = other.size_allocated;
       } else {
-        if constexpr (MemoryMaybeReused) {
-          value_ptr = std::exchange(other.value_ptr, other.data);
-          size_allocated = other.size_allocated;
-        } else {
-          value_ptr = alloc.allocate(other.size_allocated);
-          size_allocated = other.size_allocated;
-          scope_failure free_memory{[&] {
-            alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
-            value_ptr = data;
-          }};
-          other.get_move_fn()(other.value_ptr, value_ptr);
-          free_memory.no_longer_needed();
-        }
+        // memory allocated by other allocator, cannot be taken (also when SooS == 0)
+        value_ptr = alloc.allocate(other.size_allocated);
+        size_allocated = other.size_allocated;
+        scope_failure free_memory{[&] {
+          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
+          value_ptr = data;
+        }};
+        other.get_move_fn()(other.value_ptr, value_ptr);
+        free_memory.no_longer_needed();
       }
     }
     vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);

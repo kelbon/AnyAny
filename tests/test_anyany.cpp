@@ -1379,6 +1379,70 @@ struct inplace_tester {
 
 static_assert(!std::is_move_constructible_v<inplace_tester>);
 
+// counts allocations and deallocations made through it
+struct counting_resource : std::pmr::memory_resource {
+  int allocs = 0;
+  int deallocs = 0;
+
+ private:
+  void* do_allocate(size_t n, size_t a) override {
+    ++allocs;
+    return std::pmr::new_delete_resource()->allocate(n, a);
+  }
+  void do_deallocate(void* p, size_t n, size_t a) override {
+    ++deallocs;
+    std::pmr::new_delete_resource()->deallocate(p, n, a);
+  }
+  bool do_is_equal(const memory_resource& o) const noexcept override {
+    return this == &o;
+  }
+};
+
+TEST(stateful_allocs_on_move) {
+  using alloc_t = std::pmr::polymorphic_allocator<std::byte>;
+  counting_resource r1, r2;
+  {
+    // move from any with more methods takes its allocator
+    using big = aa::basic_any_with<alloc_t, 0, aa::type_info, aa::move>;
+    using small = aa::basic_any_with<alloc_t, 0, aa::type_info>;
+    big b(std::allocator_arg, alloc_t(&r1), 42);
+    small s(std::move(b));
+    error_if(s.get_allocator().resource() != &r1);
+    error_if(*aa::any_cast<int>(&s) != 42);
+  }
+  {
+    // allocator is not propagated on move assign, memory of other allocator cannot be taken
+    using any_t = aa::basic_any_with<alloc_t, 0, aa::type_info, aa::move>;
+    any_t a(std::allocator_arg, alloc_t(&r1));
+    any_t b(std::allocator_arg, alloc_t(&r2), 2);
+    a = std::move(b);
+    error_if(*aa::any_cast<int>(&a) != 2);
+  }
+  error_if(r1.allocs != r1.deallocs);
+  error_if(r2.allocs != r2.deallocs);
+  return error_count;
+}
+
+using list_any = aa::any_with<aa::move, aa::type_info>;
+struct list_node {
+  std::string payload;
+  list_any next;
+};
+
+TEST(assign_from_owned_value) {
+  // like 'cur = std::move(cur->next)' with unique_ptr
+  list_any head = list_node{std::string(100, '1'), {}};
+  aa::any_cast<list_node>(&head)->next = list_node{std::string(100, '2'), {}};
+  head = std::move(aa::any_cast<list_node>(&head)->next);
+  list_node* n = aa::any_cast<list_node>(&head);
+  error_if(!n || n->payload != std::string(100, '2'));
+  // assign copy of own value
+  aa::any_with<aa::copy, aa::type_info> a = std::string(100, 'x');
+  a = *aa::any_cast<std::string>(&a);
+  error_if(*aa::any_cast<std::string>(&a) != std::string(100, 'x'));
+  return error_count;
+}
+
 int main() {
   aa::any_with<aa::type_info, aa::equal_to> some = aa::inplaced([&] { return inplace_tester{}; });
   if (!(aa::any_cast<inplace_tester&>(some) == inplace_tester{}))
@@ -1664,5 +1728,5 @@ int main() {
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
          TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
-         TESTmemory_reuse();
+         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTassign_from_owned_value();
 }
