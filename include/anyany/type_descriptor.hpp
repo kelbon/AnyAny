@@ -12,6 +12,7 @@
 
 #include "noexport/type_descriptor_details.hpp"
 
+#include <cstdint>
 #include <type_traits>
 #include <string_view>
 
@@ -38,7 +39,7 @@ struct descriptor_t {
   constexpr explicit descriptor_t(raw_desc_type value) noexcept : _value(value) {
   }
   constexpr bool operator==(const descriptor_t& other) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
+#ifndef AA_TYPE_DESCRIPTOR_BY_NAME
     return _value == other._value;
 #else
 #ifdef AA_HAS_CPP20
@@ -55,8 +56,8 @@ struct descriptor_t {
   }
 #ifdef AA_HAS_CPP20
   AA_CONSTEXPR_TYPE_DESCRIPTOR std::strong_ordering operator<=>(const descriptor_t& other) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
-    return (uintptr_t)_value <=> (uintptr_t)other._value;
+#ifndef AA_TYPE_DESCRIPTOR_BY_NAME
+    return (std::uintptr_t)_value <=> (std::uintptr_t)other._value;
 #else
     return noexport::strcmp(_value, other._value);
 #endif
@@ -127,7 +128,7 @@ namespace std {
 template <>
 struct hash<::aa::descriptor_t> {
   size_t operator()(const ::aa::descriptor_t& v) const noexcept {
-#ifdef AA_CANT_GET_TYPENAME
+#ifndef AA_TYPE_DESCRIPTOR_BY_NAME
     return hash<const void*>{}(v._value);
 #else
     return hash<::std::string_view>{}(v._value);

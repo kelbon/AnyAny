@@ -5,6 +5,10 @@
 #include <type_traits>
 #include <utility>  // forward
 #include <cstring>  // memcpy
+#include <string_view>
+#if __cplusplus >= 202002L && __has_include(<span>)
+#include <span>
+#endif
 
 #include "common.hpp"
 
@@ -19,6 +23,21 @@ struct is_type_list : std::false_type {};
 
 template <typename... Types>
 struct is_type_list<type_list<Types...>> : std::true_type {};
+
+// Arguments of type erased methods are passed by reference, except types for which this is true:
+// they are passed by value (in registers). Specialize it for small trivially copyable types.
+// Specialization must be visible before any with such method argument is instantiated.
+// Not true for all small trivially copyable types: argument type may be incomplete when any is instantiated
+template <typename T>
+struct pass_by_value : std::is_scalar<T> {};
+
+template <typename C, typename Traits>
+struct pass_by_value<std::basic_string_view<C, Traits>> : std::true_type {};
+
+#if __cplusplus >= 202002L && __has_include(<span>)
+template <typename T, size_t N>
+struct pass_by_value<std::span<T, N>> : std::true_type {};
+#endif
 
 }  // namespace aa
 
@@ -100,7 +119,11 @@ struct any_method_traits {
   using args = aa_pseudomethod_tag;      // specialize for invoke_fn
 };
 
-// Note: for signature && added to arguments for forwarding
+// see 'aa::pass_by_value'
+template <typename A>
+using erased_arg_t = std::conditional_t<pass_by_value<A>::value, A, A&&>;
+
+// Note: for signature && added to arguments for forwarding (except 'pass_by_value' types)
 template <typename R, typename Self, typename... Args>
 struct any_method_traits<R(Self, Args...)> {
   using self_sample_type = Self;
@@ -108,7 +131,7 @@ struct any_method_traits<R(Self, Args...)> {
   static constexpr bool is_const =
       !std::is_reference_v<Self> || std::is_const_v<std::remove_reference_t<Self>>;
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
-  using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
+  using type_erased_signature_type = R (*)(type_erased_self_type, erased_arg_t<Args>...);
   using args = aa::type_list<Args...>;
 };
 // noexcept version
@@ -119,7 +142,7 @@ struct any_method_traits<R(Self, Args...) noexcept> {
   static constexpr bool is_const =
       !std::is_reference_v<Self> || std::is_const_v<std::remove_reference_t<Self>>;
   using type_erased_self_type = std::conditional_t<is_const, const void*, void*>;
-  using type_erased_signature_type = R (*)(type_erased_self_type, Args&&...);
+  using type_erased_signature_type = R (*)(type_erased_self_type, erased_arg_t<Args>...);
   using args = aa::type_list<Args...>;
 };
 

@@ -8,7 +8,9 @@
 #include <memory_resource>
 #include <random>
 #include <unordered_set>
-#define ANYANY_ASSUME_NO_DLLS
+#if __cplusplus >= 202002L && __has_include(<span>)
+#include <span>
+#endif
 #include <anyany/anyany.hpp>
 #include <anyany/anyany_macro.hpp>
 
@@ -1379,6 +1381,183 @@ struct inplace_tester {
 
 static_assert(!std::is_move_constructible_v<inplace_tester>);
 
+// type names are not unique (e.g. gcc gives same name to different lambdas in one function)
+TEST(descriptors_of_lambdas) {
+  auto l1 = [] { return 1; };
+  auto l2 = [] { return 2; };
+  error_if(aa::descriptor_v<decltype(l1)> == aa::descriptor_v<decltype(l2)>);
+  aa::any_with<aa::type_info> a = l1;
+  error_if(aa::any_cast<decltype(l2)>(&a) != nullptr);
+  return error_count;
+}
+
+// counts allocations and deallocations made through it
+struct counting_resource : std::pmr::memory_resource {
+  int allocs = 0;
+  int deallocs = 0;
+
+ private:
+  void* do_allocate(size_t n, size_t a) override {
+    ++allocs;
+    return std::pmr::new_delete_resource()->allocate(n, a);
+  }
+  void do_deallocate(void* p, size_t n, size_t a) override {
+    ++deallocs;
+    std::pmr::new_delete_resource()->deallocate(p, n, a);
+  }
+  bool do_is_equal(const memory_resource& o) const noexcept override {
+    return this == &o;
+  }
+};
+
+// method argument type may be incomplete when any type is instantiated
+struct incomplete_arg;
+struct holds_fn_with_incomplete_arg {
+  aa::any_with<aa::call<int(incomplete_arg, int)>> f;
+};
+struct incomplete_arg {
+  int x;
+};
+
+struct marked_trivial_arg {
+  int a, b;
+};
+template <>
+struct aa::pass_by_value<marked_trivial_arg> : std::true_type {};
+
+template <typename Sig>
+using erased_sig = typename aa::method_traits<aa::call<Sig>>::type_erased_signature_type;
+static_assert(std::is_same_v<erased_sig<void(int, double*)>, void (*)(void*, int, double*)>);
+static_assert(std::is_same_v<erased_sig<void(std::string_view)>, void (*)(void*, std::string_view)>);
+static_assert(std::is_same_v<erased_sig<void(marked_trivial_arg)>, void (*)(void*, marked_trivial_arg)>);
+static_assert(std::is_same_v<erased_sig<void(std::string, int&)>, void (*)(void*, std::string&&, int&)>);
+static_assert(std::is_same_v<erased_sig<void(incomplete_arg)>, void (*)(void*, incomplete_arg&&)>);
+#if __cplusplus >= 202002L && __has_include(<span>)
+static_assert(std::is_same_v<erased_sig<void(std::span<const int>)>, void (*)(void*, std::span<const int>)>);
+#endif
+
+TEST(erased_args) {
+  holds_fn_with_incomplete_arg h;
+  h.f = [](incomplete_arg a, int b) { return a.x + b; };
+  error_if(h.f(incomplete_arg{1}, 2) != 3);
+  // scalars passed by value, other by reference
+  aa::any_with<aa::call<int(int, const std::string&, std::string)>> f =
+      [](int a, const std::string& b, std::string c) { return a + int(b.size() + c.size()); };
+  error_if(f(1, std::string(10, 'x'), std::string(100, 'y')) != 111);
+  aa::any_with<aa::call<size_t(std::string_view, marked_trivial_arg)>> g =
+      [](std::string_view v, marked_trivial_arg m) { return v.size() + size_t(m.a + m.b); };
+  error_if(g("abc", marked_trivial_arg{1, 2}) != 6);
+  return error_count;
+}
+
+TEST(any_tags) {
+  // vtable in the object
+  using fn_t = aa::basic_any_with_tags<aa::tags<aa::inline_vtable>, aa::default_allocator, 0,
+                                       aa::call<int(int)>, aa::type_info>;
+  static_assert(sizeof(fn_t) ==
+                sizeof(aa::vtable<aa::destroy, aa::call<int(int)>, aa::type_info>) + 2 * sizeof(void*));
+  fn_t f;
+  error_if(f.has_value());
+  int base = 10;
+  f = [base](int x) { return base + x; };
+  error_if(!f.has_value() || f(5) != 15);
+  fn_t g = std::move(f);
+  error_if(f.has_value() || !g.has_value() || g(1) != 11);
+  f = std::move(g);
+  error_if(g.has_value() || f(2) != 12);
+  error_if(aa::any_cast<int>(&f) != nullptr);
+  aa::poly_ptr<aa::call<int(int)>> p = &f;
+  error_if(p == nullptr || (*p)(3) != 13);
+  f.reset();
+  error_if(f.has_value());
+  // 'aa::copy' works with tags, tags combine, tagged user allocator
+  using any_t =
+      aa::any_with_tags<aa::tags<aa::inline_vtable, aa::fast_move_assign>, aa::copy, aa::call<int()>>;
+  any_t a = [] { return 7; };
+  any_t b = a;
+  error_if(a() != 7 || b() != 7);
+  b = any_t([s = std::string(100, 'x')] { return int(s.size()); });
+  error_if(b() != 100);
+  using pmr_any =
+      aa::basic_any_with<aa::tagged_alloc<std::pmr::polymorphic_allocator<std::byte>, aa::inline_vtable>, 0,
+                         aa::call<int()>>;
+  counting_resource r;
+  {
+    pmr_any x(std::allocator_arg, std::pmr::polymorphic_allocator<std::byte>(&r), [] { return 3; });
+    error_if(x() != 3 || r.allocs != 1);
+  }
+  error_if(r.deallocs != 1);
+  return error_count;
+}
+
+TEST(functions) {
+  static_assert(sizeof(aa::move_only_fn<int(int)>) == 64);
+  static_assert(sizeof(aa::copyable_fn<int(int) const>) == 64);
+  aa::move_only_fn<std::string(std::string) noexcept> f =
+      [p = std::string("prefix ")](std::string s) noexcept { return p + s; };
+  error_if(f("x") != "prefix x");
+  auto f2 = std::move(f);
+  error_if(f.has_value() || f2("y") != "prefix y");
+  // big callable is allocated
+  std::array<char, 100> big{};
+  big[99] = 'z';
+  aa::copyable_fn<char(int) const> c = [big](int i) { return big[size_t(i)]; };
+  aa::copyable_fn<char(int) const> c2 = c;
+  error_if(c(99) != 'z' || c2(99) != 'z');
+  int counter = 0;
+  auto inc = [&counter](int d) { counter += d; };
+  aa::fn_ref<void(int)> r = inc;
+  r(2);
+  r(3);
+  error_if(counter != 5);
+  return error_count;
+}
+
+TEST(stateful_allocs_on_move) {
+  using alloc_t = std::pmr::polymorphic_allocator<std::byte>;
+  counting_resource r1, r2;
+  {
+    // move from any with more methods takes its allocator
+    using big = aa::basic_any_with<alloc_t, 0, aa::type_info, aa::move>;
+    using small = aa::basic_any_with<alloc_t, 0, aa::type_info>;
+    big b(std::allocator_arg, alloc_t(&r1), 42);
+    small s(std::move(b));
+    error_if(s.get_allocator().resource() != &r1);
+    error_if(*aa::any_cast<int>(&s) != 42);
+  }
+  {
+    // allocator is not propagated on move assign, memory of other allocator cannot be taken
+    using any_t = aa::basic_any_with<alloc_t, 0, aa::type_info, aa::move>;
+    any_t a(std::allocator_arg, alloc_t(&r1));
+    any_t b(std::allocator_arg, alloc_t(&r2), 2);
+    a = std::move(b);
+    error_if(*aa::any_cast<int>(&a) != 2);
+  }
+  error_if(r1.allocs != r1.deallocs);
+  error_if(r2.allocs != r2.deallocs);
+  return error_count;
+}
+
+using list_any = aa::any_with<aa::move, aa::type_info>;
+struct list_node {
+  std::string payload;
+  list_any next;
+};
+
+TEST(assign_from_owned_value) {
+  // like 'cur = std::move(cur->next)' with unique_ptr
+  list_any head = list_node{std::string(100, '1'), {}};
+  aa::any_cast<list_node>(&head)->next = list_node{std::string(100, '2'), {}};
+  head = std::move(aa::any_cast<list_node>(&head)->next);
+  list_node* n = aa::any_cast<list_node>(&head);
+  error_if(!n || n->payload != std::string(100, '2'));
+  // assign copy of own value
+  aa::any_with<aa::copy, aa::type_info> a = std::string(100, 'x');
+  a = *aa::any_cast<std::string>(&a);
+  error_if(*aa::any_cast<std::string>(&a) != std::string(100, 'x'));
+  return error_count;
+}
+
 int main() {
   aa::any_with<aa::type_info, aa::equal_to> some = aa::inplaced([&] { return inplace_tester{}; });
   if (!(aa::any_cast<inplace_tester&>(some) == inplace_tester{}))
@@ -1664,5 +1843,6 @@ int main() {
          TESTtransmutate_ctors() + TESTstateful() + TESTsubtable_ptr() + TESTmaterialize() +
          TESTruntime_reflection() + TESTcustom_unique_ptr() + TESTstrange_allocs() +
          TESTalways_allocated_any() + TESTnon_default_constructible_allocs() + TESTzero_sized_any() +
-         TESTmemory_reuse();
+         TESTmemory_reuse() + TESTstateful_allocs_on_move() + TESTerased_args() + TESTany_tags() +
+         TESTfunctions() + TESTassign_from_owned_value() + TESTdescriptors_of_lambdas();
 }

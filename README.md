@@ -375,6 +375,31 @@ template<typename Alloc, size_t SooS, TTA... Methods>
 using basic_any_with = /*...*/;
 ```
 
+### Options (tags)
+Options of `basic_any` are tags in allocator type:
+
+* `aa::inline_vtable` - vtable is stored in the object (as in `stateful::ref`), so method call loads function pointer directly from object. Makes unpredictable calls faster, object becomes bigger by vtable size (its recomendet to choose `SooS` so `sizeof` is 32/64). `poly_ptr`/`poly_ref` to such any are invalidated by any move
+* `aa::fast_move_assign` - disabled by default. Makes move assign does not support value owned by current value (like `cur = std::move(cur->next)`, `std::any` supports it), but saves one relocation of value per move assign
+
+```C++
+// or use aliases
+using any_fast = aa::any_with_tags<aa::tags<aa::fast_move_assign>, Methods...>;
+using any_inline = aa::basic_any_with_tags<aa::tags<aa::inline_vtable>, MyAlloc, 32, Methods...>;
+// add tags to your allocator
+using my_alloc = aa::tagged_alloc<MyAlloc, aa::inline_vtable>;
+```
+
+### Functions
+Ready function wrappers (signature may have `const` / `noexcept`), vtable is stored in the object, `sizeof == 64`:
+
+```C++
+aa::move_only_fn<int(int)> f = [](int x) { return x * 2; }; // like std::move_only_function
+aa::copyable_fn<int(int) const> c = ...;                     // like std::copyable_function
+aa::fn_ref<void(int)> r = some_lvalue_callable;               // like std::function_ref
+```
+
+Arguments of type erased methods are passed by reference, except scalars, `std::string_view` and `std::span`, which are passed by value (in registers). Specialize `aa::pass_by_value<T> : std::true_type` for your small trivially copyable types (before any with such argument is instantiated).
+
 ### `poly_ref`
 Non owning, always not null, lightweight(~=void*)
 
@@ -641,7 +666,7 @@ auto star_star = [](star a, star b) -> std::string { ... }
 auto ship_ship = [](spaceship a, spaceship b) -> std::string { ... }
 
 // Create multidispacter
-constexpr inline auto collision = aa::make_visit_invoke<std::string>(
+inline const auto collision = aa::make_visit_invoke<std::string>(
   ship_asteroid,
   ship_star,
   star_star,

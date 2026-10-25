@@ -176,7 +176,8 @@ struct invoker_for {};
 
 template <typename T, typename Method, typename... Args>
 struct invoker_for<T, Method, type_list<Args...>> {
-  static result_t<Method> value(typename method_traits<Method>::type_erased_self_type self, Args&&... args) {
+  static result_t<Method> value(typename method_traits<Method>::type_erased_self_type self,
+                                noexport::erased_arg_t<Args>... args) {
     using self_sample = typename method_traits<Method>::self_sample_type;
     // explicitly transfers <T> into do_invoke for case when 'self' is not
     // deductible(do_invoke(type_identity_t<Self>))
@@ -278,6 +279,71 @@ constexpr inline auto default_any_soos = 64 - 3 * sizeof(void*);
 
 using default_allocator = std::allocator<std::byte>;
 
+// ######################## basic_any options ########################
+// Options are tags in allocator type (allocator used also as traits in basic_any).
+// Use 'tagged_alloc' to add them to your allocator or 'any_with_tags'/'basic_any_with_tags'
+
+// vtable is stored in the object (as in stateful::ref): method invoke loads function pointer directly from
+// object, without loading vtable pointer first. It makes unpredictable calls faster.
+// Object becomes bigger by vtable size (choose SooS so sizeof is 32/64 to not cross cache lines),
+// poly_ptr/ref to such any references vtable inside it, so they are invalidated by any move
+struct inline_vtable {};
+
+// move assign does not support 'other' owned by current value (like 'cur = std::move(cur->next)'),
+// std::any supports it, but it costs one more relocation of value per move assign
+struct fast_move_assign {};
+
+// adds anyany tags (options) to allocator
+template <typename Alloc, typename... Tags>
+struct tagged_alloc : Alloc {
+  using aa_tags = type_list<Tags...>;
+  using Alloc::Alloc;
+
+  constexpr tagged_alloc() = default;
+  constexpr tagged_alloc(const Alloc& a) noexcept : Alloc(a) {
+  }
+
+  template <typename U>
+  struct rebind {
+    using other = tagged_alloc<typename std::allocator_traits<Alloc>::template rebind_alloc<U>, Tags...>;
+  };
+};
+
+// list of tags for 'any_with_tags'/'basic_any_with_tags'
+template <typename... Tags>
+struct tags {};
+
+namespace noexport {
+
+template <typename Tag, typename... Tags>
+constexpr bool list_contains(type_list<Tags...>) {
+  return contains_v<Tag, Tags...>;
+}
+template <typename Alloc, typename Tag, typename = void>
+constexpr inline bool has_tag = false;
+template <typename Alloc, typename Tag>
+constexpr inline bool has_tag<Alloc, Tag, std::void_t<typename Alloc::aa_tags>> =
+    list_contains<Tag>(typename Alloc::aa_tags{});
+
+// tags do not change copy method, so 'aa::copy' works for tagged default allocator
+template <typename Alloc>
+struct untagged {
+  using type = Alloc;
+};
+template <typename Alloc, typename... Tags>
+struct untagged<tagged_alloc<Alloc, Tags...>> {
+  using type = Alloc;
+};
+
+template <typename Alloc, typename Tags>
+struct add_tags {};
+template <typename Alloc, typename... Tags>
+struct add_tags<Alloc, tags<Tags...>> {
+  using type = tagged_alloc<Alloc, Tags...>;
+};
+
+}  // namespace noexport
+
 namespace noexport {
 
 template <typename Alloc, size_t SooS>
@@ -346,7 +412,8 @@ constexpr inline bool has_move =
 //  enables copy/copy assgin/move/move assign for any_with
 //  enables 'materialize' for references
 template <typename Alloc = default_allocator, size_t SooS = default_any_soos>
-using copy_with = noexport::copy_method<noexport::rebind_to_byte_t<Alloc>, noexport::soo_buffer_size(SooS)>;
+using copy_with = noexport::copy_method<typename noexport::untagged<noexport::rebind_to_byte_t<Alloc>>::type,
+                                        noexport::soo_buffer_size(SooS)>;
 
 using copy = copy_with<>;
 
@@ -467,6 +534,39 @@ constexpr vtable<Methods...> vtable_for{&invoker_for<T, Methods>::value...};
 template <typename T, anyany_simple_method_concept... Methods>
 constexpr const vtable<Methods...>* addr_vtable_for = &vtable_for<std::decay_t<T>, Methods...>;
 
+namespace noexport {
+
+// stores vtable by value, but behaves as pointer to it
+template <typename... Methods>
+struct inline_vtable_ptr {
+ private:
+  vtable<Methods...> value{};  // empty if 'destroy' is null
+
+ public:
+  constexpr inline_vtable_ptr() = default;
+  constexpr inline_vtable_ptr(std::nullptr_t) noexcept {
+  }
+  constexpr inline_vtable_ptr(const vtable<Methods...>* p) noexcept {
+    if (p)
+      value = *p;
+  }
+  constexpr const vtable<Methods...>* get() const noexcept {
+    return noexport::get<number_of_first<destroy, Methods...>>(value) ? &value : nullptr;
+  }
+  constexpr operator const vtable<Methods...>*() const noexcept {
+    return get();
+  }
+  constexpr const vtable<Methods...>* operator->() const noexcept {
+    return &value;
+  }
+};
+
+template <typename Alloc, typename... Methods>
+using vtable_ptr_t = std::conditional_t<has_tag<Alloc, inline_vtable>, inline_vtable_ptr<Methods...>,
+                                        const vtable<Methods...>*>;
+
+}  // namespace noexport
+
 // ######################## poly_ref / poly_ptr  ########################
 
 template <typename T>
@@ -492,8 +592,10 @@ struct mate {
       return get_vtable_ptr(friend_.poly_);
     else if constexpr (has_field_vtable_value<Friend>::value)
       return std::addressof(friend_.vtable_value);
-    else
+    else if constexpr (std::is_pointer_v<decltype(friend_.vtable_ptr)>)
       return friend_.vtable_ptr;
+    else  // inline vtable, without check for empty (as for pointer)
+      return friend_.vtable_ptr.operator->();
   }
   template <typename Friend, typename Vtable>
   AA_ALWAYS_INLINE static constexpr void set_vtable_ptr(Friend& friend_, Vtable* vtable_ptr) {
@@ -1157,7 +1259,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
  private:
   static_assert(SooS == 0 || SooS >= sizeof(size_t));
 
-  const vtable<Methods...>* vtable_ptr = nullptr;
+  noexport::vtable_ptr_t<Alloc, Methods...> vtable_ptr = nullptr;
   void* value_ptr = data;
   union {
     // if SooS == 0, then union degenerates to just `size_t`
@@ -1265,6 +1367,19 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       AA_IF_HAS_CPP20(requires(has_move)) {
     if (this == std::addressof(other)) [[unlikely]]
       return *this;
+    if constexpr (noexport::has_tag<Alloc, fast_move_assign>) {
+      return move_assign(other);
+    } else {
+      // 'other' may be owned by current value (like 'cur = std::move(cur->next)'),
+      // so value is taken from it before current value destroyed
+      basic_any tmp(std::move(other));
+      return move_assign(tmp);
+    }
+  }
+
+ private:
+  // precondition: 'other' is not owned by current value
+  basic_any& move_assign(basic_any& other) noexcept(movable_alloc()) {
     if constexpr (alloc_traits::is_always_equal::value) {
       reset();
       move_value_from(other);
@@ -1295,6 +1410,7 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     return *this;
   }
 
+ public:
   basic_any& operator=(const basic_any& other) ANYANY_LIFETIMEBOUND AA_IF_HAS_CPP20(requires(has_copy)) {
     basic_any value = other;
     if constexpr (!alloc_traits::is_always_equal::value &&
@@ -1307,8 +1423,9 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     *this = std::move(value);
     return *this;
   }
-  // * if exception thrown, *this is empty
+  // * if exception thrown while emplacing, *this is empty
   //   for exception guarantee use move assign lik e'any = any_t(val)'
+  // * 'val' may refer to current value (like 'any = *any_cast<T>(&any)')
   // * disables implicit creating any in any, like any = other_any,
   // if you really need this, use .emplace
   // * returns reference to emplaced value (not *this!)
@@ -1316,12 +1433,15 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
   template <typename V,
             std::enable_if_t<std::conjunction_v<is_not_polymorphic<V>, exist_for<V, Methods...>>, int> = 0>
   std::decay_t<V>& operator=(V&& val) ANYANY_LIFETIMEBOUND {
-    return emplace<V>(std::forward<V>(val));
+    // 'val' may refer to current value, so copy created before current value destroyed
+    std::decay_t<V> value(std::forward<V>(val));
+    return emplace<V>(std::move(value));
   }
 
   // making from any other type
 
   // postcondition: has_value() == true, *this is empty if exception thrown
+  // precondition: 'args' do not refer to current value (it is destroyed before creating new one)
   template <typename T, typename... Args, std::enable_if_t<exist_for<T, Methods...>::value, int> = 0>
   std::decay_t<T>& emplace(Args&&... args) noexcept(
       std::is_nothrow_constructible_v<std::decay_t<T>, Args&&...> &&
@@ -1389,13 +1509,14 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
       value_ptr = invoke<copy_with<Alloc, SooS>>(other).copy_fn(mate::get_value_ptr(other), value_ptr,
                                                                 std::addressof(alloc));
     }
-    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+    vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
   }
   template <typename... OtherMethods,
             std::enable_if_t<(noexport::has_move<OtherMethods...> &&
                               noexport::has_subsequence(methods_list{}, type_list<OtherMethods...>{})),
                              int> = 0>
-  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc()) {
+  basic_any(basic_any<Alloc, SooS, OtherMethods...>&& other) noexcept(movable_alloc())
+      : alloc(std::move(other.alloc)) {
     move_value_from(other);
   }
 
@@ -1519,31 +1640,31 @@ struct basic_any : construct_interface<basic_any<Alloc, SooS, Methods...>, Metho
     assert(!has_value() && !memory_allocated());
     if (!other.has_value())
       return;
-    if constexpr (SooS == 0) {
-      value_ptr = std::exchange(other.value_ptr, other.data);
-      size_allocated = other.size_allocated;
-    } else {
+    bool other_small = false;
+    if constexpr (SooS != 0) {
+      other_small = !other.memory_allocated();
       // `move` is noexcept (invariant of small state)
       // `move` also 'relocate' i.e. calls dctor of value(for remove invoke<destroy> in future)
-      if (!other.memory_allocated()) {
+      if (other_small)
         other.get_move_fn()(other.value_ptr, value_ptr);
+    }
+    if (!other_small) {
+      if constexpr (MemoryMaybeReused) {
+        value_ptr = std::exchange(other.value_ptr, other.data);
+        size_allocated = other.size_allocated;
       } else {
-        if constexpr (MemoryMaybeReused) {
-          value_ptr = std::exchange(other.value_ptr, other.data);
-          size_allocated = other.size_allocated;
-        } else {
-          value_ptr = alloc.allocate(other.size_allocated);
-          size_allocated = other.size_allocated;
-          scope_failure free_memory{[&] {
-            alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
-            value_ptr = data;
-          }};
-          other.get_move_fn()(other.value_ptr, value_ptr);
-          free_memory.no_longer_needed();
-        }
+        // memory allocated by other allocator, cannot be taken (also when SooS == 0)
+        value_ptr = alloc.allocate(other.size_allocated);
+        size_allocated = other.size_allocated;
+        scope_failure free_memory{[&] {
+          alloc.deallocate(reinterpret_cast<alloc_pointer_type>(value_ptr), other.size_allocated);
+          value_ptr = data;
+        }};
+        other.get_move_fn()(other.value_ptr, value_ptr);
+        free_memory.no_longer_needed();
       }
     }
-    vtable_ptr = subtable_ptr<Methods...>(other.vtable_ptr);
+    vtable_ptr = subtable_ptr<Methods...>(mate::get_vtable_ptr(other));
     other.vtable_ptr = nullptr;
   }
 
@@ -1782,6 +1903,15 @@ using basic_any_with = noexport::flatten_into_basic_any_t<noexport::rebind_to_by
 template <anyany_method_concept... Methods>
 using any_with = basic_any_with<default_allocator, default_any_soos, Methods...>;
 
+// same as basic_any_with, but with options, e.g.
+// aa::basic_any_with_tags<aa::tags<aa::inline_vtable>, MyAlloc, 32, Methods...>
+template <typename Tags, typename Alloc, size_t SooS, anyany_method_concept... Methods>
+using basic_any_with_tags = basic_any_with<typename noexport::add_tags<Alloc, Tags>::type, SooS, Methods...>;
+
+// same as any_with, but with options, e.g. aa::any_with_tags<aa::tags<aa::fast_move_assign>, Methods...>
+template <typename Tags, anyany_method_concept... Methods>
+using any_with_tags = basic_any_with_tags<Tags, default_allocator, default_any_soos, Methods...>;
+
 template <anyany_simple_method_concept... Methods>
 using ptr = poly_ptr<Methods...>;
 
@@ -2000,6 +2130,48 @@ AA_CALL_IMPL(const, );
 AA_CALL_IMPL(, noexcept);
 AA_CALL_IMPL(const, noexcept);
 #undef AA_CALL_IMPL
+
+// ######################## functions ########################
+
+namespace noexport {
+
+// SooS for basic_any with inline vtable, so sizeof(basic_any) == Size
+template <size_t VtableSize, size_t Size = 64>
+constexpr size_t soos_for_inline_vtable =
+    Size - (VtableSize + sizeof(void*) + alignof(std::max_align_t) - 1) / alignof(std::max_align_t) *
+               alignof(std::max_align_t);
+
+using fn_alloc = tagged_alloc<default_allocator, inline_vtable>;
+
+template <typename Signature>
+constexpr size_t move_only_fn_soos = soos_for_inline_vtable<sizeof(vtable<destroy, call<Signature>, move>)>;
+// copy method value has same size for all SooS
+template <typename Signature>
+constexpr size_t copyable_fn_soos = soos_for_inline_vtable<sizeof(vtable<destroy, call<Signature>, copy>)>;
+
+}  // namespace noexport
+
+// Function wrappers (like std::move_only_function / std::copyable_function / std::function_ref).
+// Signature may be 'R(Args...)' with const / noexcept.
+// vtable (destroy, call, move/copy) is stored in the object, so call loads function pointer directly from
+// it, scalar arguments are passed in registers. sizeof == 64, callables up to 32 / 16 bytes are stored
+// without allocation
+
+template <typename Signature>
+using move_only_fn =
+    basic_any_with<noexport::fn_alloc, noexport::move_only_fn_soos<Signature>, call<Signature>, move>;
+
+template <typename Signature>
+using copyable_fn = basic_any_with<noexport::fn_alloc, noexport::copyable_fn_soos<Signature>, call<Signature>,
+                                   copy_with<default_allocator, noexport::copyable_fn_soos<Signature>>>;
+
+template <typename SIGNATURE>
+using fn_ref = ref<call<SIGNATURE>>;
+
+// same as fn_ref, but allows only const methods
+// Warn: do not create from tmp object, store it before
+template <typename SIGNATURE>
+using fn_cref = cref<call<SIGNATURE>>;
 
 }  // namespace aa
 

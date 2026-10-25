@@ -22,7 +22,7 @@ constexpr inline auto case_ps = [](const planet& x, const spaceship& y) -> std::
   return "ps";
 };
 
-constexpr inline auto collisions = aa::make_visit_invoke<std::string>(
+inline const auto collisions = aa::make_visit_invoke<std::string>(
     case_sp, [](spaceship&, const spaceship&) { return std::string("ss"); }, case_ps,
     [](planet a, planet& b) {
       if (a.val != 150 || b.val != 150)
@@ -30,7 +30,7 @@ constexpr inline auto collisions = aa::make_visit_invoke<std::string>(
       return std::string("pp");
     },
     [](int&&) { return std::string("int"); });
-constexpr inline auto vars_collision = aa::make_visit_invoke<std::string, aa::std_variant_poly_traits>(
+inline const auto vars_collision = aa::make_visit_invoke<std::string, aa::std_variant_poly_traits>(
     case_sp, case_ps, [](int) { return "int"; });
 
 int main() {
