@@ -14,6 +14,7 @@
 
 */
 
+#include <new>        // std::launder
 #include <cassert>    // assert
 #include <exception>  // for any_cast(std::exception)
 #include <utility>    // std::exchange
