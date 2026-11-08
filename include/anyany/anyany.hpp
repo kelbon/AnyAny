@@ -2108,12 +2108,14 @@ constexpr auto operator!=(const_poly_ptr<Methods...> left, const_poly_ptr<Method
 template <typename Signature>
 struct call {};
 
-#define AA_CALL_IMPL(CONST, NOEXCEPT)                                                       \
+#define AA_CALL_IMPL(CONST, NOEXCEPT, ...)                                                  \
   template <typename Ret, typename... Args>                                                 \
   struct call<Ret(Args...) CONST NOEXCEPT> {                                                \
     template <typename T>                                                                   \
     static auto do_invoke(CONST T& self, Args... args) NOEXCEPT                             \
         -> decltype(static_cast<Ret>(self(static_cast<Args&&>(args)...))) {                 \
+      __VA_OPT__(static_assert(std::is_nothrow_invocable_r_v<Ret, CONST T&, Args...>,       \
+                               "noexcept signature requires a noexcept callable");)         \
       return static_cast<Ret>(self(static_cast<Args&&>(args)...));                          \
     }                                                                                       \
     using signature_type = Ret(CONST ::aa::erased_self_t&, Args...) NOEXCEPT;               \
@@ -2128,8 +2130,8 @@ struct call {};
   }
 AA_CALL_IMPL(, );
 AA_CALL_IMPL(const, );
-AA_CALL_IMPL(, noexcept);
-AA_CALL_IMPL(const, noexcept);
+AA_CALL_IMPL(, noexcept, true);
+AA_CALL_IMPL(const, noexcept, true);
 #undef AA_CALL_IMPL
 
 // ######################## functions ########################
